@@ -67,6 +67,9 @@ public sealed class NuGetApiClient : IDisposable
                 .OrderByDescending(v => NuGetVersion.Parse(v.Version))
                 .ToList();
 
+            // Fetch deprecation info once (async)
+            var deprecationInfo = await latest.GetDeprecationMetadataAsync();
+
             var result = new NuGetPackageInfo
             {
                 PackageId = packageId,
@@ -80,8 +83,8 @@ public sealed class NuGetApiClient : IDisposable
                 Description = latest.Description,
                 Authors = latest.Authors?.Split(',').Select(a => a.Trim()).ToList() ?? [],
                 Tags = latest.Tags?.Split(',').Select(t => t.Trim()).ToList() ?? [],
-                IsDeprecated = latest.GetDeprecationMetadataAsync().GetAwaiter().GetResult() is not null,
-                DeprecationReason = latest.GetDeprecationMetadataAsync().GetAwaiter().GetResult()?.Message
+                IsDeprecated = deprecationInfo is not null,
+                DeprecationReason = deprecationInfo?.Message
             };
 
             await _cache.SetAsync(cacheKey, result, TimeSpan.FromHours(12), ct);

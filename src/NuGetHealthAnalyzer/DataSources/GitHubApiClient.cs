@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using NuGetHealthAnalyzer.Models;
@@ -148,12 +149,12 @@ public sealed partial class GitHubApiClient
         await _requestLimiter.WaitAsync(ct);
         try
         {
-            // Build GraphQL query for multiple repositories
-            var queryParts = new List<string>();
+            // Build GraphQL query for multiple repositories using StringBuilder
+            var queryBuilder = new StringBuilder("query { ");
             for (int i = 0; i < repoList.Count; i++)
             {
                 var (_, owner, repo) = repoList[i];
-                queryParts.Add($@"
+                queryBuilder.Append($@"
                     repo{i}: repository(owner: ""{owner}"", name: ""{repo}"") {{
                         nameWithOwner
                         stargazerCount
@@ -174,8 +175,8 @@ public sealed partial class GitHubApiClient
                         }}
                     }}");
             }
-
-            var query = "query { " + string.Join("\n", queryParts) + " }";
+            queryBuilder.Append(" }");
+            var query = queryBuilder.ToString();
 
             var response = await _httpClient.PostAsJsonAsync(
                 "https://api.github.com/graphql",
@@ -315,7 +316,7 @@ public sealed partial class GitHubApiClient
         try
         {
             var repository = await _client.Repository.Get(owner, repo);
-            UpdateRateLimitFromOctokit();
+            await UpdateRateLimitFromOctokitAsync();
 
             var lastCommitDate = repository.PushedAt?.UtcDateTime ?? DateTime.MinValue;
 
@@ -421,11 +422,11 @@ public sealed partial class GitHubApiClient
         await _requestLimiter.WaitAsync(ct);
         try
         {
-            // Build query for multiple packages
-            var queryParts = new List<string>();
+            // Build query for multiple packages using StringBuilder
+            var queryBuilder = new StringBuilder("query { ");
             for (int i = 0; i < packages.Count; i++)
             {
-                queryParts.Add($@"
+                queryBuilder.Append($@"
                     pkg{i}: securityVulnerabilities(first: 20, ecosystem: NUGET, package: ""{packages[i]}"") {{
                         nodes {{
                             advisory {{
@@ -442,8 +443,8 @@ public sealed partial class GitHubApiClient
                         }}
                     }}");
             }
-
-            var query = "query { " + string.Join("\n", queryParts) + " }";
+            queryBuilder.Append(" }");
+            var query = queryBuilder.ToString();
 
             var response = await _httpClient.PostAsJsonAsync(
                 "https://api.github.com/graphql",
@@ -575,11 +576,11 @@ public sealed partial class GitHubApiClient
             _isRateLimited = true;
     }
 
-    private void UpdateRateLimitFromOctokit()
+    private async Task UpdateRateLimitFromOctokitAsync()
     {
         try
         {
-            var rateLimit = _client.RateLimit.GetRateLimits().Result;
+            var rateLimit = await _client.RateLimit.GetRateLimits();
             _remainingRequests = rateLimit.Resources.Core.Remaining;
             _rateLimitReset = rateLimit.Resources.Core.Reset.UtcDateTime;
             _isRateLimited = _remainingRequests <= 0;

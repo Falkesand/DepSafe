@@ -38,7 +38,9 @@ public sealed class HealthScoreCalculator
             Metrics = metrics,
             RepositoryUrl = repoInfo is not null ? $"https://github.com/{repoInfo.FullName}" : nugetInfo.RepositoryUrl,
             License = nugetInfo.License,
-            Vulnerabilities = vulnerabilities.Select(v => v.Id).ToList(),
+            Vulnerabilities = vulnerabilities.Count > 0
+                ? vulnerabilities.Select(v => v.Id).ToList()
+                : [],
             Recommendations = recommendations
         };
     }
@@ -91,11 +93,20 @@ public sealed class HealthScoreCalculator
         // Compare recent versions' download rates to older versions
         if (versions.Count < 4) return 0;
 
-        var recentVersions = versions.Take(versions.Count / 2).ToList();
-        var olderVersions = versions.Skip(versions.Count / 2).ToList();
+        var midpoint = versions.Count / 2;
 
-        var recentAvg = recentVersions.Average(v => v.Downloads);
-        var olderAvg = olderVersions.Average(v => v.Downloads);
+        // Calculate averages without allocating new lists
+        var recentSum = 0L;
+        var olderSum = 0L;
+
+        for (int i = 0; i < midpoint; i++)
+            recentSum += versions[i].Downloads;
+
+        for (int i = midpoint; i < versions.Count; i++)
+            olderSum += versions[i].Downloads;
+
+        var recentAvg = (double)recentSum / midpoint;
+        var olderAvg = (double)olderSum / (versions.Count - midpoint);
 
         if (olderAvg == 0) return recentAvg > 0 ? 1.0 : 0;
 

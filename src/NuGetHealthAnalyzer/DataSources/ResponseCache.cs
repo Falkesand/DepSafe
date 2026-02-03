@@ -84,7 +84,17 @@ public sealed class ResponseCache
 
     private string GetCachePath(string key)
     {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16];
-        return Path.Combine(_cacheDir, hash);
+        // Use stackalloc to avoid heap allocation for small keys
+        var maxByteCount = Encoding.UTF8.GetMaxByteCount(key.Length);
+        Span<byte> keyBytes = maxByteCount <= 256
+            ? stackalloc byte[maxByteCount]
+            : new byte[maxByteCount];
+
+        var actualByteCount = Encoding.UTF8.GetBytes(key.AsSpan(), keyBytes);
+
+        Span<byte> hashBytes = stackalloc byte[32]; // SHA256 = 32 bytes
+        SHA256.HashData(keyBytes[..actualByteCount], hashBytes);
+
+        return Path.Combine(_cacheDir, Convert.ToHexString(hashBytes)[..16]);
     }
 }
