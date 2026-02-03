@@ -23,23 +23,44 @@ public static class CheckCommand
             () => OutputFormat.Table,
             "Output format");
 
+        var skipGitHubOption = new Option<bool>(
+            ["--skip-github"],
+            "Skip GitHub API calls (faster, but no repo activity or vulnerability data)");
+
         var command = new Command("check", "Check health of a single package")
         {
             packageArg,
             versionOption,
-            formatOption
+            formatOption,
+            skipGitHubOption
         };
 
-        command.SetHandler(ExecuteAsync, packageArg, versionOption, formatOption);
+        command.SetHandler(ExecuteAsync, packageArg, versionOption, formatOption, skipGitHubOption);
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string packageId, string? version, OutputFormat format)
+    private static async Task<int> ExecuteAsync(string packageId, string? version, OutputFormat format, bool skipGitHub)
     {
         using var nugetClient = new NuGetApiClient();
-        var githubClient = new GitHubApiClient();
+        var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
+
+        // Show GitHub status
+        if (!skipGitHub && githubClient is not null)
+        {
+            if (!githubClient.HasToken)
+            {
+                AnsiConsole.MarkupLine("[yellow]No GITHUB_TOKEN found. GitHub API rate limited to 60 requests/hour.[/]");
+                AnsiConsole.MarkupLine("[dim]Set GITHUB_TOKEN environment variable for 5000 requests/hour.[/]");
+                AnsiConsole.WriteLine();
+            }
+        }
+        else if (skipGitHub)
+        {
+            AnsiConsole.MarkupLine("[dim]Skipping GitHub API (--skip-github). No repo activity or vulnerability data.[/]");
+            AnsiConsole.WriteLine();
+        }
 
         var nugetInfo = await AnsiConsole.Status()
             .StartAsync($"Fetching package info for {packageId}...", async _ =>
@@ -53,13 +74,22 @@ public static class CheckCommand
 
         version ??= nugetInfo.LatestVersion;
 
-        var repoInfo = await AnsiConsole.Status()
-            .StartAsync("Fetching repository info...", async _ =>
-                await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl));
+        Models.GitHubRepoInfo? repoInfo = null;
+        List<Models.VulnerabilityInfo> vulnerabilities = [];
 
-        var vulnerabilities = await AnsiConsole.Status()
-            .StartAsync("Checking vulnerabilities...", async _ =>
-                await githubClient.GetVulnerabilitiesAsync(packageId, version));
+        if (githubClient is not null && !githubClient.IsRateLimited)
+        {
+            repoInfo = await AnsiConsole.Status()
+                .StartAsync("Fetching repository info...", async _ =>
+                    await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl));
+
+            if (!githubClient.IsRateLimited && githubClient.HasToken)
+            {
+                vulnerabilities = await AnsiConsole.Status()
+                    .StartAsync("Checking vulnerabilities...", async _ =>
+                        await githubClient.GetVulnerabilitiesAsync(packageId, version));
+            }
+        }
 
         var health = calculator.Calculate(packageId, version, nugetInfo, repoInfo, vulnerabilities);
 
