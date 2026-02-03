@@ -25,19 +25,24 @@ public static class CraReportCommand
             ["--output", "-o"],
             "Output file path (default: cra-report.html or cra-report.json)");
 
+        var skipGitHubOption = new Option<bool>(
+            ["--skip-github"],
+            "Skip GitHub API calls (faster, but vulnerability data will be incomplete)");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
             formatOption,
-            outputOption
+            outputOption,
+            skipGitHubOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption);
+        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption);
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath)
+    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -55,8 +60,25 @@ public static class CraReportCommand
         }
 
         using var nugetClient = new NuGetApiClient();
-        var githubClient = new GitHubApiClient();
+        var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
+
+        // Show GitHub status
+        if (!skipGitHub && githubClient is not null)
+        {
+            if (!githubClient.HasToken)
+            {
+                AnsiConsole.MarkupLine("[yellow]No GITHUB_TOKEN found. CRA report requires GitHub API for complete vulnerability data.[/]");
+                AnsiConsole.MarkupLine("[dim]Set GITHUB_TOKEN environment variable for comprehensive compliance reporting.[/]");
+                AnsiConsole.WriteLine();
+            }
+        }
+        else if (skipGitHub)
+        {
+            AnsiConsole.MarkupLine("[yellow]Warning: --skip-github specified. Vulnerability data will be incomplete.[/]");
+            AnsiConsole.MarkupLine("[dim]CRA compliance report may show incomplete vulnerability status.[/]");
+            AnsiConsole.WriteLine();
+        }
 
         // Collect all package references
         var allReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
@@ -83,44 +105,96 @@ public static class CraReportCommand
             return 0;
         }
 
-        var packages = new List<PackageHealth>();
-        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
+        // Phase 1: Fetch all NuGet info
+        var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
 
         await AnsiConsole.Progress()
             .StartAsync(async ctx =>
             {
-                var task = ctx.AddTask($"Analyzing {allReferences.Count} packages", maxValue: allReferences.Count);
+                var task = ctx.AddTask($"Fetching NuGet info for {allReferences.Count} packages", maxValue: allReferences.Count);
 
-                foreach (var (packageId, reference) in allReferences)
+                foreach (var (packageId, _) in allReferences)
                 {
-                    task.Description = $"Analyzing {packageId}";
-
-                    var nugetInfo = await nugetClient.GetPackageInfoAsync(packageId);
-                    if (nugetInfo is null)
+                    task.Description = $"NuGet: {packageId}";
+                    var info = await nugetClient.GetPackageInfoAsync(packageId);
+                    if (info is not null)
                     {
-                        task.Increment(1);
-                        continue;
+                        nugetInfoMap[packageId] = info;
                     }
-
-                    var repoInfo = await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl);
-                    var vulnerabilities = await githubClient.GetVulnerabilitiesAsync(packageId, reference.Version);
-
-                    if (vulnerabilities.Count > 0)
-                    {
-                        allVulnerabilities[packageId] = vulnerabilities;
-                    }
-
-                    var health = calculator.Calculate(
-                        packageId,
-                        reference.Version,
-                        nugetInfo,
-                        repoInfo,
-                        vulnerabilities);
-
-                    packages.Add(health);
                     task.Increment(1);
                 }
             });
+
+        // Phase 2: Batch fetch GitHub repo info (if not skipped)
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
+        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
+
+        if (githubClient is not null && !githubClient.IsRateLimited)
+        {
+            await AnsiConsole.Status()
+                .StartAsync("Fetching GitHub repository info (batch)...", async ctx =>
+                {
+                    var repoUrls = nugetInfoMap.Values
+                        .Select(n => n.RepositoryUrl ?? n.ProjectUrl)
+                        .Where(u => u?.Contains("github.com", StringComparison.OrdinalIgnoreCase) == true)
+                        .ToList();
+
+                    if (repoUrls.Count > 0)
+                    {
+                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls);
+
+                        foreach (var (packageId, info) in nugetInfoMap)
+                        {
+                            var url = info.RepositoryUrl ?? info.ProjectUrl;
+                            if (url is not null && results.TryGetValue(url, out var repoInfo))
+                            {
+                                repoInfoMap[packageId] = repoInfo;
+                            }
+                        }
+                    }
+
+                    if (githubClient.IsRateLimited)
+                    {
+                        ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
+                    }
+                });
+
+            // Phase 3: Batch fetch vulnerabilities
+            if (!githubClient.IsRateLimited && githubClient.HasToken)
+            {
+                await AnsiConsole.Status()
+                    .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
+                    {
+                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allReferences.Keys);
+
+                        if (githubClient.IsRateLimited)
+                        {
+                            ctx.Status("[yellow]GitHub rate limited - vulnerability data may be incomplete[/]");
+                        }
+                    });
+            }
+        }
+
+        // Phase 4: Calculate health scores
+        var packages = new List<PackageHealth>();
+
+        foreach (var (packageId, reference) in allReferences)
+        {
+            if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo))
+                continue;
+
+            repoInfoMap.TryGetValue(packageId, out var repoInfo);
+            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+
+            var health = calculator.Calculate(
+                packageId,
+                reference.Version,
+                nugetInfo,
+                repoInfo,
+                vulnerabilities);
+
+            packages.Add(health);
+        }
 
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
