@@ -225,6 +225,7 @@ public static class CraReportCommand
         };
 
         var reportGenerator = new CraReportGenerator();
+        reportGenerator.SetHealthData(packages);
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities);
 
         // Determine output path

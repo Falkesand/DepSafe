@@ -113,102 +113,1170 @@ public sealed class CraReportGenerator
     }
 
     /// <summary>
-    /// Generate HTML report.
+    /// Generate interactive HTML report with drill-down capabilities.
     /// </summary>
     public string GenerateHtml(CraReport report)
     {
         var sb = new StringBuilder();
+        var packages = report.Sbom.Packages.Skip(1).ToList(); // Skip root package
 
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html lang=\"en\">");
         sb.AppendLine("<head>");
         sb.AppendLine("  <meta charset=\"UTF-8\">");
         sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
-        sb.AppendLine("  <title>CRA Compliance Report</title>");
-        sb.AppendLine("  <style>");
-        sb.AppendLine("    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }");
-        sb.AppendLine("    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }");
-        sb.AppendLine("    h1 { color: #333; border-bottom: 2px solid #007acc; padding-bottom: 10px; }");
-        sb.AppendLine("    h2 { color: #555; margin-top: 30px; }");
-        sb.AppendLine("    .status { display: inline-block; padding: 4px 12px; border-radius: 4px; font-weight: bold; }");
-        sb.AppendLine("    .status.compliant { background: #d4edda; color: #155724; }");
-        sb.AppendLine("    .status.action-required { background: #fff3cd; color: #856404; }");
-        sb.AppendLine("    .status.non-compliant { background: #f8d7da; color: #721c24; }");
-        sb.AppendLine("    .metric { display: inline-block; margin-right: 30px; margin-bottom: 20px; }");
-        sb.AppendLine("    .metric-value { font-size: 36px; font-weight: bold; color: #007acc; }");
-        sb.AppendLine("    .metric-label { font-size: 14px; color: #666; }");
-        sb.AppendLine("    table { width: 100%; border-collapse: collapse; margin-top: 20px; }");
-        sb.AppendLine("    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }");
-        sb.AppendLine("    th { background: #f8f9fa; font-weight: 600; }");
-        sb.AppendLine("    .recommendation { background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 10px; }");
-        sb.AppendLine("    .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 14px; }");
-        sb.AppendLine("  </style>");
+        sb.AppendLine($"  <title>CRA Compliance Report - {EscapeHtml(Path.GetFileName(report.ProjectPath))}</title>");
+        sb.Append(GetHtmlStyles());
         sb.AppendLine("</head>");
         sb.AppendLine("<body>");
-        sb.AppendLine("  <div class=\"container\">");
+
+        // Sidebar Navigation
+        sb.AppendLine("<nav class=\"sidebar\">");
+        sb.AppendLine("  <div class=\"sidebar-header\">");
+        sb.AppendLine("    <h2>NuGet Health</h2>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <ul class=\"nav-links\">");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('overview')\" class=\"active\" data-section=\"overview\">Overview</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('packages')\" data-section=\"packages\">Packages</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('sbom')\" data-section=\"sbom\">SBOM</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('vulnerabilities')\" data-section=\"vulnerabilities\">Vulnerabilities</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('compliance')\" data-section=\"compliance\">Compliance</a></li>");
+        sb.AppendLine("  </ul>");
+        sb.AppendLine("</nav>");
+
+        // Main Content
+        sb.AppendLine("<main class=\"main-content\">");
 
         // Header
-        sb.AppendLine("    <h1>EU Cyber Resilience Act Compliance Report</h1>");
-        sb.AppendLine($"    <p><strong>Project:</strong> {EscapeHtml(report.ProjectPath)}</p>");
-        sb.AppendLine($"    <p><strong>Generated:</strong> {report.GeneratedAt:yyyy-MM-dd HH:mm:ss} UTC</p>");
+        sb.AppendLine("<header class=\"header\">");
+        sb.AppendLine($"  <h1>{EscapeHtml(Path.GetFileName(report.ProjectPath))}</h1>");
+        sb.AppendLine($"  <p class=\"subtitle\">Generated {report.GeneratedAt:MMMM dd, yyyy 'at' HH:mm} UTC</p>");
+        sb.AppendLine("</header>");
 
-        // Overall status
-        var statusClass = report.OverallComplianceStatus switch
-        {
-            CraComplianceStatus.Compliant => "compliant",
-            CraComplianceStatus.ActionRequired => "action-required",
-            _ => "non-compliant"
-        };
-        sb.AppendLine($"    <p><strong>Overall Status:</strong> <span class=\"status {statusClass}\">{report.OverallComplianceStatus}</span></p>");
+        // Overview Section
+        sb.AppendLine("<section id=\"overview\" class=\"section active\">");
+        GenerateOverviewSection(sb, report);
+        sb.AppendLine("</section>");
 
-        // Key metrics
-        sb.AppendLine("    <h2>Key Metrics</h2>");
-        sb.AppendLine("    <div>");
-        sb.AppendLine($"      <div class=\"metric\"><div class=\"metric-value\">{report.HealthScore}</div><div class=\"metric-label\">Health Score</div></div>");
-        sb.AppendLine($"      <div class=\"metric\"><div class=\"metric-value\">{report.PackageCount}</div><div class=\"metric-label\">Packages</div></div>");
-        sb.AppendLine($"      <div class=\"metric\"><div class=\"metric-value\">{report.VulnerabilityCount}</div><div class=\"metric-label\">Vulnerabilities</div></div>");
-        sb.AppendLine($"      <div class=\"metric\"><div class=\"metric-value\">{report.CriticalPackageCount}</div><div class=\"metric-label\">Critical Packages</div></div>");
-        sb.AppendLine("    </div>");
+        // Packages Section
+        sb.AppendLine("<section id=\"packages\" class=\"section\">");
+        GeneratePackagesSection(sb, report);
+        sb.AppendLine("</section>");
 
-        // Compliance checklist
-        sb.AppendLine("    <h2>Compliance Checklist</h2>");
-        sb.AppendLine("    <table>");
-        sb.AppendLine("      <tr><th>Requirement</th><th>Status</th><th>Evidence</th></tr>");
+        // SBOM Section
+        sb.AppendLine("<section id=\"sbom\" class=\"section\">");
+        GenerateSbomSection(sb, report, packages);
+        sb.AppendLine("</section>");
 
-        foreach (var item in report.ComplianceItems)
-        {
-            var itemStatusClass = item.Status switch
-            {
-                CraComplianceStatus.Compliant => "compliant",
-                CraComplianceStatus.ActionRequired => "action-required",
-                _ => "non-compliant"
-            };
-            sb.AppendLine($"      <tr>");
-            sb.AppendLine($"        <td><strong>{EscapeHtml(item.Requirement)}</strong><br><small>{EscapeHtml(item.Description)}</small></td>");
-            sb.AppendLine($"        <td><span class=\"status {itemStatusClass}\">{item.Status}</span></td>");
-            sb.AppendLine($"        <td>{EscapeHtml(item.Evidence ?? "")}");
-            if (!string.IsNullOrEmpty(item.Recommendation))
-            {
-                sb.AppendLine($"<div class=\"recommendation\"><strong>Recommendation:</strong> {EscapeHtml(item.Recommendation)}</div>");
-            }
-            sb.AppendLine($"        </td>");
-            sb.AppendLine($"      </tr>");
-        }
+        // Vulnerabilities Section
+        sb.AppendLine("<section id=\"vulnerabilities\" class=\"section\">");
+        GenerateVulnerabilitiesSection(sb, report);
+        sb.AppendLine("</section>");
 
-        sb.AppendLine("    </table>");
+        // Compliance Section
+        sb.AppendLine("<section id=\"compliance\" class=\"section\">");
+        GenerateComplianceSection(sb, report);
+        sb.AppendLine("</section>");
 
-        // Footer
-        sb.AppendLine("    <div class=\"footer\">");
-        sb.AppendLine("      <p>Generated by NuGetHealthAnalyzer</p>");
-        sb.AppendLine("      <p><small>This report assists with EU Cyber Resilience Act compliance. Consult legal counsel for authoritative compliance guidance.</small></p>");
-        sb.AppendLine("    </div>");
+        sb.AppendLine("</main>");
 
-        sb.AppendLine("  </div>");
+        // JavaScript
+        sb.Append(GetHtmlScripts(report));
+
         sb.AppendLine("</body>");
         sb.AppendLine("</html>");
 
         return sb.ToString();
     }
+
+    private void GenerateOverviewSection(StringBuilder sb, CraReport report)
+    {
+        var statusClass = report.OverallComplianceStatus switch
+        {
+            CraComplianceStatus.Compliant => "healthy",
+            CraComplianceStatus.ActionRequired => "warning",
+            _ => "critical"
+        };
+
+        sb.AppendLine("<div class=\"overview-grid\">");
+
+        // Health Score Card
+        sb.AppendLine("  <div class=\"card score-card\">");
+        sb.AppendLine("    <h3>Health Score</h3>");
+        sb.AppendLine($"    <div class=\"score-gauge {GetScoreClass(report.HealthScore)}\">");
+        sb.AppendLine($"      <svg viewBox=\"0 0 100 50\">");
+        sb.AppendLine($"        <path class=\"gauge-bg\" d=\"M 10 50 A 40 40 0 0 1 90 50\" />");
+        var angle = 180 * (report.HealthScore / 100.0);
+        sb.AppendLine($"        <path class=\"gauge-fill\" d=\"M 10 50 A 40 40 0 0 1 90 50\" style=\"stroke-dasharray: {angle * 1.26}, 226\" />");
+        sb.AppendLine($"      </svg>");
+        sb.AppendLine($"      <div class=\"score-value\">{report.HealthScore}</div>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine($"    <div class=\"score-label {GetScoreClass(report.HealthScore)}\">{report.HealthStatus}</div>");
+        sb.AppendLine("  </div>");
+
+        // Compliance Status Card
+        sb.AppendLine($"  <div class=\"card status-card {statusClass}\">");
+        sb.AppendLine("    <h3>CRA Compliance</h3>");
+        sb.AppendLine($"    <div class=\"big-status\">{report.OverallComplianceStatus}</div>");
+        var compliantCount = report.ComplianceItems.Count(i => i.Status == CraComplianceStatus.Compliant);
+        sb.AppendLine($"    <div class=\"status-detail\">{compliantCount}/{report.ComplianceItems.Count} requirements met</div>");
+        sb.AppendLine("  </div>");
+
+        // Summary Cards
+        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine($"    <div class=\"metric-value\">{report.PackageCount}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Total Packages</div>");
+        sb.AppendLine("  </div>");
+
+        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine($"    <div class=\"metric-value {(report.VulnerabilityCount > 0 ? "critical" : "")}\">{report.VulnerabilityCount}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Vulnerabilities</div>");
+        sb.AppendLine("  </div>");
+
+        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine($"    <div class=\"metric-value {(report.CriticalPackageCount > 0 ? "critical" : "")}\">{report.CriticalPackageCount}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Critical Packages</div>");
+        sb.AppendLine("  </div>");
+
+        sb.AppendLine("</div>");
+
+        // Quick Actions
+        if (report.ComplianceItems.Any(i => i.Status != CraComplianceStatus.Compliant))
+        {
+            sb.AppendLine("<div class=\"card recommendations-card\">");
+            sb.AppendLine("  <h3>Recommended Actions</h3>");
+            sb.AppendLine("  <ul class=\"action-list\">");
+            foreach (var item in report.ComplianceItems.Where(i => !string.IsNullOrEmpty(i.Recommendation)))
+            {
+                sb.AppendLine($"    <li><strong>{EscapeHtml(item.Requirement)}:</strong> {EscapeHtml(item.Recommendation!)}</li>");
+            }
+            sb.AppendLine("  </ul>");
+            sb.AppendLine("</div>");
+        }
+    }
+
+    private void GeneratePackagesSection(StringBuilder sb, CraReport report)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Package Health</h2>");
+        sb.AppendLine("  <input type=\"text\" id=\"package-search\" class=\"search-input\" placeholder=\"Search packages...\" onkeyup=\"filterPackages()\">");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"filter-bar\">");
+        sb.AppendLine("  <button class=\"filter-btn active\" onclick=\"filterByStatus('all')\">All</button>");
+        sb.AppendLine("  <button class=\"filter-btn healthy\" onclick=\"filterByStatus('healthy')\">Healthy</button>");
+        sb.AppendLine("  <button class=\"filter-btn watch\" onclick=\"filterByStatus('watch')\">Watch</button>");
+        sb.AppendLine("  <button class=\"filter-btn warning\" onclick=\"filterByStatus('warning')\">Warning</button>");
+        sb.AppendLine("  <button class=\"filter-btn critical\" onclick=\"filterByStatus('critical')\">Critical</button>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div id=\"packages-list\" class=\"packages-list\">");
+
+        foreach (var pkg in report.Sbom.Packages.Skip(1))
+        {
+            var pkgName = pkg.Name;
+            var version = pkg.VersionInfo;
+            var score = 70; // Default score
+            var status = "watch";
+
+            // Find matching health data
+            var healthData = _healthDataCache?.FirstOrDefault(h => h.PackageId == pkgName);
+            if (healthData != null)
+            {
+                score = healthData.Score;
+                status = healthData.Status.ToString().ToLowerInvariant();
+            }
+
+            sb.AppendLine($"  <div class=\"package-card\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
+            sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
+            sb.AppendLine($"      <div class=\"package-info\">");
+            sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
+            sb.AppendLine($"        <span class=\"package-version\">{EscapeHtml(version)}</span>");
+            sb.AppendLine($"      </div>");
+            sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
+            sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
+            sb.AppendLine("    </div>");
+            sb.AppendLine("    <div class=\"package-details\">");
+
+            if (healthData != null)
+            {
+                sb.AppendLine("      <div class=\"detail-grid\">");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{EscapeHtml(healthData.License ?? "Unknown")}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{healthData.Metrics.DaysSinceLastRelease} days ago</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
+                if (healthData.Metrics.Stars.HasValue)
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">GitHub Stars</span><span class=\"value\">{FormatNumber(healthData.Metrics.Stars.Value)}</span></div>");
+                if (healthData.Metrics.DaysSinceLastCommit.HasValue)
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Commit</span><span class=\"value\">{healthData.Metrics.DaysSinceLastCommit} days ago</span></div>");
+                sb.AppendLine("      </div>");
+
+                if (healthData.Recommendations.Count > 0)
+                {
+                    sb.AppendLine("      <div class=\"recommendations\">");
+                    sb.AppendLine("        <h4>Recommendations</h4>");
+                    sb.AppendLine("        <ul>");
+                    foreach (var rec in healthData.Recommendations)
+                        sb.AppendLine($"          <li>{EscapeHtml(rec)}</li>");
+                    sb.AppendLine("        </ul>");
+                    sb.AppendLine("      </div>");
+                }
+
+                if (healthData.Vulnerabilities.Count > 0)
+                {
+                    sb.AppendLine("      <div class=\"vulnerabilities-badge\">");
+                    sb.AppendLine($"        <span class=\"vuln-count\">{healthData.Vulnerabilities.Count} vulnerabilities</span>");
+                    sb.AppendLine("      </div>");
+                }
+            }
+
+            sb.AppendLine($"      <div class=\"package-links\">");
+            sb.AppendLine($"        <a href=\"https://www.nuget.org/packages/{EscapeHtml(pkgName)}/{EscapeHtml(version)}\" target=\"_blank\">NuGet</a>");
+            if (!string.IsNullOrEmpty(healthData?.RepositoryUrl))
+                sb.AppendLine($"        <a href=\"{EscapeHtml(healthData.RepositoryUrl)}\" target=\"_blank\">Repository</a>");
+            sb.AppendLine($"      </div>");
+            sb.AppendLine("    </div>");
+            sb.AppendLine("  </div>");
+        }
+
+        sb.AppendLine("</div>");
+    }
+
+    private void GenerateSbomSection(StringBuilder sb, CraReport report, List<SbomPackage> packages)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Software Bill of Materials (SBOM)</h2>");
+        sb.AppendLine("  <div class=\"sbom-meta\">");
+        sb.AppendLine($"    <span class=\"meta-item\">Format: SPDX {report.Sbom.SpdxVersion}</span>");
+        sb.AppendLine($"    <span class=\"meta-item\">Components: {packages.Count}</span>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"card\">");
+        sb.AppendLine("  <input type=\"text\" id=\"sbom-search\" class=\"search-input\" placeholder=\"Search components...\" onkeyup=\"filterSbom()\">");
+        sb.AppendLine("  <table class=\"sbom-table\" id=\"sbom-table\">");
+        sb.AppendLine("    <thead>");
+        sb.AppendLine("      <tr>");
+        sb.AppendLine("        <th>Component</th>");
+        sb.AppendLine("        <th>Version</th>");
+        sb.AppendLine("        <th>License</th>");
+        sb.AppendLine("        <th>PURL</th>");
+        sb.AppendLine("      </tr>");
+        sb.AppendLine("    </thead>");
+        sb.AppendLine("    <tbody>");
+
+        foreach (var pkg in packages)
+        {
+            var purl = pkg.ExternalRefs?.FirstOrDefault(r => r.ReferenceType == "purl")?.ReferenceLocator ?? "";
+            sb.AppendLine($"    <tr data-name=\"{EscapeHtml(pkg.Name.ToLowerInvariant())}\">");
+            sb.AppendLine($"      <td class=\"component-name\">");
+            sb.AppendLine($"        <strong>{EscapeHtml(pkg.Name)}</strong>");
+            sb.AppendLine($"        <a href=\"{EscapeHtml(pkg.DownloadLocation)}\" target=\"_blank\" class=\"external-link\">View on NuGet</a>");
+            sb.AppendLine($"      </td>");
+            sb.AppendLine($"      <td>{EscapeHtml(pkg.VersionInfo)}</td>");
+            sb.AppendLine($"      <td><span class=\"license-badge\">{EscapeHtml(pkg.LicenseDeclared ?? "Unknown")}</span></td>");
+            sb.AppendLine($"      <td class=\"purl\"><code>{EscapeHtml(purl)}</code></td>");
+            sb.AppendLine($"    </tr>");
+        }
+
+        sb.AppendLine("    </tbody>");
+        sb.AppendLine("  </table>");
+        sb.AppendLine("</div>");
+
+        // SBOM Export
+        sb.AppendLine("<div class=\"export-section\">");
+        sb.AppendLine("  <button onclick=\"exportSbom('spdx')\" class=\"export-btn\">Export SPDX JSON</button>");
+        sb.AppendLine("  <button onclick=\"exportSbom('cyclonedx')\" class=\"export-btn\">Export CycloneDX</button>");
+        sb.AppendLine("</div>");
+    }
+
+    private void GenerateVulnerabilitiesSection(StringBuilder sb, CraReport report)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Vulnerability Status (VEX)</h2>");
+        sb.AppendLine("</div>");
+
+        var statements = report.Vex.Statements;
+
+        if (statements.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state\">");
+            sb.AppendLine("  <div class=\"empty-icon\">&#10003;</div>");
+            sb.AppendLine("  <h3>No Known Vulnerabilities</h3>");
+            sb.AppendLine("  <p>No vulnerabilities were found in the analyzed packages.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        // Vulnerability summary
+        var affectedCount = statements.Count(s => s.Status == VexStatus.Affected);
+        var fixedCount = statements.Count(s => s.Status == VexStatus.Fixed);
+        var notAffectedCount = statements.Count(s => s.Status == VexStatus.NotAffected);
+
+        sb.AppendLine("<div class=\"vuln-summary\">");
+        sb.AppendLine($"  <div class=\"vuln-stat affected\"><span class=\"count\">{affectedCount}</span><span class=\"label\">Affected</span></div>");
+        sb.AppendLine($"  <div class=\"vuln-stat fixed\"><span class=\"count\">{fixedCount}</span><span class=\"label\">Fixed</span></div>");
+        sb.AppendLine($"  <div class=\"vuln-stat not-affected\"><span class=\"count\">{notAffectedCount}</span><span class=\"label\">Not Affected</span></div>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"vulnerabilities-list\">");
+
+        foreach (var stmt in statements)
+        {
+            var statusClass = stmt.Status switch
+            {
+                VexStatus.Affected => "affected",
+                VexStatus.Fixed => "fixed",
+                _ => "not-affected"
+            };
+
+            sb.AppendLine($"  <div class=\"vuln-card {statusClass}\">");
+            sb.AppendLine("    <div class=\"vuln-header\">");
+            sb.AppendLine($"      <span class=\"vuln-id\">{EscapeHtml(stmt.Vulnerability.Name)}</span>");
+            sb.AppendLine($"      <span class=\"vuln-status {statusClass}\">{stmt.Status.Replace("_", " ")}</span>");
+            sb.AppendLine("    </div>");
+            sb.AppendLine($"    <p class=\"vuln-description\">{EscapeHtml(stmt.Vulnerability.Description ?? "")}</p>");
+            sb.AppendLine("    <div class=\"vuln-products\">");
+            sb.AppendLine("      <strong>Affected Package:</strong>");
+            foreach (var product in stmt.Products)
+            {
+                sb.AppendLine($"      <code>{EscapeHtml(product.Identifiers.Purl)}</code>");
+            }
+            sb.AppendLine("    </div>");
+            if (!string.IsNullOrEmpty(stmt.ActionStatement))
+            {
+                sb.AppendLine($"    <div class=\"vuln-action\"><strong>Action:</strong> {EscapeHtml(stmt.ActionStatement)}</div>");
+            }
+            if (stmt.Vulnerability.Aliases?.Count > 0)
+            {
+                sb.AppendLine($"    <div class=\"vuln-aliases\"><strong>CVEs:</strong> {string.Join(", ", stmt.Vulnerability.Aliases.Select(EscapeHtml))}</div>");
+            }
+            sb.AppendLine("  </div>");
+        }
+
+        sb.AppendLine("</div>");
+    }
+
+    private void GenerateComplianceSection(StringBuilder sb, CraReport report)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>CRA Compliance Checklist</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"compliance-list\">");
+
+        foreach (var item in report.ComplianceItems)
+        {
+            var statusClass = item.Status switch
+            {
+                CraComplianceStatus.Compliant => "compliant",
+                CraComplianceStatus.ActionRequired => "action-required",
+                _ => "non-compliant"
+            };
+
+            sb.AppendLine($"  <div class=\"compliance-item {statusClass}\">");
+            sb.AppendLine("    <div class=\"compliance-header\">");
+            sb.AppendLine($"      <div class=\"compliance-icon\">{(item.Status == CraComplianceStatus.Compliant ? "&#10003;" : item.Status == CraComplianceStatus.ActionRequired ? "!" : "&#10007;")}</div>");
+            sb.AppendLine("      <div class=\"compliance-info\">");
+            sb.AppendLine($"        <h3>{EscapeHtml(item.Requirement)}</h3>");
+            sb.AppendLine($"        <p>{EscapeHtml(item.Description)}</p>");
+            sb.AppendLine("      </div>");
+            sb.AppendLine($"      <span class=\"compliance-status {statusClass}\">{item.Status}</span>");
+            sb.AppendLine("    </div>");
+            sb.AppendLine("    <div class=\"compliance-evidence\">");
+            sb.AppendLine($"      <strong>Evidence:</strong> {EscapeHtml(item.Evidence ?? "N/A")}");
+            sb.AppendLine("    </div>");
+            if (!string.IsNullOrEmpty(item.Recommendation))
+            {
+                sb.AppendLine($"    <div class=\"compliance-recommendation\">");
+                sb.AppendLine($"      <strong>Recommendation:</strong> {EscapeHtml(item.Recommendation)}");
+                sb.AppendLine("    </div>");
+            }
+            sb.AppendLine("  </div>");
+        }
+
+        sb.AppendLine("</div>");
+
+        // Legal disclaimer
+        sb.AppendLine("<div class=\"card disclaimer\">");
+        sb.AppendLine("  <h4>Disclaimer</h4>");
+        sb.AppendLine("  <p>This report assists with EU Cyber Resilience Act compliance assessment. It is not legal advice. Consult legal counsel for authoritative compliance guidance.</p>");
+        sb.AppendLine("</div>");
+    }
+
+    private static string GetHtmlStyles()
+    {
+        return @"
+  <style>
+    :root {
+      --primary: #0066cc;
+      --primary-dark: #004c99;
+      --success: #28a745;
+      --warning: #ffc107;
+      --danger: #dc3545;
+      --watch: #17a2b8;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --border: #dee2e6;
+      --sidebar-width: 240px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: var(--sidebar-width);
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      color: white;
+      padding: 20px 0;
+      overflow-y: auto;
+    }
+
+    .sidebar-header {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      margin-bottom: 20px;
+    }
+
+    .sidebar-header h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .nav-links {
+      list-style: none;
+    }
+
+    .nav-links a {
+      display: block;
+      padding: 12px 20px;
+      color: rgba(255,255,255,0.7);
+      text-decoration: none;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+    }
+
+    .nav-links a:hover, .nav-links a.active {
+      background: rgba(255,255,255,0.1);
+      color: white;
+      border-left-color: var(--primary);
+    }
+
+    .main-content {
+      margin-left: var(--sidebar-width);
+      padding: 30px;
+      min-height: 100vh;
+    }
+
+    .header {
+      margin-bottom: 30px;
+    }
+
+    .header h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 15px;
+    }
+
+    .section-header h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .score-card {
+      text-align: center;
+    }
+
+    .score-gauge {
+      position: relative;
+      width: 150px;
+      height: 80px;
+      margin: 20px auto;
+    }
+
+    .score-gauge svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: #e9ecef;
+      stroke-width: 8;
+      stroke-linecap: round;
+    }
+
+    .gauge-fill {
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 8;
+      stroke-linecap: round;
+      transform-origin: center;
+      transition: stroke-dasharray 0.5s;
+    }
+
+    .score-gauge.healthy .gauge-fill { stroke: var(--success); }
+    .score-gauge.watch .gauge-fill { stroke: var(--watch); }
+    .score-gauge.warning .gauge-fill { stroke: var(--warning); }
+    .score-gauge.critical .gauge-fill { stroke: var(--danger); }
+
+    .score-value {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    .score-label {
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+    }
+
+    .score-label.healthy, .healthy { color: var(--success); }
+    .score-label.watch, .watch { color: var(--watch); }
+    .score-label.warning, .warning { color: var(--warning); }
+    .score-label.critical, .critical { color: var(--danger); }
+
+    .status-card {
+      text-align: center;
+    }
+
+    .status-card.healthy { border-left: 4px solid var(--success); }
+    .status-card.warning { border-left: 4px solid var(--warning); }
+    .status-card.critical { border-left: 4px solid var(--danger); }
+
+    .big-status {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 15px 0;
+    }
+
+    .status-detail {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .metric-card {
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .metric-label {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .search-input {
+      padding: 10px 15px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      width: 250px;
+    }
+
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      background: white;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .filter-btn:hover, .filter-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .filter-btn.healthy.active { background: var(--success); border-color: var(--success); }
+    .filter-btn.watch.active { background: var(--watch); border-color: var(--watch); }
+    .filter-btn.warning.active { background: var(--warning); border-color: var(--warning); color: #000; }
+    .filter-btn.critical.active { background: var(--danger); border-color: var(--danger); }
+
+    .packages-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .package-card {
+      background: var(--card-bg);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .package-card[data-status='healthy'] { border-left: 4px solid var(--success); }
+    .package-card[data-status='watch'] { border-left: 4px solid var(--watch); }
+    .package-card[data-status='warning'] { border-left: 4px solid var(--warning); }
+    .package-card[data-status='critical'] { border-left: 4px solid var(--danger); }
+
+    .package-header {
+      display: flex;
+      align-items: center;
+      padding: 15px 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .package-header:hover {
+      background: var(--bg);
+    }
+
+    .package-info {
+      flex: 1;
+    }
+
+    .package-name {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .package-version {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-left: 10px;
+    }
+
+    .package-score {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: white;
+      margin-right: 15px;
+    }
+
+    .package-score.healthy { background: var(--success); }
+    .package-score.watch { background: var(--watch); }
+    .package-score.warning { background: var(--warning); color: #000; }
+    .package-score.critical { background: var(--danger); }
+
+    .expand-icon {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+    }
+
+    .package-card.expanded .expand-icon {
+      transform: rotate(45deg);
+    }
+
+    .package-details {
+      display: none;
+      padding: 20px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .package-card.expanded .package-details {
+      display: block;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .detail-item .label {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      margin-bottom: 3px;
+    }
+
+    .detail-item .value {
+      font-weight: 500;
+    }
+
+    .recommendations {
+      background: #fff3cd;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+    }
+
+    .recommendations h4 {
+      margin-bottom: 10px;
+      color: #856404;
+    }
+
+    .recommendations ul {
+      margin-left: 20px;
+    }
+
+    .vulnerabilities-badge {
+      background: var(--danger);
+      color: white;
+      padding: 8px 15px;
+      border-radius: 8px;
+      display: inline-block;
+    }
+
+    .package-links {
+      margin-top: 15px;
+    }
+
+    .package-links a {
+      color: var(--primary);
+      margin-right: 15px;
+      text-decoration: none;
+    }
+
+    .package-links a:hover {
+      text-decoration: underline;
+    }
+
+    .sbom-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+
+    .sbom-table th, .sbom-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sbom-table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+
+    .component-name strong {
+      display: block;
+    }
+
+    .external-link {
+      font-size: 0.8rem;
+      color: var(--primary);
+    }
+
+    .license-badge {
+      background: var(--bg);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    .purl code {
+      background: var(--bg);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      word-break: break-all;
+    }
+
+    .export-section {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .export-btn {
+      padding: 10px 20px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    .export-btn:hover {
+      background: var(--primary-dark);
+    }
+
+    .vuln-summary {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .vuln-stat {
+      flex: 1;
+      text-align: center;
+      padding: 20px;
+      border-radius: 12px;
+      background: var(--card-bg);
+    }
+
+    .vuln-stat .count {
+      display: block;
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    .vuln-stat.affected .count { color: var(--danger); }
+    .vuln-stat.fixed .count { color: var(--success); }
+    .vuln-stat.not-affected .count { color: var(--text-muted); }
+
+    .vulnerabilities-list {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .vuln-card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 20px;
+      border-left: 4px solid var(--border);
+    }
+
+    .vuln-card.affected { border-left-color: var(--danger); }
+    .vuln-card.fixed { border-left-color: var(--success); }
+
+    .vuln-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .vuln-id {
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .vuln-status {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .vuln-status.affected { background: #f8d7da; color: #721c24; }
+    .vuln-status.fixed { background: #d4edda; color: #155724; }
+    .vuln-status.not-affected { background: #e9ecef; color: #6c757d; }
+
+    .vuln-description {
+      color: var(--text-muted);
+      margin-bottom: 15px;
+    }
+
+    .vuln-products, .vuln-action, .vuln-aliases {
+      margin-top: 10px;
+      font-size: 0.9rem;
+    }
+
+    .vuln-products code {
+      background: var(--bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .vuln-action {
+      background: #fff3cd;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .compliance-list {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .compliance-item {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 20px;
+      border-left: 4px solid var(--border);
+    }
+
+    .compliance-item.compliant { border-left-color: var(--success); }
+    .compliance-item.action-required { border-left-color: var(--warning); }
+    .compliance-item.non-compliant { border-left-color: var(--danger); }
+
+    .compliance-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 15px;
+    }
+
+    .compliance-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      flex-shrink: 0;
+    }
+
+    .compliance-item.compliant .compliance-icon { background: #d4edda; color: var(--success); }
+    .compliance-item.action-required .compliance-icon { background: #fff3cd; color: #856404; }
+    .compliance-item.non-compliant .compliance-icon { background: #f8d7da; color: var(--danger); }
+
+    .compliance-info {
+      flex: 1;
+    }
+
+    .compliance-info h3 {
+      font-size: 1rem;
+      margin-bottom: 5px;
+    }
+
+    .compliance-info p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .compliance-status {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .compliance-status.compliant { background: #d4edda; color: #155724; }
+    .compliance-status.action-required { background: #fff3cd; color: #856404; }
+    .compliance-status.non-compliant { background: #f8d7da; color: #721c24; }
+
+    .compliance-evidence, .compliance-recommendation {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+
+    .compliance-recommendation {
+      background: #fff3cd;
+      padding: 15px;
+      border-radius: 8px;
+      border-top: none;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .empty-icon {
+      font-size: 4rem;
+      color: var(--success);
+      margin-bottom: 20px;
+    }
+
+    .disclaimer {
+      background: var(--bg);
+      border-left: 4px solid var(--primary);
+    }
+
+    .disclaimer h4 {
+      margin-bottom: 10px;
+    }
+
+    .action-list {
+      margin-left: 20px;
+    }
+
+    .action-list li {
+      margin-bottom: 10px;
+    }
+
+    .sbom-meta {
+      display: flex;
+      gap: 20px;
+    }
+
+    .meta-item {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        width: 100%;
+        position: relative;
+        height: auto;
+      }
+      .main-content {
+        margin-left: 0;
+      }
+      .overview-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>";
+    }
+
+    private string GetHtmlScripts(CraReport report)
+    {
+        var sbomJson = JsonSerializer.Serialize(report.Sbom, new JsonSerializerOptions { WriteIndented = true });
+        var vexJson = JsonSerializer.Serialize(report.Vex, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        return $@"
+<script>
+const sbomData = {sbomJson};
+const vexData = {vexJson};
+
+function showSection(sectionId) {{
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
+  document.getElementById(sectionId).classList.add('active');
+  document.querySelector(`[data-section='${{sectionId}}']`).classList.add('active');
+}}
+
+function togglePackage(header) {{
+  header.parentElement.classList.toggle('expanded');
+}}
+
+function filterPackages() {{
+  const search = document.getElementById('package-search').value.toLowerCase();
+  document.querySelectorAll('.package-card').forEach(card => {{
+    const name = card.dataset.name;
+    card.style.display = name.includes(search) ? '' : 'none';
+  }});
+}}
+
+let currentFilter = 'all';
+function filterByStatus(status) {{
+  currentFilter = status;
+  document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+
+  document.querySelectorAll('.package-card').forEach(card => {{
+    if (status === 'all' || card.dataset.status === status) {{
+      card.style.display = '';
+    }} else {{
+      card.style.display = 'none';
+    }}
+  }});
+}}
+
+function filterSbom() {{
+  const search = document.getElementById('sbom-search').value.toLowerCase();
+  document.querySelectorAll('#sbom-table tbody tr').forEach(row => {{
+    const name = row.dataset.name;
+    row.style.display = name.includes(search) ? '' : 'none';
+  }});
+}}
+
+function exportSbom(format) {{
+  let data, filename, type;
+  if (format === 'spdx') {{
+    data = JSON.stringify(sbomData, null, 2);
+    filename = 'sbom.spdx.json';
+    type = 'application/json';
+  }} else {{
+    // Convert to CycloneDX format
+    data = JSON.stringify(sbomData, null, 2);
+    filename = 'sbom.cyclonedx.json';
+    type = 'application/json';
+  }}
+
+  const blob = new Blob([data], {{ type }});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}}
+</script>";
+    }
+
+    private List<PackageHealth>? _healthDataCache;
+
+    /// <summary>
+    /// Set package health data for detailed report generation.
+    /// </summary>
+    public void SetHealthData(IEnumerable<PackageHealth> packages)
+    {
+        _healthDataCache = packages.ToList();
+    }
+
+    private static string GetScoreClass(int score) => score switch
+    {
+        >= 80 => "healthy",
+        >= 60 => "watch",
+        >= 40 => "warning",
+        _ => "critical"
+    };
+
+    private static string FormatNumber(long number) => number switch
+    {
+        >= 1_000_000_000 => $"{number / 1_000_000_000.0:F1}B",
+        >= 1_000_000 => $"{number / 1_000_000.0:F1}M",
+        >= 1_000 => $"{number / 1_000.0:F1}K",
+        _ => number.ToString()
+    };
 
     /// <summary>
     /// Generate JSON report.
