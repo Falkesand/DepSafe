@@ -280,12 +280,13 @@ public static class CraReportCommand
                 reference.Version,
                 nugetInfo,
                 repoInfo,
-                vulnerabilities);
+                vulnerabilities,
+                DependencyType.Transitive);
 
             transitivePackages.Add(health);
         }
 
-        // Calculate health scores for package dependencies (for drill-down navigation)
+        // Calculate health scores for package dependencies (sub-dependencies for drill-down navigation)
         foreach (var packageId in dependencyPackageIds)
         {
             // Skip if already in transitive list
@@ -303,7 +304,8 @@ public static class CraReportCommand
                 nugetInfo.LatestVersion, // Use latest version since we don't have a specific version reference
                 nugetInfo,
                 repoInfo,
-                vulnerabilities);
+                vulnerabilities,
+                DependencyType.SubDependency);
 
             transitivePackages.Add(health);
         }

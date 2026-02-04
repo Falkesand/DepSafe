@@ -22,7 +22,8 @@ public sealed class HealthScoreCalculator
         string version,
         NuGetPackageInfo nugetInfo,
         GitHubRepoInfo? repoInfo,
-        List<VulnerabilityInfo> vulnerabilities)
+        List<VulnerabilityInfo> vulnerabilities,
+        DependencyType dependencyType = DependencyType.Direct)
     {
         var metrics = BuildMetrics(nugetInfo, repoInfo, vulnerabilities);
         var score = CalculateScore(metrics);
@@ -42,7 +43,8 @@ public sealed class HealthScoreCalculator
                 ? vulnerabilities.Select(v => v.Id).ToList()
                 : [],
             Recommendations = recommendations,
-            Dependencies = nugetInfo.Dependencies
+            Dependencies = nugetInfo.Dependencies,
+            DependencyType = dependencyType
         };
     }
 

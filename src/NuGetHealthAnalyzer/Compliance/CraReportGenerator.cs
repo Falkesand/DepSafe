@@ -324,6 +324,7 @@ public sealed class CraReportGenerator
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
             sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
+            sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
             sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
@@ -417,12 +418,18 @@ public sealed class CraReportGenerator
                 var score = healthData.Score;
                 var status = healthData.Status.ToString().ToLowerInvariant();
 
+                var depTypeBadge = healthData.DependencyType switch
+                {
+                    DependencyType.SubDependency => "<span class=\"dep-type-badge sub-dep\" title=\"Sub-dependency - a dependency of another package\">sub-dependency</span>",
+                    _ => "<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by NuGet dependency resolution\">transitive</span>"
+                };
+
                 sb.AppendLine($"  <div class=\"package-card transitive\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
                 sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
-                sb.AppendLine($"        <span class=\"transitive-badge\">transitive</span>");
+                sb.AppendLine($"        {depTypeBadge}");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
@@ -1498,14 +1505,28 @@ public sealed class CraReportGenerator
       background: #fafafa;
     }
 
-    .transitive-badge {
-      background: #6c757d;
-      color: white;
+    .dep-type-badge {
       padding: 2px 8px;
       border-radius: 10px;
       font-size: 0.7rem;
       margin-left: 10px;
       font-weight: 500;
+      text-transform: lowercase;
+    }
+
+    .dep-type-badge.direct {
+      background: #0d6efd;
+      color: white;
+    }
+
+    .dep-type-badge.transitive {
+      background: #6c757d;
+      color: white;
+    }
+
+    .dep-type-badge.sub-dep {
+      background: #6f42c1;
+      color: white;
     }
 
     .package-card.transitive {
