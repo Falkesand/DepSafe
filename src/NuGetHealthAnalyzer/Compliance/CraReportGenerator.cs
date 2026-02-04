@@ -1188,7 +1188,14 @@ public sealed class CraReportGenerator
 
         if (node.IsDuplicate)
         {
-            sb.AppendLine($"{indentStr}  <span class=\"node-badge duplicate\">dup</span>");
+            var dupTooltip = "Appears elsewhere in the tree";
+            if (_parentLookup.TryGetValue(node.PackageId, out var parents) && parents.Count > 0)
+            {
+                dupTooltip = $"Required by: {string.Join(", ", parents.Distinct().Take(5))}";
+                if (parents.Distinct().Count() > 5)
+                    dupTooltip += $" (+{parents.Distinct().Count() - 5} more)";
+            }
+            sb.AppendLine($"{indentStr}  <span class=\"node-badge duplicate\" title=\"{EscapeHtml(dupTooltip)}\">dup</span>");
         }
 
         if (node.HasVulnerabilities)
