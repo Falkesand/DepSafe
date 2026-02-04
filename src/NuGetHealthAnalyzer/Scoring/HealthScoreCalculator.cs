@@ -9,9 +9,25 @@ public sealed class HealthScoreCalculator
 {
     private readonly ScoreWeights _weights;
 
+    /// <summary>
+    /// License overrides from .cra-config.json.
+    /// Key: Package name (case-insensitive), Value: SPDX license identifier.
+    /// </summary>
+    public Dictionary<string, string>? LicenseOverrides { get; set; }
+
     public HealthScoreCalculator(ScoreWeights? weights = null)
     {
         _weights = weights ?? ScoreWeights.Default;
+    }
+
+    private string? GetEffectiveLicense(string packageId, string? detectedLicense)
+    {
+        if (LicenseOverrides is not null &&
+            LicenseOverrides.TryGetValue(packageId, out var overrideLicense))
+        {
+            return overrideLicense;
+        }
+        return detectedLicense;
     }
 
     /// <summary>
@@ -28,10 +44,13 @@ public sealed class HealthScoreCalculator
         // Filter to only vulnerabilities that actually affect this version
         var activeVulnerabilities = FilterActiveVulnerabilities(version, vulnerabilities);
 
+        // Apply license override if configured
+        var effectiveLicense = GetEffectiveLicense(packageId, nugetInfo.License);
+
         var metrics = BuildMetrics(nugetInfo, repoInfo, activeVulnerabilities);
         var score = CalculateScore(metrics);
         var status = GetStatus(score);
-        var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, nugetInfo.License, packageId, version);
+        var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, effectiveLicense, packageId, version);
         var recommendations = GenerateRecommendations(metrics, nugetInfo, repoInfo);
 
         return new PackageHealth
@@ -44,7 +63,7 @@ public sealed class HealthScoreCalculator
             CraStatus = craStatus,
             Metrics = metrics,
             RepositoryUrl = repoInfo is not null ? $"https://github.com/{repoInfo.FullName}" : nugetInfo.RepositoryUrl,
-            License = nugetInfo.License,
+            License = effectiveLicense,
             Vulnerabilities = activeVulnerabilities.Count > 0
                 ? activeVulnerabilities.Select(v => v.Id).ToList()
                 : [],
@@ -68,10 +87,13 @@ public sealed class HealthScoreCalculator
         // Filter to only vulnerabilities that actually affect this version
         var activeVulnerabilities = FilterActiveVulnerabilities(version, vulnerabilities);
 
+        // Apply license override if configured
+        var effectiveLicense = GetEffectiveLicense(packageName, npmInfo.License);
+
         var metrics = BuildMetrics(npmInfo, repoInfo, activeVulnerabilities);
         var score = CalculateScore(metrics);
         var status = GetStatus(score);
-        var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, npmInfo.License, packageName, version);
+        var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, effectiveLicense, packageName, version);
         var recommendations = GenerateRecommendations(metrics, npmInfo, repoInfo);
 
         // Convert npm dependencies to PackageDependency format
@@ -93,7 +115,7 @@ public sealed class HealthScoreCalculator
             CraStatus = craStatus,
             Metrics = metrics,
             RepositoryUrl = repoInfo is not null ? $"https://github.com/{repoInfo.FullName}" : npmInfo.RepositoryUrl,
-            License = npmInfo.License,
+            License = effectiveLicense,
             Vulnerabilities = activeVulnerabilities.Count > 0
                 ? activeVulnerabilities.Select(v => v.Id).ToList()
                 : [],
@@ -599,7 +621,7 @@ public sealed class HealthScoreCalculator
 
         if (metrics.DaysSinceLastRelease.HasValue && metrics.DaysSinceLastRelease > 730)
         {
-            recommendations.Add($"No releases in {metrics.DaysSinceLastRelease.Value / 365} years - consider alternatives");
+            recommendations.Add("No releases in 2+ years - consider alternatives");
         }
         else if (!metrics.DaysSinceLastRelease.HasValue)
         {
@@ -643,7 +665,7 @@ public sealed class HealthScoreCalculator
 
         if (metrics.DaysSinceLastRelease.HasValue && metrics.DaysSinceLastRelease > 730)
         {
-            recommendations.Add($"No releases in {metrics.DaysSinceLastRelease.Value / 365} years - consider alternatives");
+            recommendations.Add("No releases in 2+ years - consider alternatives");
         }
         else if (!metrics.DaysSinceLastRelease.HasValue)
         {

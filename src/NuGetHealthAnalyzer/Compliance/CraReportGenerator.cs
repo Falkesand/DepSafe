@@ -21,9 +21,13 @@ public sealed class CraReportGenerator
     /// <summary>
     /// Generate complete CRA compliance report.
     /// </summary>
+    /// <param name="healthReport">The health report data.</param>
+    /// <param name="vulnerabilities">Vulnerability data by package.</param>
+    /// <param name="startTime">Optional start time for calculating generation duration.</param>
     public CraReport Generate(
         ProjectReport healthReport,
-        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities)
+        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities,
+        DateTime? startTime = null)
     {
         // Build reverse dependency lookup for "Required by" information
         BuildParentLookup();
@@ -39,7 +43,8 @@ public sealed class CraReportGenerator
         }
 
         var sbom = _sbomGenerator.Generate(healthReport.ProjectPath, allPackagesForSbom);
-        var vex = _vexGenerator.Generate(healthReport.Packages, vulnerabilities);
+        // VEX should include both direct and transitive packages for proper vulnerability counting
+        var vex = _vexGenerator.Generate(allPackagesForSbom, vulnerabilities);
 
         var complianceItems = new List<CraComplianceItem>();
 
@@ -104,6 +109,7 @@ public sealed class CraReportGenerator
         return new CraReport
         {
             GeneratedAt = DateTime.UtcNow,
+            GenerationDuration = startTime.HasValue ? DateTime.UtcNow - startTime.Value : null,
             ProjectPath = healthReport.ProjectPath,
             HealthScore = healthReport.OverallScore,
             HealthStatus = healthReport.OverallStatus,
@@ -170,7 +176,10 @@ public sealed class CraReportGenerator
         // Header
         sb.AppendLine("<header class=\"header\">");
         sb.AppendLine($"  <h1>{EscapeHtml(Path.GetFileName(report.ProjectPath))}</h1>");
-        sb.AppendLine($"  <p class=\"subtitle\">Generated {report.GeneratedAt:MMMM dd, yyyy 'at' HH:mm} UTC</p>");
+        var durationText = report.GenerationDuration.HasValue
+            ? $" in {FormatDuration(report.GenerationDuration.Value)}"
+            : "";
+        sb.AppendLine($"  <p class=\"subtitle\">Generated {report.GeneratedAt:MMMM dd, yyyy 'at' HH:mm} UTC{durationText}</p>");
         sb.AppendLine("</header>");
 
         // Overview Section
@@ -447,7 +456,7 @@ public sealed class CraReportGenerator
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{FormatLicense(healthData.License)}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{FormatDaysSinceRelease(healthData.Metrics.DaysSinceLastRelease)}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatDownloads(healthData.Metrics.TotalDownloads)}</span></div>");
                 if (healthData.Metrics.Stars.HasValue)
                     sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">GitHub Stars</span><span class=\"value\">{FormatNumber(healthData.Metrics.Stars.Value)}</span></div>");
                 if (healthData.Metrics.DaysSinceLastCommit.HasValue)
@@ -584,7 +593,7 @@ public sealed class CraReportGenerator
                 {
                     sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{FormatDaysSinceRelease(healthData.Metrics.DaysSinceLastRelease)}</span></div>");
                     sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
-                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatDownloads(healthData.Metrics.TotalDownloads)}</span></div>");
                     if (healthData.Metrics.Stars.HasValue)
                         sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">GitHub Stars</span><span class=\"value\">{FormatNumber(healthData.Metrics.Stars.Value)}</span></div>");
                     if (healthData.Metrics.DaysSinceLastCommit.HasValue)
@@ -985,6 +994,10 @@ public sealed class CraReportGenerator
             else if (stmt.Status == VexStatus.Affected)
             {
                 sb.AppendLine($"        <span class=\"vuln-affected-note\">&#9888; Your version is vulnerable</span>");
+                if (!string.IsNullOrEmpty(stmt.PatchedVersion))
+                {
+                    sb.AppendLine($"        <span class=\"vuln-fixed-in\">Fixed in {EscapeHtml(stmt.PatchedVersion)}</span>");
+                }
             }
             sb.AppendLine($"      </div>");
         }
@@ -2422,6 +2435,14 @@ public sealed class CraReportGenerator
       margin-top: 4px;
     }
 
+    .vuln-fixed-in {
+      display: block;
+      color: var(--primary);
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
     .vulnerabilities-list {
       display: flex;
       flex-direction: column;
@@ -3663,6 +3684,17 @@ function filterTreeByEcosystem(ecosystem) {{
         _ => number.ToString()
     };
 
+    private static string FormatDownloads(long downloads) =>
+        downloads == 0 ? "N/A" : FormatNumber(downloads);
+
+    private static string FormatDuration(TimeSpan duration) => duration.TotalSeconds switch
+    {
+        < 1 => $"{duration.TotalMilliseconds:F0}ms",
+        < 60 => $"{duration.TotalSeconds:F1}s",
+        < 3600 => $"{duration.Minutes}m {duration.Seconds}s",
+        _ => $"{duration.Hours}h {duration.Minutes}m"
+    };
+
     // Known SPDX license URLs
     private static readonly Dictionary<string, string> LicenseUrls = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -3910,6 +3942,7 @@ function filterTreeByEcosystem(ecosystem) {{
 public sealed class CraReport
 {
     public required DateTime GeneratedAt { get; init; }
+    public TimeSpan? GenerationDuration { get; init; }
     public required string ProjectPath { get; init; }
     public required int HealthScore { get; init; }
     public required HealthStatus HealthStatus { get; init; }

@@ -48,6 +48,10 @@ public sealed class VexStatement
 
     [JsonPropertyName("impact_statement")]
     public string? ImpactStatement { get; init; }
+
+    /// <summary>Version that fixes the vulnerability (if known).</summary>
+    [JsonPropertyName("patched_version")]
+    public string? PatchedVersion { get; init; }
 }
 
 public sealed class VexVulnerability

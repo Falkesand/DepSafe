@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Text.Json;
 using NuGetHealthAnalyzer.Compliance;
 using NuGetHealthAnalyzer.DataSources;
 using NuGetHealthAnalyzer.Models;
@@ -33,16 +34,21 @@ public static class CraReportCommand
             ["--deep", "-d"],
             "Fetch full metadata for all transitive packages (slower, but complete health scores)");
 
+        var licensesOption = new Option<LicenseOutputFormat?>(
+            ["--licenses", "-l"],
+            "Generate license attribution file (txt, html, or md)");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
             formatOption,
             outputOption,
             skipGitHubOption,
-            deepOption
+            deepOption,
+            licensesOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption);
+        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption);
 
         return command;
     }
@@ -61,8 +67,44 @@ public static class CraReportCommand
         };
     }
 
-    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan)
+    private static async Task<CraConfig?> LoadCraConfigAsync(string path)
     {
+        // Look for .cra-config.json in project root
+        var searchDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+        var configPath = Path.Combine(searchDir, ".cra-config.json");
+
+        if (!File.Exists(configPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath);
+            var config = JsonSerializer.Deserialize<CraConfig>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            return config;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Warning: Failed to parse .cra-config.json: {ex.Message}[/]");
+            return null;
+        }
+    }
+
+    private static string? GetLicenseOverride(CraConfig? config, string packageId)
+    {
+        if (config?.LicenseOverrides is null)
+            return null;
+
+        return config.LicenseOverrides.TryGetValue(packageId, out var license) ? license : null;
+    }
+
+    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat)
+    {
+        var startTime = DateTime.UtcNow;
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
         if (!File.Exists(path) && !Directory.Exists(path))
@@ -89,17 +131,24 @@ public static class CraReportCommand
             AnsiConsole.MarkupLine("[dim]Deep scan enabled - fetching full metadata for all packages[/]");
         }
 
+        // Load CRA config if present
+        var config = await LoadCraConfigAsync(path);
+        if (config is not null && config.LicenseOverrides.Count > 0)
+        {
+            AnsiConsole.MarkupLine($"[dim]Loaded .cra-config.json with {config.LicenseOverrides.Count} license override(s)[/]");
+        }
+
         // Process based on project type
         return projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, config, startTime),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, config, startTime),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, config, startTime),
             _ => 0
         };
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, CraConfig? config, DateTime startTime)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -114,7 +163,10 @@ public static class CraReportCommand
 
         using var npmClient = new NpmApiClient();
         var githubClient = skipGitHub ? null : new GitHubApiClient();
-        var calculator = new HealthScoreCalculator();
+        var calculator = new HealthScoreCalculator
+        {
+            LicenseOverrides = config?.LicenseOverrides
+        };
 
         // Show GitHub status
         ShowGitHubStatus(githubClient, skipGitHub);
@@ -269,7 +321,8 @@ public static class CraReportCommand
             format,
             outputPath,
             false,
-            false);
+            false,
+            startTime);
     }
 
     private static List<PackageHealth> ExtractTransitivePackagesFromTree(
@@ -716,7 +769,7 @@ public static class CraReportCommand
         };
     }
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, CraConfig? config, DateTime startTime)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -727,7 +780,10 @@ public static class CraReportCommand
 
         using var nugetClient = new NuGetApiClient();
         var githubClient = skipGitHub ? null : new GitHubApiClient();
-        var calculator = new HealthScoreCalculator();
+        var calculator = new HealthScoreCalculator
+        {
+            LicenseOverrides = config?.LicenseOverrides
+        };
 
         // Show GitHub status
         ShowGitHubStatus(githubClient, skipGitHub);
@@ -1005,17 +1061,21 @@ public static class CraReportCommand
             format,
             outputPath,
             incompleteTransitive,
-            hasUnresolvedVersions);
+            hasUnresolvedVersions,
+            startTime);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, CraConfig? config, DateTime startTime)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
         using var nugetClient = new NuGetApiClient();
         using var npmClient = new NpmApiClient();
         var githubClient = skipGitHub ? null : new GitHubApiClient();
-        var calculator = new HealthScoreCalculator();
+        var calculator = new HealthScoreCalculator
+        {
+            LicenseOverrides = config?.LicenseOverrides
+        };
 
         ShowGitHubStatus(githubClient, skipGitHub);
 
@@ -1354,7 +1414,8 @@ public static class CraReportCommand
             format,
             outputPath,
             incompleteTransitive,
-            hasUnresolvedVersions);
+            hasUnresolvedVersions,
+            startTime);
     }
 
     private static async Task<int> GenerateMixedReportAsync(
@@ -1366,7 +1427,8 @@ public static class CraReportCommand
         CraOutputFormat format,
         string? outputPath,
         bool incompleteTransitive,
-        bool hasUnresolvedVersions)
+        bool hasUnresolvedVersions,
+        DateTime startTime)
     {
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
@@ -1406,7 +1468,7 @@ public static class CraReportCommand
             reportGenerator.AddDependencyTree(tree);
         }
 
-        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities);
+        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
 
         if (string.IsNullOrEmpty(outputPath))
         {
@@ -1865,7 +1927,8 @@ public static class CraReportCommand
         CraOutputFormat format,
         string? outputPath,
         bool incompleteTransitive,
-        bool hasUnresolvedVersions)
+        bool hasUnresolvedVersions,
+        DateTime startTime)
     {
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
@@ -1900,7 +1963,7 @@ public static class CraReportCommand
         reportGenerator.SetTransitiveData(transitivePackages);
         reportGenerator.SetCompletenessWarnings(incompleteTransitive, hasUnresolvedVersions);
         reportGenerator.SetDependencyTree(dependencyTree);
-        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities);
+        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
 
         // Determine output path
         if (string.IsNullOrEmpty(outputPath))
@@ -1975,4 +2038,14 @@ public enum CraOutputFormat
 {
     Html,
     Json
+}
+
+public enum LicenseOutputFormat
+{
+    /// <summary>Plain text THIRD-PARTY-NOTICES.txt format</summary>
+    Txt,
+    /// <summary>HTML page with styled license information</summary>
+    Html,
+    /// <summary>Markdown ATTRIBUTION.md format</summary>
+    Md
 }

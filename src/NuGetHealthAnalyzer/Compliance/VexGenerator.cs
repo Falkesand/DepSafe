@@ -63,7 +63,8 @@ public sealed class VexGenerator
                         : null,
                     ImpactStatement = status == VexStatus.Affected
                         ? $"Package version {pkg.Version} is within vulnerable range {vuln.VulnerableVersionRange}"
-                        : null
+                        : null,
+                    PatchedVersion = vuln.PatchedVersion
                 };
 
                 statements.Add(statement);
