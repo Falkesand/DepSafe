@@ -82,7 +82,17 @@ public sealed class VexGenerator
 
     private static string DetermineStatus(VulnerabilityInfo vuln, string packageVersion)
     {
-        // Check if package version is patched
+        // FIRST check vulnerable version range
+        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+        {
+            if (!IsVersionInRange(packageVersion, vuln.VulnerableVersionRange))
+            {
+                return VexStatus.NotAffected; // Not in vulnerable range
+            }
+        }
+        // If no range specified, conservatively assume in range
+
+        // THEN check if version is patched (only matters if we're in the vulnerable range)
         if (!string.IsNullOrEmpty(vuln.PatchedVersion))
         {
             try
@@ -97,21 +107,12 @@ public sealed class VexGenerator
             }
             catch
             {
-                // Version parsing failed, assume affected
+                // Version parsing failed, assume still affected
             }
         }
 
-        // Check vulnerable version range
-        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-        {
-            if (IsVersionInRange(packageVersion, vuln.VulnerableVersionRange))
-            {
-                return VexStatus.Affected;
-            }
-            return VexStatus.NotAffected;
-        }
-
-        return VexStatus.UnderInvestigation;
+        // Version is in vulnerable range and not patched
+        return VexStatus.Affected;
     }
 
     private static bool IsVersionInRange(string version, string range)
@@ -124,35 +125,67 @@ public sealed class VexGenerator
             // Split on comma for compound ranges
             var parts = range.Split(',').Select(p => p.Trim()).ToArray();
 
+            // Track whether we have any range constraints vs just exact versions
+            bool hasRangeConstraint = false;
+            bool hasExactMatch = false;
+
             foreach (var part in parts)
             {
                 if (part.StartsWith(">="))
                 {
+                    hasRangeConstraint = true;
                     var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
                     if (current < v) return false;
                 }
                 else if (part.StartsWith('>'))
                 {
+                    hasRangeConstraint = true;
                     var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
                     if (current <= v) return false;
                 }
                 else if (part.StartsWith("<="))
                 {
+                    hasRangeConstraint = true;
                     var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
                     if (current > v) return false;
                 }
                 else if (part.StartsWith('<'))
                 {
+                    hasRangeConstraint = true;
                     var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
                     if (current >= v) return false;
                 }
                 else if (part.StartsWith('='))
                 {
+                    hasRangeConstraint = true;
                     var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
                     if (current != v) return false;
                 }
+                else if (!string.IsNullOrWhiteSpace(part))
+                {
+                    // Exact version match (e.g., "4.4.2" from OSV's versions list)
+                    try
+                    {
+                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
+                        if (current == v)
+                        {
+                            hasExactMatch = true;
+                        }
+                    }
+                    catch
+                    {
+                        // Not a parseable version, ignore
+                    }
+                }
             }
 
+            // If we only have exact version matches, return true only if current matches
+            if (!hasRangeConstraint)
+            {
+                return hasExactMatch;
+            }
+
+            // Range constraints all passed
             return true;
         }
         catch

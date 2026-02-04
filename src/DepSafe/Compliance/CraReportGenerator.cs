@@ -526,17 +526,18 @@ public sealed class CraReportGenerator
 
         sb.AppendLine("</div>");
 
-        // Transitive Dependencies Section
-        if (_transitiveDataCache?.Count > 0)
+        // Transitive Dependencies Section (exclude sub-dependencies - they're only for tree navigation)
+        var actualTransitives = _transitiveDataCache?.Where(h => h.DependencyType != DependencyType.SubDependency).ToList() ?? [];
+        if (actualTransitives.Count > 0)
         {
             sb.AppendLine("<div class=\"transitive-section\">");
             sb.AppendLine("  <div class=\"transitive-header\" onclick=\"toggleTransitive()\">");
-            sb.AppendLine($"    <h3>Transitive Dependencies ({_transitiveDataCache.Count})</h3>");
+            sb.AppendLine($"    <h3>Transitive Dependencies ({actualTransitives.Count})</h3>");
             sb.AppendLine("    <span class=\"transitive-toggle\" id=\"transitive-toggle\">Show</span>");
             sb.AppendLine("  </div>");
             sb.AppendLine("  <div id=\"transitive-list\" class=\"packages-list transitive-list\" style=\"display: none;\">");
 
-            foreach (var healthData in _transitiveDataCache.OrderBy(h => h.Score))
+            foreach (var healthData in actualTransitives.OrderBy(h => h.Score))
             {
                 var pkgName = healthData.PackageId;
                 var version = healthData.Version;
@@ -544,11 +545,7 @@ public sealed class CraReportGenerator
                 var status = healthData.Status.ToString().ToLowerInvariant();
 
                 var ecosystemName = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
-                var depTypeBadge = healthData.DependencyType switch
-                {
-                    DependencyType.SubDependency => "<span class=\"dep-type-badge sub-dep\" title=\"Sub-dependency - a dependency of another package\">sub-dependency</span>",
-                    _ => $"<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by {ecosystemName} dependency resolution\">transitive</span>"
-                };
+                var depTypeBadge = $"<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by {ecosystemName} dependency resolution\">transitive</span>";
 
                 var craScore = healthData.CraScore;
                 var ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
@@ -566,10 +563,6 @@ public sealed class CraReportGenerator
                 sb.AppendLine($"        {depTypeBadge}");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <div class=\"package-scores\">");
-                sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
-                sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
-                sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(craScore)}\">{craScore}</span>");
-                sb.AppendLine($"        </div>");
                 if (hasRealHealthData)
                 {
                     sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
@@ -577,6 +570,17 @@ public sealed class CraReportGenerator
                     sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(score)}\">{score}</span>");
                     sb.AppendLine($"        </div>");
                 }
+                else
+                {
+                    sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score not available - use --deep for full analysis\">");
+                    sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
+                    sb.AppendLine($"          <span class=\"score-circle na\">—</span>");
+                    sb.AppendLine($"        </div>");
+                }
+                sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
+                sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
+                sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(craScore)}\">{craScore}</span>");
+                sb.AppendLine($"        </div>");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");

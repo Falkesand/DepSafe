@@ -480,7 +480,24 @@ public sealed class HealthScoreCalculator
         var active = new List<VulnerabilityInfo>();
         foreach (var vuln in vulnerabilities)
         {
-            // Check if version is patched
+            // FIRST check if version is in vulnerable range
+            bool inVulnerableRange;
+            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+            {
+                inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+            }
+            else
+            {
+                // No range specified, conservatively assume vulnerable
+                inVulnerableRange = true;
+            }
+
+            if (!inVulnerableRange)
+            {
+                continue; // Not in vulnerable range, skip
+            }
+
+            // THEN check if version is patched (only matters if we're in the vulnerable range)
             if (!string.IsNullOrEmpty(vuln.PatchedVersion))
             {
                 try
@@ -492,22 +509,11 @@ public sealed class HealthScoreCalculator
                         continue; // Patched in current version
                     }
                 }
-                catch { /* Version parsing failed, check range */ }
+                catch { /* Version parsing failed, assume still vulnerable */ }
             }
 
-            // Check if version is in vulnerable range
-            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-            {
-                if (IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange))
-                {
-                    active.Add(vuln);
-                }
-            }
-            else
-            {
-                // No range specified, conservatively include
-                active.Add(vuln);
-            }
+            // Version is in vulnerable range and not patched
+            active.Add(vuln);
         }
 
         return active;

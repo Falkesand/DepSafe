@@ -260,6 +260,16 @@ public static class CraReportCommand
         // Phase 3: Calculate health scores
         var packages = new List<PackageHealth>();
 
+        // Build lookup of installed versions from dependency tree
+        var installedVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (dependencyTree is not null)
+        {
+            foreach (var root in dependencyTree.Roots)
+            {
+                installedVersions[root.PackageId] = root.Version;
+            }
+        }
+
         foreach (var (packageName, versionRange) in allDeps)
         {
             if (!npmInfoMap.TryGetValue(packageName, out var npmInfo))
@@ -268,9 +278,12 @@ public static class CraReportCommand
             repoInfoMap.TryGetValue(packageName, out var repoInfo);
             var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageName, []);
 
+            // Use installed version from lock file, fall back to latest if not found
+            var installedVersion = installedVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
+
             var health = calculator.Calculate(
                 packageName,
-                npmInfo.LatestVersion,
+                installedVersion,
                 npmInfo,
                 repoInfo,
                 vulnerabilities);
@@ -349,19 +362,40 @@ public static class CraReportCommand
             // Skip direct packages (already have full health data)
             if (!excludePackageIds.Contains(node.PackageId))
             {
+                // Use tree node's vulnerability info (already calculated by UpdateTreeVulnerabilities)
+                var hasVulns = node.HasVulnerabilities;
+                var vulnId = !string.IsNullOrEmpty(node.VulnerabilitySummary) ? node.VulnerabilitySummary : null;
+
+                // Also check the vulnerabilities dict for additional context
                 var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
-                var activeVulns = pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList();
+                var activeVulns = hasVulns
+                    ? pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList()
+                    : [];
+
+                // If tree says vulnerable but we found no vulns in dict, create a placeholder
+                if (hasVulns && activeVulns.Count == 0 && vulnId != null)
+                {
+                    activeVulns = [new VulnerabilityInfo
+                    {
+                        Id = vulnId,
+                        Summary = vulnId,
+                        Severity = "UNKNOWN",
+                        PackageId = node.PackageId,
+                        VulnerableVersionRange = node.Version
+                    }];
+                }
+
                 var (craScore, craStatus) = CalculateTransitiveCraScore(activeVulns, node.License, node.PackageId, node.Version);
 
                 packages.Add(new PackageHealth
                 {
                     PackageId = node.PackageId,
                     Version = node.Version,
-                    Score = node.HealthScore ?? (activeVulns.Count > 0 ? 30 : 50),
-                    Status = node.Status ?? (activeVulns.Count > 0 ? HealthStatus.Critical : HealthStatus.Watch),
+                    Score = node.HealthScore ?? (hasVulns ? 30 : 50),
+                    Status = node.Status ?? (hasVulns ? HealthStatus.Critical : HealthStatus.Watch),
                     CraScore = craScore,
                     CraStatus = craStatus,
-                    Metrics = new PackageMetrics { VulnerabilityCount = activeVulns.Count },
+                    Metrics = new PackageMetrics { VulnerabilityCount = hasVulns ? Math.Max(1, activeVulns.Count) : 0 },
                     License = node.License,
                     DependencyType = DependencyType.Transitive,
                     Ecosystem = node.Ecosystem,
@@ -406,8 +440,27 @@ public static class CraReportCommand
             // Skip direct packages (already have full health data)
             if (!excludePackageIds.Contains(node.PackageId))
             {
+                // Use tree node's vulnerability info (already calculated by UpdateTreeVulnerabilities)
+                var hasVulns = node.HasVulnerabilities;
+                var vulnId = !string.IsNullOrEmpty(node.VulnerabilitySummary) ? node.VulnerabilitySummary : null;
+
                 var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
-                var activeVulns = pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList();
+                var activeVulns = hasVulns
+                    ? pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList()
+                    : [];
+
+                // If tree says vulnerable but we found no vulns in dict, create a placeholder
+                if (hasVulns && activeVulns.Count == 0 && vulnId != null)
+                {
+                    activeVulns = [new VulnerabilityInfo
+                    {
+                        Id = vulnId,
+                        Summary = vulnId,
+                        Severity = "UNKNOWN",
+                        PackageId = node.PackageId,
+                        VulnerableVersionRange = node.Version
+                    }];
+                }
 
                 // Check if we have npm info for this package (deep scan fetches this)
                 if (npmInfoMap.TryGetValue(node.PackageId, out var npmInfo))
@@ -437,11 +490,11 @@ public static class CraReportCommand
                     {
                         PackageId = node.PackageId,
                         Version = node.Version,
-                        Score = activeVulns.Count > 0 ? 30 : 50,
-                        Status = activeVulns.Count > 0 ? HealthStatus.Critical : HealthStatus.Watch,
+                        Score = hasVulns ? 30 : 50,
+                        Status = hasVulns ? HealthStatus.Critical : HealthStatus.Watch,
                         CraScore = craScore,
                         CraStatus = craStatus,
-                        Metrics = new PackageMetrics { VulnerabilityCount = activeVulns.Count },
+                        Metrics = new PackageMetrics { VulnerabilityCount = hasVulns ? Math.Max(1, activeVulns.Count) : 0 },
                         License = node.License,
                         DependencyType = DependencyType.Transitive,
                         Ecosystem = node.Ecosystem,
@@ -527,7 +580,24 @@ public static class CraReportCommand
     {
         foreach (var vuln in vulnerabilities)
         {
-            // Check if version is patched
+            // FIRST check if version is in vulnerable range
+            bool inVulnerableRange;
+            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+            {
+                inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+            }
+            else
+            {
+                // No range specified, conservatively assume vulnerable
+                inVulnerableRange = true;
+            }
+
+            if (!inVulnerableRange)
+            {
+                continue; // Not in vulnerable range, check next vulnerability
+            }
+
+            // THEN check if version is patched (only matters if we're in the vulnerable range)
             if (!string.IsNullOrEmpty(vuln.PatchedVersion))
             {
                 try
@@ -539,22 +609,11 @@ public static class CraReportCommand
                         continue; // Patched, check next vulnerability
                     }
                 }
-                catch { /* Version parsing failed, check range */ }
+                catch { /* Version parsing failed, assume still vulnerable */ }
             }
 
-            // Check if version is in vulnerable range
-            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-            {
-                if (IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange))
-                {
-                    return vuln; // Actually vulnerable
-                }
-            }
-            else
-            {
-                // No range specified, conservatively return this vulnerability
-                return vuln;
-            }
+            // Version is in vulnerable range and not patched
+            return vuln;
         }
 
         return null;
@@ -568,7 +627,24 @@ public static class CraReportCommand
     {
         foreach (var vuln in vulnerabilities)
         {
-            // Check if version is patched
+            // FIRST check if version is in vulnerable range
+            bool inVulnerableRange;
+            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+            {
+                inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+            }
+            else
+            {
+                // No range specified, conservatively assume vulnerable
+                inVulnerableRange = true;
+            }
+
+            if (!inVulnerableRange)
+            {
+                continue; // Not in vulnerable range, check next vulnerability
+            }
+
+            // THEN check if version is patched (only matters if we're in the vulnerable range)
             if (!string.IsNullOrEmpty(vuln.PatchedVersion))
             {
                 try
@@ -577,29 +653,17 @@ public static class CraReportCommand
                     var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
                     if (current >= patched)
                     {
-                        // This vulnerability is patched in the current version
-                        continue;
+                        continue; // Patched, check next vulnerability
                     }
                 }
                 catch
                 {
-                    // Version parsing failed, check range instead
+                    // Version parsing failed, assume still vulnerable
                 }
             }
 
-            // Check if version is in vulnerable range
-            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-            {
-                if (IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange))
-                {
-                    return true; // Actually vulnerable
-                }
-            }
-            else
-            {
-                // No range specified but has vulnerability - conservatively mark as vulnerable
-                return true;
-            }
+            // Version is in vulnerable range and not patched
+            return true;
         }
 
         return false; // All vulnerabilities are patched or don't affect this version
@@ -1357,6 +1421,16 @@ public static class CraReportCommand
                             });
                     }
 
+                    // Build lookup of installed versions from npm dependency tree
+                    var npmInstalledVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    if (npmTree is not null)
+                    {
+                        foreach (var root in npmTree.Roots)
+                        {
+                            npmInstalledVersions[root.PackageId] = root.Version;
+                        }
+                    }
+
                     // Calculate health for npm packages
                     foreach (var (packageName, _) in allDeps)
                     {
@@ -1364,7 +1438,10 @@ public static class CraReportCommand
                         npmRepoInfoMap.TryGetValue(packageName, out var repoInfo);
                         var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageName, []);
 
-                        var health = calculator.Calculate(packageName, npmInfo.LatestVersion, npmInfo, repoInfo, vulnerabilities);
+                        // Use installed version from lock file, fall back to latest if not found
+                        var installedVersion = npmInstalledVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
+
+                        var health = calculator.Calculate(packageName, installedVersion, npmInfo, repoInfo, vulnerabilities);
                         allPackages.Add(health);
 
                         UpdateTreeNodeHealth(npmTree, packageName, health.Score, health.Status);
