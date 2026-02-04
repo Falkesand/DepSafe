@@ -191,6 +191,26 @@ public sealed class CraReportGenerator
 
     private void GenerateOverviewSection(StringBuilder sb, CraReport report)
     {
+        // SBOM completeness warning
+        if (_hasIncompleteTransitive || _hasUnresolvedVersions)
+        {
+            sb.AppendLine("<div class=\"sbom-warning\">");
+            sb.AppendLine("  <h4>⚠️ SBOM Completeness Warning</h4>");
+            sb.AppendLine("  <p>This report may be incomplete for full CRA compliance:</p>");
+            sb.AppendLine("  <ul>");
+            if (_hasIncompleteTransitive)
+            {
+                sb.AppendLine("    <li><strong>Transitive dependencies not fully resolved</strong> - Deep dependency tree may be incomplete</li>");
+            }
+            if (_hasUnresolvedVersions)
+            {
+                sb.AppendLine("    <li><strong>Unresolved MSBuild variables</strong> - Some package versions could not be determined</li>");
+            }
+            sb.AppendLine("  </ul>");
+            sb.AppendLine("  <p><strong>To fix:</strong> Run <code>dotnet restore</code> in your project directory before generating the report.</p>");
+            sb.AppendLine("</div>");
+        }
+
         var statusClass = report.OverallComplianceStatus switch
         {
             CraComplianceStatus.Compliant => "healthy",
@@ -1089,6 +1109,46 @@ public sealed class CraReportGenerator
       font-size: 0.85rem;
     }
 
+    .sbom-warning {
+      background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
+      border: 1px solid #ffc107;
+      border-left: 4px solid #e65100;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .sbom-warning h4 {
+      color: #e65100;
+      margin: 0 0 12px 0;
+      font-size: 1.1rem;
+    }
+
+    .sbom-warning p {
+      color: #5d4037;
+      font-size: 0.9rem;
+      margin: 8px 0;
+    }
+
+    .sbom-warning ul {
+      margin: 12px 0;
+      padding-left: 24px;
+      color: #5d4037;
+    }
+
+    .sbom-warning li {
+      margin: 6px 0;
+      font-size: 0.9rem;
+    }
+
+    .sbom-warning code {
+      background: rgba(0,0,0,0.1);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-family: monospace;
+    }
+
     .package-dependencies {
       margin-top: 15px;
       padding: 15px;
@@ -1698,6 +1758,8 @@ function exportSbom(format) {{
 
     private List<PackageHealth>? _healthDataCache;
     private List<PackageHealth>? _transitiveDataCache;
+    private bool _hasIncompleteTransitive;
+    private bool _hasUnresolvedVersions;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1713,6 +1775,15 @@ function exportSbom(format) {{
     public void SetTransitiveData(IEnumerable<PackageHealth> packages)
     {
         _transitiveDataCache = packages.ToList();
+    }
+
+    /// <summary>
+    /// Set SBOM completeness warnings.
+    /// </summary>
+    public void SetCompletenessWarnings(bool incompleteTransitive, bool unresolvedVersions)
+    {
+        _hasIncompleteTransitive = incompleteTransitive;
+        _hasUnresolvedVersions = unresolvedVersions;
     }
 
     private static string GetScoreClass(int score) => score switch

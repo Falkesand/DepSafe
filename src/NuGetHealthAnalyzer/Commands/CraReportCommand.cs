@@ -83,6 +83,8 @@ public static class CraReportCommand
         // Collect all package references using dotnet list package for resolved versions
         var allReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
         var transitiveReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
+        var usedFallbackParsing = false;
+        var hasUnresolvedVersions = false;
 
         await AnsiConsole.Status()
             .StartAsync("Scanning packages (resolving MSBuild variables)...", async ctx =>
@@ -97,6 +99,7 @@ public static class CraReportCommand
                         if (!allReferences.ContainsKey(r.PackageId))
                         {
                             allReferences[r.PackageId] = r;
+                            if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
                         }
                     }
                     foreach (var r in transitive)
@@ -110,6 +113,7 @@ public static class CraReportCommand
                 else
                 {
                     // Fall back to XML parsing if dotnet command fails
+                    usedFallbackParsing = true;
                     ctx.Status("Falling back to XML parsing...");
                     foreach (var projectFile in projectFiles)
                     {
@@ -119,6 +123,7 @@ public static class CraReportCommand
                             if (!allReferences.ContainsKey(r.PackageId))
                             {
                                 allReferences[r.PackageId] = r;
+                                if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
                             }
                         }
                     }
@@ -132,6 +137,26 @@ public static class CraReportCommand
         }
 
         AnsiConsole.MarkupLine($"[dim]Found {allReferences.Count} direct packages and {transitiveReferences.Count} transitive dependencies[/]");
+
+        // Warn about incomplete transitive dependencies
+        var incompleteTransitive = usedFallbackParsing || transitiveReferences.Count == 0;
+        if (incompleteTransitive || hasUnresolvedVersions)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[yellow]⚠ SBOM Completeness Warning:[/]");
+            if (incompleteTransitive)
+            {
+                AnsiConsole.MarkupLine("[dim]  Transitive dependencies could not be fully resolved.[/]");
+            }
+            if (hasUnresolvedVersions)
+            {
+                AnsiConsole.MarkupLine("[dim]  Some package versions contain unresolved MSBuild variables.[/]");
+            }
+            AnsiConsole.MarkupLine("[dim]  For complete CRA compliance, run:[/]");
+            AnsiConsole.MarkupLine("[blue]    dotnet restore[/]");
+            AnsiConsole.MarkupLine("[dim]  before generating the report.[/]");
+            AnsiConsole.WriteLine();
+        }
 
         // Phase 1: Fetch all NuGet info (including transitive)
         var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
@@ -341,6 +366,7 @@ public static class CraReportCommand
         var reportGenerator = new CraReportGenerator();
         reportGenerator.SetHealthData(packages);
         reportGenerator.SetTransitiveData(transitivePackages);
+        reportGenerator.SetCompletenessWarnings(incompleteTransitive, hasUnresolvedVersions);
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities);
 
         // Determine output path
