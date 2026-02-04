@@ -133,7 +133,7 @@ public static class CheckCommand
         table.AddRow("Version", version);
         table.AddRow("Latest Version", nugetInfo.LatestVersion);
         table.AddRow("Total Downloads", FormatNumber(nugetInfo.TotalDownloads));
-        table.AddRow("Days Since Release", health.Metrics.DaysSinceLastRelease.ToString());
+        table.AddRow("Days Since Release", health.Metrics.DaysSinceLastRelease?.ToString() ?? "[dim]Unknown[/]");
         table.AddRow("Releases/Year", health.Metrics.ReleasesPerYear.ToString("F1"));
         table.AddRow("Download Trend", FormatTrend(health.Metrics.DownloadTrend));
 

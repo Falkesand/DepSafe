@@ -57,7 +57,7 @@ public sealed class CraReportGenerator
 
         // Update mechanism (health scoring)
         var outdatedPackages = healthReport.Packages.Count(p =>
-            p.Metrics.DaysSinceLastRelease > 730);
+            p.Metrics.DaysSinceLastRelease.HasValue && p.Metrics.DaysSinceLastRelease > 730);
         complianceItems.Add(new CraComplianceItem
         {
             Requirement = "CRA Article 10(6) - Security Updates",
@@ -335,7 +335,7 @@ public sealed class CraReportGenerator
             {
                 sb.AppendLine("      <div class=\"detail-grid\">");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{FormatLicense(healthData.License)}</span></div>");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{healthData.Metrics.DaysSinceLastRelease} days ago</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{FormatDaysSinceRelease(healthData.Metrics.DaysSinceLastRelease)}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
                 if (healthData.Metrics.Stars.HasValue)
@@ -438,7 +438,7 @@ public sealed class CraReportGenerator
 
                 sb.AppendLine("      <div class=\"detail-grid\">");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{FormatLicense(healthData.License)}</span></div>");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{healthData.Metrics.DaysSinceLastRelease} days ago</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{FormatDaysSinceRelease(healthData.Metrics.DaysSinceLastRelease)}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
                 if (healthData.Metrics.Stars.HasValue)
@@ -505,14 +505,17 @@ public sealed class CraReportGenerator
         foreach (var pkg in packages)
         {
             var purl = pkg.ExternalRefs?.FirstOrDefault(r => r.ReferenceType == "purl")?.ReferenceLocator ?? "";
+            var versionDisplay = FormatVersionForSbom(pkg.VersionInfo);
+            var purlDisplay = FormatPurlForSbom(purl);
+
             sb.AppendLine($"    <tr data-name=\"{EscapeHtml(pkg.Name.ToLowerInvariant())}\">");
             sb.AppendLine($"      <td class=\"component-name\">");
             sb.AppendLine($"        <strong>{EscapeHtml(pkg.Name)}</strong>");
             sb.AppendLine($"        <a href=\"{EscapeHtml(pkg.DownloadLocation)}\" target=\"_blank\" class=\"external-link\">View on NuGet</a>");
             sb.AppendLine($"      </td>");
-            sb.AppendLine($"      <td>{EscapeHtml(pkg.VersionInfo)}</td>");
+            sb.AppendLine($"      <td>{versionDisplay}</td>");
             sb.AppendLine($"      <td><span class=\"license-badge\">{FormatLicense(pkg.LicenseDeclared)}</span></td>");
-            sb.AppendLine($"      <td class=\"purl\"><code>{EscapeHtml(purl)}</code></td>");
+            sb.AppendLine($"      <td class=\"purl\"><code>{purlDisplay}</code></td>");
             sb.AppendLine($"    </tr>");
         }
 
@@ -1032,6 +1035,12 @@ public sealed class CraReportGenerator
       font-size: 0.75rem;
       opacity: 0.7;
       margin-left: 2px;
+    }
+
+    .unknown-date {
+      color: #6c757d;
+      font-style: italic;
+      cursor: help;
     }
 
     .license-unknown {
@@ -1785,6 +1794,46 @@ function exportSbom(format) {{
 
         // For other license identifiers, try to link to SPDX
         return $"<a href=\"https://spdx.org/licenses/{EscapeHtml(license)}.html\" target=\"_blank\" class=\"license-link\">{EscapeHtml(license)}</a>";
+    }
+
+    private static string FormatVersionForSbom(string? version)
+    {
+        if (string.IsNullOrEmpty(version))
+            return "<span class=\"unresolved-version\">Unknown</span>";
+
+        if (version.Contains("$("))
+        {
+            return $"<span class=\"unresolved-version\" title=\"MSBuild variable not resolved: {EscapeHtml(version)}\">Not resolved ⓘ</span>";
+        }
+
+        return EscapeHtml(version);
+    }
+
+    private static string FormatPurlForSbom(string? purl)
+    {
+        if (string.IsNullOrEmpty(purl))
+            return "<span class=\"text-muted\">-</span>";
+
+        if (purl.Contains("$("))
+        {
+            // Extract the package name from the purl and show a cleaner version
+            var match = System.Text.RegularExpressions.Regex.Match(purl, @"pkg:nuget/([^@]+)");
+            if (match.Success)
+            {
+                return $"<span class=\"unresolved-version\" title=\"Full PURL: {EscapeHtml(purl)}\">pkg:nuget/{EscapeHtml(match.Groups[1].Value)}@? ⓘ</span>";
+            }
+            return $"<span class=\"unresolved-version\" title=\"{EscapeHtml(purl)}\">Not resolved ⓘ</span>";
+        }
+
+        return EscapeHtml(purl);
+    }
+
+    private static string FormatDaysSinceRelease(int? days)
+    {
+        if (!days.HasValue)
+            return "<span class=\"unknown-date\" title=\"Release date not available from NuGet API\">Unknown</span>";
+
+        return $"{days.Value} days ago";
     }
 
     private static string FormatVersion(string? version, string packageId)

@@ -46,8 +46,8 @@ public enum HealthStatus
 /// </summary>
 public sealed class PackageMetrics
 {
-    /// <summary>Days since last release.</summary>
-    public int DaysSinceLastRelease { get; init; }
+    /// <summary>Days since last release. Null if release date unknown.</summary>
+    public int? DaysSinceLastRelease { get; init; }
 
     /// <summary>Average releases per year over the past 3 years.</summary>
     public double ReleasesPerYear { get; init; }

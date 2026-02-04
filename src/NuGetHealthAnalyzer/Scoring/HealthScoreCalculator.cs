@@ -58,9 +58,13 @@ public sealed class HealthScoreCalculator
             .OrderByDescending(v => v.PublishedDate)
             .ToList();
 
-        var daysSinceLastRelease = versions.Count > 0
-            ? (int)(DateTime.UtcNow - versions[0].PublishedDate).TotalDays
-            : 9999;
+        // Calculate days since last release, but only if we have a valid publish date
+        // DateTime.MinValue or dates before 2000 indicate missing data
+        int? daysSinceLastRelease = null;
+        if (versions.Count > 0 && versions[0].PublishedDate > new DateTime(2000, 1, 1))
+        {
+            daysSinceLastRelease = (int)(DateTime.UtcNow - versions[0].PublishedDate).TotalDays;
+        }
 
         var releasesPerYear = CalculateReleasesPerYear(versions);
         var downloadTrend = CalculateDownloadTrend(versions);
@@ -136,11 +140,14 @@ public sealed class HealthScoreCalculator
         return (int)Math.Round(Math.Clamp(weightedScore, 0, 100));
     }
 
-    private static double CalculateFreshnessScore(int daysSinceLastRelease)
+    private static double CalculateFreshnessScore(int? daysSinceLastRelease)
     {
+        // If release date is unknown, give a neutral score
+        if (!daysSinceLastRelease.HasValue)
+            return 60; // "Watch" level - unknown doesn't mean bad
+
         // 100 if released within 30 days, decreasing thereafter
-        // 0 if no release in 3+ years
-        return daysSinceLastRelease switch
+        return daysSinceLastRelease.Value switch
         {
             <= 30 => 100,
             <= 90 => 90,
@@ -244,9 +251,13 @@ public sealed class HealthScoreCalculator
             recommendations.Add($"Package is deprecated: {nugetInfo.DeprecationReason ?? "No reason provided"}");
         }
 
-        if (metrics.DaysSinceLastRelease > 730)
+        if (metrics.DaysSinceLastRelease.HasValue && metrics.DaysSinceLastRelease > 730)
         {
-            recommendations.Add($"No releases in {metrics.DaysSinceLastRelease / 365} years - consider alternatives");
+            recommendations.Add($"No releases in {metrics.DaysSinceLastRelease.Value / 365} years - consider alternatives");
+        }
+        else if (!metrics.DaysSinceLastRelease.HasValue)
+        {
+            recommendations.Add("Release date unknown - verify package is actively maintained");
         }
 
         if (metrics.VulnerabilityCount > 0)
