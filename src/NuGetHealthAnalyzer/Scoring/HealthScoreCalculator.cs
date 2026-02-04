@@ -330,6 +330,25 @@ public sealed class HealthScoreCalculator
 
     private static bool IsKnownSpdxLicense(string license)
     {
+        // Handle SPDX expressions with OR/AND/WITH operators
+        // e.g., "(MIT OR Apache-2.0)", "GPL-3.0 WITH Classpath-exception-2.0"
+        var normalized = license.Trim().TrimStart('(').TrimEnd(')').Trim();
+
+        // Split on OR, AND, WITH and check each part
+        var separators = new[] { " OR ", " AND ", " WITH " };
+        var parts = normalized.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+
+        // If we have multiple parts, check if all license parts are known
+        if (parts.Length > 1)
+        {
+            return parts.All(p => IsKnownSingleLicense(p.Trim().TrimStart('(').TrimEnd(')').Trim().ToUpperInvariant()));
+        }
+
+        return IsKnownSingleLicense(normalized);
+    }
+
+    private static bool IsKnownSingleLicense(string license)
+    {
         // Common SPDX license identifiers
         return license switch
         {
@@ -337,8 +356,8 @@ public sealed class HealthScoreCalculator
             "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
             "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
             "ISC" => true,
-            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" => true,
-            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" => true,
+            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" or "GPL-2.0-OR-LATER" or "GPL-3.0-OR-LATER" => true,
+            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" or "LGPL-2.1-OR-LATER" or "LGPL-3.0-OR-LATER" => true,
             "MPL-2.0" => true,
             "UNLICENSE" or "UNLICENSED" => true,
             "CC0-1.0" or "CC-BY-4.0" => true,
@@ -346,6 +365,8 @@ public sealed class HealthScoreCalculator
             "WTFPL" => true,
             "ZLIB" => true,
             "MS-PL" or "MS-RL" => true,
+            // WITH exceptions (these come after "WITH" in expressions)
+            "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
             _ => false
         };
     }
