@@ -1559,9 +1559,16 @@ public static class CraReportCommand
                 : $"{projectName}-cra-report.html";
         }
 
+        // Generate license attribution if requested (before HTML so we can link to it)
+        string? licenseFilePath = null;
+        if (licensesFormat.HasValue)
+        {
+            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
+        }
+
         var output = format == CraOutputFormat.Json
             ? reportGenerator.GenerateJson(craReport)
-            : reportGenerator.GenerateHtml(craReport);
+            : reportGenerator.GenerateHtml(craReport, licenseFilePath);
 
         await File.WriteAllTextAsync(outputPath, output);
 
@@ -1609,12 +1616,6 @@ public static class CraReportCommand
         AnsiConsole.Write(complianceTable);
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
-
-        // Generate license attribution if requested
-        if (licensesFormat.HasValue)
-        {
-            await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
-        }
 
         return craReport.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
     }
@@ -2062,6 +2063,13 @@ public static class CraReportCommand
                 : $"{projectName}-cra-report.html";
         }
 
+        // Generate license attribution if requested (before HTML so we can link to it)
+        string? licenseFilePath = null;
+        if (licensesFormat.HasValue)
+        {
+            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
+        }
+
         string output;
         if (format == CraOutputFormat.Json)
         {
@@ -2069,7 +2077,7 @@ public static class CraReportCommand
         }
         else
         {
-            output = reportGenerator.GenerateHtml(craReport);
+            output = reportGenerator.GenerateHtml(craReport, licenseFilePath);
         }
 
         await File.WriteAllTextAsync(outputPath, output);
@@ -2118,16 +2126,10 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        // Generate license attribution if requested
-        if (licensesFormat.HasValue)
-        {
-            await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
-        }
-
         return craReport.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
     }
 
-    private static async Task GenerateLicenseAttributionAsync(
+    private static async Task<string> GenerateLicenseAttributionAsync(
         List<PackageHealth> packages,
         List<PackageHealth> transitivePackages,
         LicenseOutputFormat format,
@@ -2151,6 +2153,7 @@ public static class CraReportCommand
 
         await File.WriteAllTextAsync(outputPath, content);
         AnsiConsole.MarkupLine($"[green]License attribution written to {outputPath}[/]");
+        return outputPath;
     }
 
     private static (string FileName, string Content) GenerateTxtAttribution(List<PackageHealth> packages)

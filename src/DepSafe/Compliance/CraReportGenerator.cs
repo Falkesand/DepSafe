@@ -138,10 +138,11 @@ public sealed class CraReportGenerator
     /// <summary>
     /// Generate interactive HTML report with drill-down capabilities.
     /// </summary>
-    public string GenerateHtml(CraReport report)
+    public string GenerateHtml(CraReport report, string? licenseFilePath = null)
     {
         var sb = new StringBuilder();
         var packages = report.Sbom.Packages.Skip(1).ToList(); // Skip root package
+        var licenseFileName = licenseFilePath is not null ? Path.GetFileName(licenseFilePath) : null;
 
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html lang=\"en\">");
@@ -167,7 +168,16 @@ public sealed class CraReportGenerator
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('tree')\" data-section=\"tree\">Dependency Tree</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('issues')\" data-section=\"issues\">Dependency Issues</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('compliance')\" data-section=\"compliance\">Compliance</a></li>");
+        if (licenseFileName is not null)
+        {
+            sb.AppendLine($"    <li class=\"external-link-item\"><a href=\"{licenseFileName}\" target=\"_blank\" class=\"external\">📄 License Attribution</a></li>");
+        }
         sb.AppendLine("  </ul>");
+        sb.AppendLine("  <div class=\"sidebar-footer\">");
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var versionString = version is not null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
+        sb.AppendLine($"    <span class=\"version\">DepSafe v{versionString}</span>");
+        sb.AppendLine("  </div>");
         sb.AppendLine("</nav>");
 
         // Main Content
@@ -328,6 +338,33 @@ public sealed class CraReportGenerator
         sb.AppendLine("  <div class=\"card metric-card\">");
         sb.AppendLine($"    <div class=\"metric-value {(report.VersionConflictCount > 0 ? "warning" : "")}\">{report.VersionConflictCount}</div>");
         sb.AppendLine("    <div class=\"metric-label\">Version Conflicts</div>");
+        sb.AppendLine("  </div>");
+
+        // License Summary Card
+        var packageLicenses = new List<(string PackageId, string? License)>();
+        if (_healthDataCache != null)
+        {
+            foreach (var pkg in _healthDataCache)
+                packageLicenses.Add((pkg.PackageId, pkg.License));
+        }
+        if (_transitiveDataCache != null)
+        {
+            foreach (var pkg in _transitiveDataCache)
+                packageLicenses.Add((pkg.PackageId, pkg.License));
+        }
+        var licenseReport = LicenseCompatibility.AnalyzeLicenses(packageLicenses);
+        var licenseStatusClass = licenseReport.OverallStatus switch
+        {
+            "Compatible" => "healthy",
+            "Review Recommended" => "warning",
+            _ => "critical"
+        };
+        var unknownCount = licenseReport.CategoryDistribution.GetValueOrDefault(LicenseCompatibility.LicenseCategory.Unknown, 0);
+
+        sb.AppendLine($"  <div class=\"card metric-card license-card\" onclick=\"showSection('licenses')\" style=\"cursor: pointer;\">");
+        sb.AppendLine($"    <div class=\"metric-value {licenseStatusClass}\">{(licenseReport.ErrorCount == 0 ? "✓" : licenseReport.ErrorCount.ToString())}</div>");
+        sb.AppendLine($"    <div class=\"metric-label\">License Status</div>");
+        sb.AppendLine($"    <div class=\"metric-detail\">{licenseReport.OverallStatus}{(unknownCount > 0 ? $" ({unknownCount} unknown)" : "")}</div>");
         sb.AppendLine("  </div>");
 
         sb.AppendLine("</div>");
@@ -1343,6 +1380,8 @@ public sealed class CraReportGenerator
       color: white;
       padding: 20px 0;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
     }
 
     .sidebar-header {
@@ -1358,6 +1397,7 @@ public sealed class CraReportGenerator
 
     .nav-links {
       list-style: none;
+      flex: 1;
     }
 
     .nav-links a {
@@ -1373,6 +1413,33 @@ public sealed class CraReportGenerator
       background: rgba(255,255,255,0.1);
       color: white;
       border-left-color: var(--primary);
+    }
+
+    .nav-links .external-link-item {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .nav-links .external-link-item a.external {
+      color: rgba(255,255,255,0.6);
+      font-size: 0.9em;
+    }
+
+    .nav-links .external-link-item a.external:hover {
+      color: white;
+      background: rgba(255,255,255,0.05);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 20px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .sidebar-footer .version {
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.5);
     }
 
     .main-content {
