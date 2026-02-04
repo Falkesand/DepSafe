@@ -62,4 +62,37 @@ public sealed class PackageReference
     public required string PackageId { get; init; }
     public required string Version { get; init; }
     public string? SourceFile { get; init; }
+    public bool IsTransitive { get; init; }
+    public string? ResolvedVersion { get; init; }
+    public string? RequestedVersion { get; init; }
+}
+
+/// <summary>
+/// Parsed output from dotnet list package --format json
+/// </summary>
+public sealed class DotnetPackageListOutput
+{
+    public int Version { get; set; }
+    public string? Parameters { get; set; }
+    public List<DotnetProjectPackages> Projects { get; set; } = [];
+}
+
+public sealed class DotnetProjectPackages
+{
+    public required string Path { get; set; }
+    public List<DotnetFrameworkPackages> Frameworks { get; set; } = [];
+}
+
+public sealed class DotnetFrameworkPackages
+{
+    public required string Framework { get; set; }
+    public List<DotnetPackageInfo> TopLevelPackages { get; set; } = [];
+    public List<DotnetPackageInfo> TransitivePackages { get; set; } = [];
+}
+
+public sealed class DotnetPackageInfo
+{
+    public required string Id { get; set; }
+    public string? RequestedVersion { get; set; }
+    public required string ResolvedVersion { get; set; }
 }

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using System.Xml.Linq;
 using NuGet.Common;
 using NuGet.Configuration;
@@ -297,5 +299,118 @@ public sealed class NuGetApiClient : IDisposable
     public void Dispose()
     {
         _cacheContext.Dispose();
+    }
+
+    /// <summary>
+    /// Parse packages using dotnet list package command for resolved versions and transitive dependencies.
+    /// This resolves MSBuild variables like $(AspireVersion).
+    /// </summary>
+    public static async Task<(List<PackageReference> TopLevel, List<PackageReference> Transitive)> ParsePackagesWithDotnetAsync(
+        string path, CancellationToken ct = default)
+    {
+        var topLevel = new List<PackageReference>();
+        var transitive = new List<PackageReference>();
+
+        try
+        {
+            // Determine working directory and arguments based on path type
+            string workingDir;
+            string arguments;
+
+            if (File.Exists(path) && (path.EndsWith(".csproj") || path.EndsWith(".fsproj") || path.EndsWith(".vbproj") || path.EndsWith(".sln")))
+            {
+                // Project or solution file specified
+                workingDir = Path.GetDirectoryName(path) ?? ".";
+                arguments = $"list \"{path}\" package --include-transitive --format json";
+            }
+            else if (Directory.Exists(path))
+            {
+                // Directory specified - use it as working directory
+                workingDir = path;
+                arguments = "list package --include-transitive --format json";
+            }
+            else
+            {
+                // Fallback
+                workingDir = Path.GetDirectoryName(path) ?? ".";
+                arguments = "list package --include-transitive --format json";
+            }
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = arguments,
+                WorkingDirectory = workingDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = new Process { StartInfo = startInfo };
+            process.Start();
+
+            var output = await process.StandardOutput.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+
+            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
+            {
+                return (topLevel, transitive);
+            }
+
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            var result = JsonSerializer.Deserialize<DotnetPackageListOutput>(output, options);
+
+            if (result?.Projects == null) return (topLevel, transitive);
+
+            var seenTopLevel = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenTransitive = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var project in result.Projects)
+            {
+                foreach (var framework in project.Frameworks)
+                {
+                    foreach (var pkg in framework.TopLevelPackages)
+                    {
+                        if (seenTopLevel.Add(pkg.Id))
+                        {
+                            topLevel.Add(new PackageReference
+                            {
+                                PackageId = pkg.Id,
+                                Version = pkg.ResolvedVersion,
+                                RequestedVersion = pkg.RequestedVersion,
+                                ResolvedVersion = pkg.ResolvedVersion,
+                                SourceFile = project.Path,
+                                IsTransitive = false
+                            });
+                        }
+                    }
+
+                    foreach (var pkg in framework.TransitivePackages)
+                    {
+                        if (seenTransitive.Add(pkg.Id) && !seenTopLevel.Contains(pkg.Id))
+                        {
+                            transitive.Add(new PackageReference
+                            {
+                                PackageId = pkg.Id,
+                                Version = pkg.ResolvedVersion,
+                                ResolvedVersion = pkg.ResolvedVersion,
+                                SourceFile = project.Path,
+                                IsTransitive = true
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error running dotnet list package: {ex.Message}");
+        }
+
+        return (topLevel, transitive);
     }
 }

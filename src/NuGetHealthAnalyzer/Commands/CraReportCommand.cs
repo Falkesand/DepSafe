@@ -80,20 +80,46 @@ public static class CraReportCommand
             AnsiConsole.WriteLine();
         }
 
-        // Collect all package references
+        // Collect all package references using dotnet list package for resolved versions
         var allReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
+        var transitiveReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
 
         await AnsiConsole.Status()
-            .StartAsync("Scanning project files...", async ctx =>
+            .StartAsync("Scanning packages (resolving MSBuild variables)...", async ctx =>
             {
-                foreach (var projectFile in projectFiles)
+                // Try dotnet list package first for resolved versions
+                var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+
+                if (topLevel.Count > 0)
                 {
-                    var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                    foreach (var r in refs)
+                    foreach (var r in topLevel)
                     {
                         if (!allReferences.ContainsKey(r.PackageId))
                         {
                             allReferences[r.PackageId] = r;
+                        }
+                    }
+                    foreach (var r in transitive)
+                    {
+                        if (!transitiveReferences.ContainsKey(r.PackageId) && !allReferences.ContainsKey(r.PackageId))
+                        {
+                            transitiveReferences[r.PackageId] = r;
+                        }
+                    }
+                }
+                else
+                {
+                    // Fall back to XML parsing if dotnet command fails
+                    ctx.Status("Falling back to XML parsing...");
+                    foreach (var projectFile in projectFiles)
+                    {
+                        var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                        foreach (var r in refs)
+                        {
+                            if (!allReferences.ContainsKey(r.PackageId))
+                            {
+                                allReferences[r.PackageId] = r;
+                            }
                         }
                     }
                 }
@@ -105,15 +131,18 @@ public static class CraReportCommand
             return 0;
         }
 
-        // Phase 1: Fetch all NuGet info
+        AnsiConsole.MarkupLine($"[dim]Found {allReferences.Count} direct packages and {transitiveReferences.Count} transitive dependencies[/]");
+
+        // Phase 1: Fetch all NuGet info (including transitive)
         var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var allPackageIds = allReferences.Keys.Concat(transitiveReferences.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         await AnsiConsole.Progress()
             .StartAsync(async ctx =>
             {
-                var task = ctx.AddTask($"Fetching NuGet info for {allReferences.Count} packages", maxValue: allReferences.Count);
+                var task = ctx.AddTask($"Fetching NuGet info for {allPackageIds.Count} packages", maxValue: allPackageIds.Count);
 
-                foreach (var (packageId, _) in allReferences)
+                foreach (var packageId in allPackageIds)
                 {
                     task.Description = $"NuGet: {packageId}";
                     var info = await nugetClient.GetPackageInfoAsync(packageId);
@@ -159,13 +188,13 @@ public static class CraReportCommand
                     }
                 });
 
-            // Phase 3: Batch fetch vulnerabilities
+            // Phase 3: Batch fetch vulnerabilities (including transitive)
             if (!githubClient.IsRateLimited && githubClient.HasToken)
             {
                 await AnsiConsole.Status()
                     .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
                     {
-                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allReferences.Keys);
+                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allPackageIds);
 
                         if (githubClient.IsRateLimited)
                         {
@@ -175,8 +204,9 @@ public static class CraReportCommand
             }
         }
 
-        // Phase 4: Calculate health scores
+        // Phase 4: Calculate health scores for direct packages
         var packages = new List<PackageHealth>();
+        var transitivePackages = new List<PackageHealth>();
 
         foreach (var (packageId, reference) in allReferences)
         {
@@ -194,6 +224,25 @@ public static class CraReportCommand
                 vulnerabilities);
 
             packages.Add(health);
+        }
+
+        // Calculate health scores for transitive packages
+        foreach (var (packageId, reference) in transitiveReferences)
+        {
+            if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo))
+                continue;
+
+            repoInfoMap.TryGetValue(packageId, out var repoInfo);
+            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+
+            var health = calculator.Calculate(
+                packageId,
+                reference.Version,
+                nugetInfo,
+                repoInfo,
+                vulnerabilities);
+
+            transitivePackages.Add(health);
         }
 
         // Calculate project score
@@ -226,6 +275,7 @@ public static class CraReportCommand
 
         var reportGenerator = new CraReportGenerator();
         reportGenerator.SetHealthData(packages);
+        reportGenerator.SetTransitiveData(transitivePackages);
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities);
 
         // Determine output path

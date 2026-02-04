@@ -340,6 +340,77 @@ public sealed class CraReportGenerator
         }
 
         sb.AppendLine("</div>");
+
+        // Transitive Dependencies Section
+        if (_transitiveDataCache?.Count > 0)
+        {
+            sb.AppendLine("<div class=\"transitive-section\">");
+            sb.AppendLine("  <div class=\"transitive-header\" onclick=\"toggleTransitive()\">");
+            sb.AppendLine($"    <h3>Transitive Dependencies ({_transitiveDataCache.Count})</h3>");
+            sb.AppendLine("    <span class=\"transitive-toggle\" id=\"transitive-toggle\">Show</span>");
+            sb.AppendLine("  </div>");
+            sb.AppendLine("  <div id=\"transitive-list\" class=\"packages-list transitive-list\" style=\"display: none;\">");
+
+            foreach (var healthData in _transitiveDataCache.OrderBy(h => h.Score))
+            {
+                var pkgName = healthData.PackageId;
+                var version = healthData.Version;
+                var score = healthData.Score;
+                var status = healthData.Status.ToString().ToLowerInvariant();
+
+                sb.AppendLine($"  <div class=\"package-card transitive\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
+                sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
+                sb.AppendLine($"      <div class=\"package-info\">");
+                sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
+                sb.AppendLine($"        <span class=\"package-version\">{EscapeHtml(version)}</span>");
+                sb.AppendLine($"        <span class=\"transitive-badge\">transitive</span>");
+                sb.AppendLine($"      </div>");
+                sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
+                sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
+                sb.AppendLine("    </div>");
+                sb.AppendLine("    <div class=\"package-details\">");
+
+                sb.AppendLine("      <div class=\"detail-grid\">");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{EscapeHtml(healthData.License ?? "Unknown")}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{healthData.Metrics.DaysSinceLastRelease} days ago</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
+                if (healthData.Metrics.Stars.HasValue)
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">GitHub Stars</span><span class=\"value\">{FormatNumber(healthData.Metrics.Stars.Value)}</span></div>");
+                if (healthData.Metrics.DaysSinceLastCommit.HasValue)
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Commit</span><span class=\"value\">{healthData.Metrics.DaysSinceLastCommit} days ago</span></div>");
+                sb.AppendLine("      </div>");
+
+                if (healthData.Recommendations.Count > 0)
+                {
+                    sb.AppendLine("      <div class=\"recommendations\">");
+                    sb.AppendLine("        <h4>Recommendations</h4>");
+                    sb.AppendLine("        <ul>");
+                    foreach (var rec in healthData.Recommendations)
+                        sb.AppendLine($"          <li>{EscapeHtml(rec)}</li>");
+                    sb.AppendLine("        </ul>");
+                    sb.AppendLine("      </div>");
+                }
+
+                if (healthData.Vulnerabilities.Count > 0)
+                {
+                    sb.AppendLine("      <div class=\"vulnerabilities-badge\">");
+                    sb.AppendLine($"        <span class=\"vuln-count\">{healthData.Vulnerabilities.Count} vulnerabilities</span>");
+                    sb.AppendLine("      </div>");
+                }
+
+                sb.AppendLine($"      <div class=\"package-links\">");
+                sb.AppendLine($"        <a href=\"https://www.nuget.org/packages/{EscapeHtml(pkgName)}/{EscapeHtml(version)}\" target=\"_blank\">NuGet</a>");
+                if (!string.IsNullOrEmpty(healthData.RepositoryUrl))
+                    sb.AppendLine($"        <a href=\"{EscapeHtml(healthData.RepositoryUrl)}\" target=\"_blank\">Repository</a>");
+                sb.AppendLine($"      </div>");
+                sb.AppendLine("    </div>");
+                sb.AppendLine("  </div>");
+            }
+
+            sb.AppendLine("  </div>");
+            sb.AppendLine("</div>");
+        }
     }
 
     private void GenerateSbomSection(StringBuilder sb, CraReport report, List<SbomPackage> packages)
@@ -1160,6 +1231,64 @@ public sealed class CraReportGenerator
       font-size: 0.9rem;
     }
 
+    /* Transitive Dependencies */
+    .transitive-section {
+      margin-top: 30px;
+      background: var(--card-bg);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .transitive-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px 20px;
+      background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%);
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .transitive-header:hover {
+      background: linear-gradient(90deg, #e9ecef 0%, #dee2e6 100%);
+    }
+
+    .transitive-header h3 {
+      font-size: 1rem;
+      color: var(--text);
+      margin: 0;
+    }
+
+    .transitive-toggle {
+      padding: 4px 12px;
+      background: var(--primary);
+      color: white;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .transitive-list {
+      padding: 15px;
+      background: #fafafa;
+    }
+
+    .transitive-badge {
+      background: #6c757d;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      margin-left: 10px;
+      font-weight: 500;
+    }
+
+    .package-card.transitive {
+      opacity: 0.9;
+      border-left-width: 3px;
+    }
+
     @media (max-width: 768px) {
       .sidebar {
         width: 100%;
@@ -1228,6 +1357,18 @@ function filterSbom() {{
   }});
 }}
 
+function toggleTransitive() {{
+  const list = document.getElementById('transitive-list');
+  const toggle = document.getElementById('transitive-toggle');
+  if (list.style.display === 'none') {{
+    list.style.display = '';
+    toggle.textContent = 'Hide';
+  }} else {{
+    list.style.display = 'none';
+    toggle.textContent = 'Show';
+  }}
+}}
+
 function exportSbom(format) {{
   let data, filename, type;
   if (format === 'spdx') {{
@@ -1253,6 +1394,7 @@ function exportSbom(format) {{
     }
 
     private List<PackageHealth>? _healthDataCache;
+    private List<PackageHealth>? _transitiveDataCache;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1260,6 +1402,14 @@ function exportSbom(format) {{
     public void SetHealthData(IEnumerable<PackageHealth> packages)
     {
         _healthDataCache = packages.ToList();
+    }
+
+    /// <summary>
+    /// Set transitive dependency health data for detailed report generation.
+    /// </summary>
+    public void SetTransitiveData(IEnumerable<PackageHealth> packages)
+    {
+        _transitiveDataCache = packages.ToList();
     }
 
     private static string GetScoreClass(int score) => score switch
