@@ -296,6 +296,14 @@ public sealed class CraReportGenerator
 
         sb.AppendLine("<div id=\"packages-list\" class=\"packages-list\">");
 
+        // Build set of all package IDs in the report for internal linking
+        var allPackageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pkg in report.Sbom.Packages.Skip(1))
+            allPackageIds.Add(pkg.Name);
+        if (_transitiveDataCache != null)
+            foreach (var t in _transitiveDataCache)
+                allPackageIds.Add(t.PackageId);
+
         foreach (var pkg in report.Sbom.Packages.Skip(1))
         {
             var pkgName = pkg.Name;
@@ -311,7 +319,7 @@ public sealed class CraReportGenerator
                 status = healthData.Status.ToString().ToLowerInvariant();
             }
 
-            sb.AppendLine($"  <div class=\"package-card\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
+            sb.AppendLine($"  <div class=\"package-card\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -361,7 +369,16 @@ public sealed class CraReportGenerator
                     sb.AppendLine("        <div class=\"dep-list\">");
                     foreach (var dep in healthData.Dependencies.Take(10))
                     {
-                        sb.AppendLine($"          <a href=\"https://www.nuget.org/packages/{EscapeHtml(dep.PackageId)}\" target=\"_blank\" class=\"dep-item\" title=\"{EscapeHtml(dep.VersionRange ?? "any")}\">{EscapeHtml(dep.PackageId)}</a>");
+                        if (allPackageIds.Contains(dep.PackageId))
+                        {
+                            // Internal link - navigate to the package on this page
+                            sb.AppendLine($"          <a href=\"#pkg-{EscapeHtml(dep.PackageId)}\" class=\"dep-item dep-internal\" title=\"{EscapeHtml(dep.VersionRange ?? "any")} - Click to jump to package\" onclick=\"navigateToPackage('{EscapeJs(dep.PackageId)}'); return false;\">{EscapeHtml(dep.PackageId)}</a>");
+                        }
+                        else
+                        {
+                            // External link - go to NuGet.org
+                            sb.AppendLine($"          <a href=\"https://www.nuget.org/packages/{EscapeHtml(dep.PackageId)}\" target=\"_blank\" class=\"dep-item dep-external\" title=\"{EscapeHtml(dep.VersionRange ?? "any")} - External dependency (NuGet.org)\">{EscapeHtml(dep.PackageId)}</a>");
+                        }
                     }
                     if (healthData.Dependencies.Count > 10)
                     {
@@ -400,7 +417,7 @@ public sealed class CraReportGenerator
                 var score = healthData.Score;
                 var status = healthData.Status.ToString().ToLowerInvariant();
 
-                sb.AppendLine($"  <div class=\"package-card transitive\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
+                sb.AppendLine($"  <div class=\"package-card transitive\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1095,6 +1112,43 @@ public sealed class CraReportGenerator
       color: var(--text-muted);
     }
 
+    .dep-internal {
+      background: #e8f4f8;
+      border-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .dep-internal::after {
+      content: ' ↗';
+      font-size: 0.7rem;
+      opacity: 0.6;
+    }
+
+    .dep-internal:hover {
+      background: var(--primary);
+      color: white;
+    }
+
+    .dep-external {
+      background: #f8f8f8;
+      border-color: #ddd;
+    }
+
+    .dep-external::after {
+      content: ' ↗';
+      font-size: 0.7rem;
+      opacity: 0.4;
+    }
+
+    .package-card.highlight {
+      animation: highlightPulse 2s ease-out;
+    }
+
+    @keyframes highlightPulse {
+      0% { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.6); }
+      100% { box-shadow: none; }
+    }
+
     .recommendations {
       background: #fff3cd;
       padding: 15px;
@@ -1533,6 +1587,55 @@ function toggleTransitive() {{
   }}
 }}
 
+function navigateToPackage(packageId) {{
+  const targetId = 'pkg-' + packageId;
+  const target = document.getElementById(targetId);
+  if (!target) {{
+    // Package not found on page, open NuGet instead
+    window.open('https://www.nuget.org/packages/' + encodeURIComponent(packageId), '_blank');
+    return;
+  }}
+
+  // Show the packages section first
+  showSection('packages');
+
+  // If it's a transitive dependency, expand the transitive section
+  if (target.classList.contains('transitive')) {{
+    const list = document.getElementById('transitive-list');
+    const toggle = document.getElementById('transitive-toggle');
+    if (list.style.display === 'none') {{
+      list.style.display = '';
+      toggle.textContent = 'Hide';
+    }}
+  }}
+
+  // Clear any search/filter that might be hiding the package
+  const searchInput = document.getElementById('package-search');
+  if (searchInput) {{
+    searchInput.value = '';
+    filterPackages();
+  }}
+
+  // Reset status filter to 'all'
+  currentFilter = 'all';
+  document.querySelectorAll('.filter-btn').forEach(btn => {{
+    btn.classList.remove('active');
+    if (btn.textContent.toLowerCase() === 'all') btn.classList.add('active');
+  }});
+  document.querySelectorAll('.package-card').forEach(card => card.style.display = '');
+
+  // Expand the package card
+  target.classList.add('expanded');
+
+  // Scroll to the element with a small offset for the header
+  setTimeout(() => {{
+    target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+    // Add a highlight effect
+    target.classList.add('highlight');
+    setTimeout(() => target.classList.remove('highlight'), 2000);
+  }}, 100);
+}}
+
 function exportSbom(format) {{
   let data, filename, type;
   if (format === 'spdx') {{
@@ -1691,6 +1794,16 @@ function exportSbom(format) {{
             .Replace(">", "&gt;")
             .Replace("\"", "&quot;")
             .Replace("'", "&#39;");
+    }
+
+    private static string EscapeJs(string input)
+    {
+        return input
+            .Replace("\\", "\\\\")
+            .Replace("'", "\\'")
+            .Replace("\"", "\\\"")
+            .Replace("\n", "\\n")
+            .Replace("\r", "\\r");
     }
 }
 
