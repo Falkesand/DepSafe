@@ -7,7 +7,9 @@ var rootCommand = new RootCommand("NuGet Health Analyzer - Health scoring for Nu
     CheckCommand.Create(),
     SbomCommand.Create(),
     VexCommand.Create(),
-    CraReportCommand.Create()
+    CraReportCommand.Create(),
+    LicensesCommand.Create(),
+    BadgeCommand.Create()
 };
 
 return await rootCommand.InvokeAsync(args);

@@ -31,4 +31,9 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!-- MSBuild integration files -->
+  <ItemGroup>
+    <None Include="build\**\*" Pack="true" PackagePath="build\" />
+  </ItemGroup>
+
 </Project>

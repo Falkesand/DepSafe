@@ -270,6 +270,30 @@ public sealed class CraReportGenerator
         sb.AppendLine("  <button class=\"filter-btn critical\" onclick=\"filterByStatus('critical')\">Critical</button>");
         sb.AppendLine("</div>");
 
+        // Check for unresolved MSBuild variables
+        var unresolvedVersions = report.Sbom.Packages
+            .Where(p => p.VersionInfo?.Contains("$(") == true)
+            .Select(p => p.VersionInfo)
+            .Distinct()
+            .ToList();
+
+        if (unresolvedVersions.Count > 0)
+        {
+            sb.AppendLine("<div class=\"msb-warning\">");
+            sb.AppendLine("  <h4>&#9888; Unresolved MSBuild Variables</h4>");
+            sb.AppendLine("  <p>Some package versions contain MSBuild variables that couldn't be resolved:</p>");
+            sb.AppendLine("  <p style=\"margin-top: 8px;\">");
+            foreach (var v in unresolvedVersions.Take(5))
+            {
+                sb.AppendLine($"    <code>{EscapeHtml(v)}</code> ");
+            }
+            if (unresolvedVersions.Count > 5)
+                sb.AppendLine($"    <em>and {unresolvedVersions.Count - 5} more...</em>");
+            sb.AppendLine("  </p>");
+            sb.AppendLine("  <p style=\"margin-top: 10px;\"><strong>To resolve:</strong> Run <code>dotnet restore</code> first, or check your <code>Directory.Build.props</code> / <code>Directory.Packages.props</code> files.</p>");
+            sb.AppendLine("</div>");
+        }
+
         sb.AppendLine("<div id=\"packages-list\" class=\"packages-list\">");
 
         foreach (var pkg in report.Sbom.Packages.Skip(1))
@@ -291,7 +315,7 @@ public sealed class CraReportGenerator
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
-            sb.AppendLine($"        <span class=\"package-version\">{EscapeHtml(version)}</span>");
+            sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
             sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
@@ -301,7 +325,7 @@ public sealed class CraReportGenerator
             if (healthData != null)
             {
                 sb.AppendLine("      <div class=\"detail-grid\">");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{EscapeHtml(healthData.License ?? "Unknown")}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{FormatLicense(healthData.License)}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{healthData.Metrics.DaysSinceLastRelease} days ago</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
@@ -326,6 +350,24 @@ public sealed class CraReportGenerator
                 {
                     sb.AppendLine("      <div class=\"vulnerabilities-badge\">");
                     sb.AppendLine($"        <span class=\"vuln-count\">{healthData.Vulnerabilities.Count} vulnerabilities</span>");
+                    sb.AppendLine("      </div>");
+                }
+
+                // Dependencies (what this package uses)
+                if (healthData.Dependencies.Count > 0)
+                {
+                    sb.AppendLine("      <div class=\"package-dependencies\">");
+                    sb.AppendLine($"        <h4>Dependencies ({healthData.Dependencies.Count})</h4>");
+                    sb.AppendLine("        <div class=\"dep-list\">");
+                    foreach (var dep in healthData.Dependencies.Take(10))
+                    {
+                        sb.AppendLine($"          <a href=\"https://www.nuget.org/packages/{EscapeHtml(dep.PackageId)}\" target=\"_blank\" class=\"dep-item\" title=\"{EscapeHtml(dep.VersionRange ?? "any")}\">{EscapeHtml(dep.PackageId)}</a>");
+                    }
+                    if (healthData.Dependencies.Count > 10)
+                    {
+                        sb.AppendLine($"          <span class=\"dep-more\">+{healthData.Dependencies.Count - 10} more</span>");
+                    }
+                    sb.AppendLine("        </div>");
                     sb.AppendLine("      </div>");
                 }
             }
@@ -362,7 +404,7 @@ public sealed class CraReportGenerator
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
-                sb.AppendLine($"        <span class=\"package-version\">{EscapeHtml(version)}</span>");
+                sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
                 sb.AppendLine($"        <span class=\"transitive-badge\">transitive</span>");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
@@ -371,7 +413,7 @@ public sealed class CraReportGenerator
                 sb.AppendLine("    <div class=\"package-details\">");
 
                 sb.AppendLine("      <div class=\"detail-grid\">");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{EscapeHtml(healthData.License ?? "Unknown")}</span></div>");
+                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{FormatLicense(healthData.License)}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{healthData.Metrics.DaysSinceLastRelease} days ago</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
@@ -445,7 +487,7 @@ public sealed class CraReportGenerator
             sb.AppendLine($"        <a href=\"{EscapeHtml(pkg.DownloadLocation)}\" target=\"_blank\" class=\"external-link\">View on NuGet</a>");
             sb.AppendLine($"      </td>");
             sb.AppendLine($"      <td>{EscapeHtml(pkg.VersionInfo)}</td>");
-            sb.AppendLine($"      <td><span class=\"license-badge\">{EscapeHtml(pkg.LicenseDeclared ?? "Unknown")}</span></td>");
+            sb.AppendLine($"      <td><span class=\"license-badge\">{FormatLicense(pkg.LicenseDeclared)}</span></td>");
             sb.AppendLine($"      <td class=\"purl\"><code>{EscapeHtml(purl)}</code></td>");
             sb.AppendLine($"    </tr>");
         }
@@ -920,6 +962,11 @@ public sealed class CraReportGenerator
       margin-bottom: 20px;
     }
 
+    .detail-item {
+      min-width: 0;
+      overflow: hidden;
+    }
+
     .detail-item .label {
       display: block;
       color: var(--text-muted);
@@ -929,6 +976,123 @@ public sealed class CraReportGenerator
 
     .detail-item .value {
       font-weight: 500;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      display: block;
+      max-width: 100%;
+    }
+
+    .detail-item .value a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .detail-item .value a:hover {
+      text-decoration: underline;
+    }
+
+    .detail-item.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .unresolved-version {
+      background: #fff3cd;
+      color: #856404;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      cursor: help;
+    }
+
+    .license-unknown {
+      background: #f8d7da;
+      color: #721c24;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      cursor: help;
+    }
+
+    .license-link {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .license-link:hover {
+      text-decoration: underline;
+    }
+
+    .msb-warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-left: 4px solid #ffc107;
+      border-radius: 8px;
+      padding: 15px 20px;
+      margin-bottom: 20px;
+    }
+
+    .msb-warning h4 {
+      color: #856404;
+      margin-bottom: 8px;
+      font-size: 1rem;
+    }
+
+    .msb-warning p {
+      color: #856404;
+      font-size: 0.9rem;
+      margin: 0;
+    }
+
+    .msb-warning code {
+      background: rgba(0,0,0,0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.85rem;
+    }
+
+    .package-dependencies {
+      margin-top: 15px;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .package-dependencies h4 {
+      margin-bottom: 10px;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .dep-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .dep-item {
+      display: inline-block;
+      padding: 4px 10px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      font-size: 0.8rem;
+      color: var(--primary);
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .dep-item:hover {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .dep-more {
+      display: inline-block;
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
     }
 
     .recommendations {
@@ -1427,6 +1591,85 @@ function exportSbom(format) {{
         >= 1_000 => $"{number / 1_000.0:F1}K",
         _ => number.ToString()
     };
+
+    // Known SPDX license URLs
+    private static readonly Dictionary<string, string> LicenseUrls = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["MIT"] = "https://opensource.org/licenses/MIT",
+        ["Apache-2.0"] = "https://opensource.org/licenses/Apache-2.0",
+        ["BSD-2-Clause"] = "https://opensource.org/licenses/BSD-2-Clause",
+        ["BSD-3-Clause"] = "https://opensource.org/licenses/BSD-3-Clause",
+        ["GPL-2.0"] = "https://opensource.org/licenses/GPL-2.0",
+        ["GPL-3.0"] = "https://opensource.org/licenses/GPL-3.0",
+        ["LGPL-2.1"] = "https://opensource.org/licenses/LGPL-2.1",
+        ["LGPL-3.0"] = "https://opensource.org/licenses/LGPL-3.0",
+        ["MPL-2.0"] = "https://opensource.org/licenses/MPL-2.0",
+        ["ISC"] = "https://opensource.org/licenses/ISC",
+        ["Unlicense"] = "https://unlicense.org/",
+        ["CC0-1.0"] = "https://creativecommons.org/publicdomain/zero/1.0/",
+        ["MS-PL"] = "https://opensource.org/licenses/MS-PL",
+    };
+
+    private static string FormatLicense(string? license)
+    {
+        if (string.IsNullOrEmpty(license))
+            return "<span class=\"license-unknown\">Unknown</span>";
+
+        // Handle NOASSERTION - SPDX term for unknown/unspecified license
+        if (license.Equals("NOASSERTION", StringComparison.OrdinalIgnoreCase))
+        {
+            return "<span class=\"license-unknown\" title=\"License not specified in package metadata\">Not Specified</span>";
+        }
+
+        // Check for known SPDX licenses and add links
+        if (LicenseUrls.TryGetValue(license, out var url))
+        {
+            return $"<a href=\"{url}\" target=\"_blank\" class=\"license-link\">{EscapeHtml(license)}</a>";
+        }
+
+        // If it's a URL, make it a clickable link with truncated display
+        if (license.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            license.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            // Extract license name from URL if possible
+            var displayName = "View License";
+            try
+            {
+                var uri = new Uri(license);
+                var segments = uri.Segments;
+                if (segments.Length > 0)
+                {
+                    var lastSegment = segments[^1].TrimEnd('/');
+                    if (!string.IsNullOrEmpty(lastSegment) &&
+                        !lastSegment.Equals("license", StringComparison.OrdinalIgnoreCase) &&
+                        !lastSegment.Equals("licenses", StringComparison.OrdinalIgnoreCase))
+                    {
+                        displayName = lastSegment;
+                    }
+                }
+            }
+            catch { /* Use default display name */ }
+
+            return $"<a href=\"{EscapeHtml(license)}\" target=\"_blank\" title=\"{EscapeHtml(license)}\" class=\"license-link\">{EscapeHtml(displayName)}</a>";
+        }
+
+        // For other license identifiers, try to link to SPDX
+        return $"<a href=\"https://spdx.org/licenses/{EscapeHtml(license)}.html\" target=\"_blank\" class=\"license-link\">{EscapeHtml(license)}</a>";
+    }
+
+    private static string FormatVersion(string? version, string packageId)
+    {
+        if (string.IsNullOrEmpty(version))
+            return "Unknown";
+
+        // Check for unresolved MSBuild variable
+        if (version.StartsWith("$(") || version.Contains("$("))
+        {
+            return $"<span class=\"unresolved-version\" title=\"MSBuild variable not resolved. Run 'dotnet restore' or check Directory.Build.props\">{EscapeHtml(version)}</span>";
+        }
+
+        return EscapeHtml(version);
+    }
 
     /// <summary>
     /// Generate JSON report.

@@ -2,6 +2,12 @@
 
 Health scoring for NuGet dependencies - predicts maintenance risk and package abandonment. Includes EU Cyber Resilience Act (CRA) compliance tooling with SBOM and VEX generation.
 
+![Health Score](https://img.shields.io/badge/health_score-70%2F100-blue?style=flat)
+![Status](https://img.shields.io/badge/status-Watch-blue?style=flat)
+![Vulnerabilities](https://img.shields.io/badge/vulnerabilities-none-brightgreen?style=flat)
+![CRA Compliance](https://img.shields.io/badge/CRA-compliant-brightgreen?style=flat)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat)
+
 ## Installation
 
 ```bash
@@ -12,11 +18,31 @@ dotnet tool install -g NuGetHealthAnalyzer
 
 - **Health Scoring**: 0-100 score based on freshness, release cadence, download trends, repository activity, and vulnerabilities
 - **Abandonment Prediction**: Identifies packages at risk of being abandoned
+- **Transitive Dependencies**: Full dependency tree analysis with drill-down
 - **SBOM Generation**: SPDX 3.0 and CycloneDX formats
 - **VEX Generation**: OpenVEX vulnerability status documents
-- **CRA Compliance Reports**: Comprehensive reports for EU Cyber Resilience Act compliance
+- **CRA Compliance Reports**: Interactive HTML reports for EU Cyber Resilience Act compliance
+- **License Compatibility**: Detects copyleft and license conflicts
+- **Badge Generation**: shields.io badges for your README
+- **MSBuild Integration**: Build-time health checks
 
-## Usage
+## Quick Start
+
+```bash
+# Analyze current project
+nuget-health analyze
+
+# Generate comprehensive HTML report
+nuget-health cra-report
+
+# Check license compatibility
+nuget-health licenses
+
+# Generate badges for README
+nuget-health badge
+```
+
+## Commands
 
 ### Analyze Project Health
 
@@ -35,6 +61,9 @@ nuget-health analyze --format markdown # Markdown for documentation
 
 # CI/CD integration - fail if score below threshold
 nuget-health analyze --fail-below 60
+
+# Skip GitHub API (faster, less accurate)
+nuget-health analyze --skip-github
 ```
 
 ### Check Single Package
@@ -68,7 +97,7 @@ nuget-health vex --output vulnerabilities.vex.json
 ### Generate CRA Compliance Report
 
 ```bash
-# HTML report (default)
+# HTML report (default) - interactive with drill-down
 nuget-health cra-report
 
 # JSON report
@@ -76,6 +105,39 @@ nuget-health cra-report --format json
 
 # Custom output path
 nuget-health cra-report --output compliance-report.html
+```
+
+### Analyze License Compatibility
+
+```bash
+# Check licenses against MIT (default)
+nuget-health licenses
+
+# Check against your project's license
+nuget-health licenses --project-license Apache-2.0
+
+# Include transitive dependencies
+nuget-health licenses --include-transitive
+
+# JSON output
+nuget-health licenses --format json
+```
+
+### Generate Badges
+
+```bash
+# Markdown format (default)
+nuget-health badge
+
+# HTML format
+nuget-health badge --format html
+
+# Different styles
+nuget-health badge --style for-the-badge
+nuget-health badge --style flat-square
+
+# Save to file
+nuget-health badge --output BADGES.md
 ```
 
 ## Health Score Calculation
@@ -117,6 +179,68 @@ Recommendations:
 • OldLibrary.Utils: No releases in 3 years, declining downloads
 ```
 
+## MSBuild Integration
+
+Add to your `.csproj` to enable build-time health checks:
+
+```xml
+<PropertyGroup>
+  <!-- Enable health checking during build -->
+  <NuGetHealthEnabled>true</NuGetHealthEnabled>
+
+  <!-- Fail build if score below threshold (0 = disabled) -->
+  <NuGetHealthFailBelow>60</NuGetHealthFailBelow>
+
+  <!-- Warn if score below threshold -->
+  <NuGetHealthWarnBelow>80</NuGetHealthWarnBelow>
+
+  <!-- Skip GitHub API for faster builds -->
+  <NuGetHealthSkipGitHub>true</NuGetHealthSkipGitHub>
+</PropertyGroup>
+```
+
+### MSBuild Targets
+
+```bash
+# Run health check manually
+dotnet msbuild -t:NuGetHealthCheck
+
+# Generate health report
+dotnet msbuild -t:NuGetHealthReport
+
+# Check license compatibility
+dotnet msbuild -t:NuGetHealthLicenseCheck
+
+# Generate badges
+dotnet msbuild -t:NuGetHealthBadges
+```
+
+## License Compatibility
+
+The `licenses` command detects potential license conflicts:
+
+| Category | Licenses | Risk |
+|----------|----------|------|
+| Permissive | MIT, Apache-2.0, BSD, ISC | Low - compatible with most projects |
+| Weak Copyleft | LGPL, MPL, EPL | Medium - modifications must be shared |
+| Strong Copyleft | GPL, AGPL | High - may require open-sourcing your project |
+
+Example output:
+```
+License Compatibility Report
+╭─────────────────┬────────────╮
+│ Project License │ MIT        │
+│ Total Packages  │ 45         │
+│ Overall Status  │ Compatible │
+│ Errors          │ 0          │
+│ Warnings        │ 2          │
+╰─────────────────┴────────────╯
+
+License Issues:
+• Warning: SomePackage uses LGPL-3.0 (weak copyleft)
+  Recommendation: Modifications to this package must be shared
+```
+
 ## CRA Compliance
 
 The EU Cyber Resilience Act (effective December 2027) requires:
@@ -127,11 +251,38 @@ The EU Cyber Resilience Act (effective December 2027) requires:
 This tool helps meet these requirements by generating:
 - SPDX 3.0 compliant SBOMs
 - OpenVEX vulnerability status documents
-- Comprehensive compliance reports
+- Comprehensive compliance reports with:
+  - Interactive HTML dashboard
+  - Package health drill-down
+  - Transitive dependency tree
+  - Vulnerability details
+  - License information
 
 ## Environment Variables
 
-- `GITHUB_TOKEN`: GitHub API token for higher rate limits and private repo access
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub API token for higher rate limits, vulnerability data, and private repo access |
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+- name: Check NuGet Health
+  run: |
+    dotnet tool install -g NuGetHealthAnalyzer
+    nuget-health analyze --fail-below 60
+```
+
+### Azure DevOps
+
+```yaml
+- script: |
+    dotnet tool install -g NuGetHealthAnalyzer
+    nuget-health analyze --fail-below 60
+  displayName: 'Check NuGet Health'
+```
 
 ## License
 

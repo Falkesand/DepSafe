@@ -18,6 +18,17 @@ public sealed class NuGetPackageInfo
     public List<string> Tags { get; init; } = [];
     public bool IsDeprecated { get; init; }
     public string? DeprecationReason { get; init; }
+    public List<PackageDependency> Dependencies { get; init; } = [];
+}
+
+/// <summary>
+/// A package dependency.
+/// </summary>
+public sealed class PackageDependency
+{
+    public required string PackageId { get; init; }
+    public string? VersionRange { get; init; }
+    public string? TargetFramework { get; init; }
 }
 
 public sealed class VersionInfo

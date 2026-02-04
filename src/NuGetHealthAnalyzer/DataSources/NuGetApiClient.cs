@@ -5,6 +5,7 @@ using NuGet.Common;
 using NuGet.Configuration;
 using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
+using NuGet.Frameworks;
 using NuGet.Versioning;
 using NuGetHealthAnalyzer.Models;
 
@@ -72,6 +73,9 @@ public sealed class NuGetApiClient : IDisposable
             // Fetch deprecation info once (async)
             var deprecationInfo = await latest.GetDeprecationMetadataAsync();
 
+            // Fetch dependencies using DependencyInfoResource (more reliable than DependencySets)
+            var dependencies = await GetPackageDependenciesAsync(latest.Identity, ct);
+
             var result = new NuGetPackageInfo
             {
                 PackageId = packageId,
@@ -86,7 +90,8 @@ public sealed class NuGetApiClient : IDisposable
                 Authors = latest.Authors?.Split(',').Select(a => a.Trim()).ToList() ?? [],
                 Tags = latest.Tags?.Split(',').Select(t => t.Trim()).ToList() ?? [],
                 IsDeprecated = deprecationInfo is not null,
-                DeprecationReason = deprecationInfo?.Message
+                DeprecationReason = deprecationInfo?.Message,
+                Dependencies = dependencies
             };
 
             await _cache.SetAsync(cacheKey, result, TimeSpan.FromHours(12), ct);
@@ -123,6 +128,61 @@ public sealed class NuGetApiClient : IDisposable
             }
         }
         return url;
+    }
+
+    /// <summary>
+    /// Get package dependencies using DependencyInfoResource.
+    /// </summary>
+    private async Task<List<PackageDependency>> GetPackageDependenciesAsync(
+        NuGet.Packaging.Core.PackageIdentity packageIdentity, CancellationToken ct)
+    {
+        var dependencies = new List<PackageDependency>();
+
+        try
+        {
+            var dependencyInfoResource = await _repository.GetResourceAsync<DependencyInfoResource>(ct);
+            if (dependencyInfoResource == null) return dependencies;
+
+            // Try different frameworks in preference order
+            var frameworks = new[]
+            {
+                NuGetFramework.Parse("net8.0"),
+                NuGetFramework.Parse("net6.0"),
+                NuGetFramework.Parse("netstandard2.1"),
+                NuGetFramework.Parse("netstandard2.0"),
+                NuGetFramework.AnyFramework
+            };
+
+            foreach (var framework in frameworks)
+            {
+                var dependencyInfo = await dependencyInfoResource.ResolvePackage(
+                    packageIdentity,
+                    framework,
+                    _cacheContext,
+                    _logger,
+                    ct);
+
+                if (dependencyInfo?.Dependencies != null && dependencyInfo.Dependencies.Any())
+                {
+                    foreach (var dep in dependencyInfo.Dependencies)
+                    {
+                        dependencies.Add(new PackageDependency
+                        {
+                            PackageId = dep.Id,
+                            VersionRange = dep.VersionRange?.ToString(),
+                            TargetFramework = framework.GetShortFolderName()
+                        });
+                    }
+                    break; // Found dependencies, stop trying other frameworks
+                }
+            }
+        }
+        catch
+        {
+            // Silently ignore dependency fetching failures - dependencies are optional
+        }
+
+        return dependencies;
     }
 
     /// <summary>

@@ -14,6 +14,7 @@ public sealed class PackageHealth
     public string? License { get; init; }
     public List<string> Vulnerabilities { get; init; } = [];
     public List<string> Recommendations { get; init; } = [];
+    public List<PackageDependency> Dependencies { get; init; } = [];
 }
 
 public enum HealthStatus

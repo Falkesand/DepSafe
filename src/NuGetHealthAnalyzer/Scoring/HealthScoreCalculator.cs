@@ -41,7 +41,8 @@ public sealed class HealthScoreCalculator
             Vulnerabilities = vulnerabilities.Count > 0
                 ? vulnerabilities.Select(v => v.Id).ToList()
                 : [],
-            Recommendations = recommendations
+            Recommendations = recommendations,
+            Dependencies = nugetInfo.Dependencies
         };
     }
 

@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--
+    NuGet Health Analyzer MSBuild Integration
+
+    Usage in your .csproj:
+    <PropertyGroup>
+      <NuGetHealthEnabled>true</NuGetHealthEnabled>
+      <NuGetHealthFailBelow>60</NuGetHealthFailBelow>
+      <NuGetHealthWarnBelow>80</NuGetHealthWarnBelow>
+      <NuGetHealthSkipGitHub>false</NuGetHealthSkipGitHub>
+    </PropertyGroup>
+  -->
+
+  <PropertyGroup>
+    <!-- Default values -->
+    <NuGetHealthEnabled Condition="'$(NuGetHealthEnabled)' == ''">false</NuGetHealthEnabled>
+    <NuGetHealthFailBelow Condition="'$(NuGetHealthFailBelow)' == ''">0</NuGetHealthFailBelow>
+    <NuGetHealthWarnBelow Condition="'$(NuGetHealthWarnBelow)' == ''">60</NuGetHealthWarnBelow>
+    <NuGetHealthSkipGitHub Condition="'$(NuGetHealthSkipGitHub)' == ''">true</NuGetHealthSkipGitHub>
+    <NuGetHealthRunOnRestore Condition="'$(NuGetHealthRunOnRestore)' == ''">false</NuGetHealthRunOnRestore>
+    <NuGetHealthRunOnBuild Condition="'$(NuGetHealthRunOnBuild)' == ''">true</NuGetHealthRunOnBuild>
+    <NuGetHealthCacheMinutes Condition="'$(NuGetHealthCacheMinutes)' == ''">60</NuGetHealthCacheMinutes>
+    <NuGetHealthOutputFile Condition="'$(NuGetHealthOutputFile)' == ''">$(IntermediateOutputPath)nuget-health.json</NuGetHealthOutputFile>
+  </PropertyGroup>
+
+  <!-- Run after restore if enabled -->
+  <Target Name="NuGetHealthCheckOnRestore"
+          AfterTargets="Restore"
+          Condition="'$(NuGetHealthEnabled)' == 'true' AND '$(NuGetHealthRunOnRestore)' == 'true'">
+    <CallTarget Targets="NuGetHealthCheck" />
+  </Target>
+
+  <!-- Run before build if enabled -->
+  <Target Name="NuGetHealthCheckOnBuild"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(NuGetHealthEnabled)' == 'true' AND '$(NuGetHealthRunOnBuild)' == 'true'">
+    <CallTarget Targets="NuGetHealthCheck" />
+  </Target>
+
+  <!-- Main health check target -->
+  <Target Name="NuGetHealthCheck">
+    <PropertyGroup>
+      <_NuGetHealthArgs>analyze "$(MSBuildProjectFullPath)" --format json</_NuGetHealthArgs>
+      <_NuGetHealthArgs Condition="'$(NuGetHealthSkipGitHub)' == 'true'">$(_NuGetHealthArgs) --skip-github</_NuGetHealthArgs>
+      <_NuGetHealthArgs Condition="$(NuGetHealthFailBelow) > 0">$(_NuGetHealthArgs) --fail-below $(NuGetHealthFailBelow)</_NuGetHealthArgs>
+    </PropertyGroup>
+
+    <Message Text="Running NuGet Health Analysis..." Importance="High" />
+
+    <Exec Command="dotnet nuget-health $(_NuGetHealthArgs)"
+          ConsoleToMsBuild="true"
+          StandardOutputImportance="Low"
+          StandardErrorImportance="High"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_NuGetHealthExitCode" />
+      <Output TaskParameter="ConsoleOutput" PropertyName="_NuGetHealthOutput" />
+    </Exec>
+
+    <!-- Parse JSON output for score -->
+    <PropertyGroup>
+      <_NuGetHealthScore>$([System.Text.RegularExpressions.Regex]::Match($(_NuGetHealthOutput), '"overallScore":\s*(\d+)').Groups[1].Value)</_NuGetHealthScore>
+    </PropertyGroup>
+
+    <!-- Warning if below warn threshold -->
+    <Warning Text="NuGet Health Score is $(_NuGetHealthScore)/100 (below warning threshold of $(NuGetHealthWarnBelow)). Run 'nuget-health analyze' for details."
+             Condition="$(_NuGetHealthScore) != '' AND $(_NuGetHealthScore) &lt; $(NuGetHealthWarnBelow) AND $(_NuGetHealthScore) >= $(NuGetHealthFailBelow)" />
+
+    <!-- Error if below fail threshold -->
+    <Error Text="NuGet Health Score is $(_NuGetHealthScore)/100 (below required threshold of $(NuGetHealthFailBelow)). Run 'nuget-health analyze' for details."
+           Condition="$(NuGetHealthFailBelow) > 0 AND $(_NuGetHealthScore) != '' AND $(_NuGetHealthScore) &lt; $(NuGetHealthFailBelow)" />
+
+    <Message Text="NuGet Health Score: $(_NuGetHealthScore)/100"
+             Importance="High"
+             Condition="$(_NuGetHealthScore) != ''" />
+  </Target>
+
+  <!-- Target to generate health report -->
+  <Target Name="NuGetHealthReport">
+    <PropertyGroup>
+      <_ReportOutput Condition="'$(NuGetHealthReportOutput)' == ''">$(MSBuildProjectDirectory)\health-report.html</_ReportOutput>
+      <_ReportOutput Condition="'$(NuGetHealthReportOutput)' != ''">$(NuGetHealthReportOutput)</_ReportOutput>
+    </PropertyGroup>
+
+    <Message Text="Generating NuGet Health Report..." Importance="High" />
+
+    <Exec Command="dotnet nuget-health cra-report &quot;$(MSBuildProjectFullPath)&quot; -o &quot;$(_ReportOutput)&quot;"
+          ConsoleToMsBuild="true" />
+
+    <Message Text="Health report generated: $(_ReportOutput)" Importance="High" />
+  </Target>
+
+  <!-- Target to check licenses -->
+  <Target Name="NuGetHealthLicenseCheck">
+    <PropertyGroup>
+      <_LicenseArgs>licenses "$(MSBuildProjectFullPath)"</_LicenseArgs>
+      <_LicenseArgs Condition="'$(ProjectLicense)' != ''">$(_LicenseArgs) --project-license $(ProjectLicense)</_LicenseArgs>
+    </PropertyGroup>
+
+    <Message Text="Checking license compatibility..." Importance="High" />
+
+    <Exec Command="dotnet nuget-health $(_LicenseArgs)"
+          ConsoleToMsBuild="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_LicenseExitCode" />
+    </Exec>
+
+    <Error Text="License compatibility issues found. Run 'nuget-health licenses' for details."
+           Condition="$(_LicenseExitCode) != 0 AND '$(NuGetHealthLicenseCheckRequired)' == 'true'" />
+
+    <Warning Text="License compatibility issues found. Run 'nuget-health licenses' for details."
+             Condition="$(_LicenseExitCode) != 0 AND '$(NuGetHealthLicenseCheckRequired)' != 'true'" />
+  </Target>
+
+  <!-- Target to generate badges -->
+  <Target Name="NuGetHealthBadges">
+    <PropertyGroup>
+      <_BadgeOutput Condition="'$(NuGetHealthBadgeOutput)' == ''">$(MSBuildProjectDirectory)\BADGES.md</_BadgeOutput>
+      <_BadgeOutput Condition="'$(NuGetHealthBadgeOutput)' != ''">$(NuGetHealthBadgeOutput)</_BadgeOutput>
+    </PropertyGroup>
+
+    <Message Text="Generating health badges..." Importance="High" />
+
+    <Exec Command="dotnet nuget-health badge &quot;$(MSBuildProjectFullPath)&quot; -o &quot;$(_BadgeOutput)&quot;"
+          ConsoleToMsBuild="true" />
+
+    <Message Text="Badges generated: $(_BadgeOutput)" Importance="High" />
+  </Target>
+
+</Project>
