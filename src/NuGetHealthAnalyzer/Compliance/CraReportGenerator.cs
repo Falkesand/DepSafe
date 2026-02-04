@@ -138,6 +138,7 @@ public sealed class CraReportGenerator
         sb.AppendLine("  <ul class=\"nav-links\">");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('overview')\" class=\"active\" data-section=\"overview\">Overview</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('packages')\" data-section=\"packages\">Packages</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('licenses')\" data-section=\"licenses\">Licenses</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('sbom')\" data-section=\"sbom\">SBOM</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('vulnerabilities')\" data-section=\"vulnerabilities\">Vulnerabilities</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('compliance')\" data-section=\"compliance\">Compliance</a></li>");
@@ -161,6 +162,11 @@ public sealed class CraReportGenerator
         // Packages Section
         sb.AppendLine("<section id=\"packages\" class=\"section\">");
         GeneratePackagesSection(sb, report);
+        sb.AppendLine("</section>");
+
+        // Licenses Section
+        sb.AppendLine("<section id=\"licenses\" class=\"section\">");
+        GenerateLicensesSection(sb, report);
         sb.AppendLine("</section>");
 
         // SBOM Section
@@ -548,6 +554,147 @@ public sealed class CraReportGenerator
         sb.AppendLine("  <button onclick=\"exportSbom('spdx')\" class=\"export-btn\">Export SPDX JSON</button>");
         sb.AppendLine("  <button onclick=\"exportSbom('cyclonedx')\" class=\"export-btn\">Export CycloneDX</button>");
         sb.AppendLine("</div>");
+    }
+
+    private void GenerateLicensesSection(StringBuilder sb, CraReport report)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>License Compatibility</h2>");
+        sb.AppendLine("  <p>Analysis of license types and potential compatibility issues</p>");
+        sb.AppendLine("</div>");
+
+        // Gather licenses from packages
+        var packageLicenses = new List<(string PackageId, string? License)>();
+        if (_healthDataCache != null)
+        {
+            foreach (var pkg in _healthDataCache)
+            {
+                packageLicenses.Add((pkg.PackageId, pkg.License));
+            }
+        }
+        if (_transitiveDataCache != null)
+        {
+            foreach (var pkg in _transitiveDataCache)
+            {
+                packageLicenses.Add((pkg.PackageId, pkg.License));
+            }
+        }
+
+        var licenseReport = LicenseCompatibility.AnalyzeLicenses(packageLicenses);
+
+        // Status banner
+        var statusClass = licenseReport.OverallStatus switch
+        {
+            "Compatible" => "healthy",
+            "Review Recommended" => "warning",
+            _ => "critical"
+        };
+        sb.AppendLine($"<div class=\"license-status {statusClass}\">");
+        sb.AppendLine($"  <span class=\"status-icon\">{(licenseReport.ErrorCount == 0 ? "✓" : "⚠")}</span>");
+        sb.AppendLine($"  <span class=\"status-text\">{licenseReport.OverallStatus}</span>");
+        if (licenseReport.ErrorCount > 0)
+            sb.AppendLine($"  <span class=\"status-detail\">{licenseReport.ErrorCount} potential issues found</span>");
+        sb.AppendLine("</div>");
+
+        // License distribution chart (simple bar chart)
+        sb.AppendLine("<div class=\"license-distribution\">");
+        sb.AppendLine("  <h3>License Distribution</h3>");
+        sb.AppendLine("  <div class=\"distribution-chart\">");
+
+        var total = licenseReport.CategoryDistribution.Values.Sum();
+        if (total > 0)
+        {
+            foreach (var (category, count) in licenseReport.CategoryDistribution.OrderByDescending(x => x.Value))
+            {
+                if (count == 0) continue;
+                var percent = (count * 100) / total;
+                var categoryClass = category switch
+                {
+                    LicenseCompatibility.LicenseCategory.Permissive => "permissive",
+                    LicenseCompatibility.LicenseCategory.WeakCopyleft => "weak-copyleft",
+                    LicenseCompatibility.LicenseCategory.StrongCopyleft => "strong-copyleft",
+                    LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
+                    _ => "unknown"
+                };
+                sb.AppendLine($"    <div class=\"dist-bar {categoryClass}\" style=\"width: {Math.Max(percent, 5)}%\" title=\"{category}: {count} packages ({percent}%)\">");
+                sb.AppendLine($"      <span class=\"dist-label\">{category}</span>");
+                sb.AppendLine($"      <span class=\"dist-count\">{count}</span>");
+                sb.AppendLine("    </div>");
+            }
+        }
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // License table
+        sb.AppendLine("<div class=\"license-table-container\">");
+        sb.AppendLine("  <h3>Packages by License</h3>");
+        sb.AppendLine("  <table class=\"license-table\">");
+        sb.AppendLine("    <thead>");
+        sb.AppendLine("      <tr><th>License</th><th>Category</th><th>Packages</th></tr>");
+        sb.AppendLine("    </thead>");
+        sb.AppendLine("    <tbody>");
+
+        foreach (var (license, count) in licenseReport.LicenseDistribution.OrderByDescending(x => x.Value))
+        {
+            var info = LicenseCompatibility.GetLicenseInfo(license);
+            var category = info?.Category.ToString() ?? "Unknown";
+            var categoryClass = info?.Category switch
+            {
+                LicenseCompatibility.LicenseCategory.Permissive => "permissive",
+                LicenseCompatibility.LicenseCategory.WeakCopyleft => "weak-copyleft",
+                LicenseCompatibility.LicenseCategory.StrongCopyleft => "strong-copyleft",
+                LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
+                _ => "unknown"
+            };
+            sb.AppendLine($"      <tr>");
+            sb.AppendLine($"        <td>{FormatLicense(license)}</td>");
+            sb.AppendLine($"        <td><span class=\"category-badge {categoryClass}\">{category}</span></td>");
+            sb.AppendLine($"        <td>{count}</td>");
+            sb.AppendLine($"      </tr>");
+        }
+
+        sb.AppendLine("    </tbody>");
+        sb.AppendLine("  </table>");
+        sb.AppendLine("</div>");
+
+        // Compatibility issues
+        if (licenseReport.CompatibilityResults.Count > 0)
+        {
+            var issues = licenseReport.CompatibilityResults.Where(r => !r.IsCompatible).ToList();
+            if (issues.Count > 0)
+            {
+                sb.AppendLine("<div class=\"license-issues\">");
+                sb.AppendLine("  <h3>Compatibility Issues</h3>");
+                foreach (var issue in issues)
+                {
+                    var issueClass = issue.Severity.ToLowerInvariant();
+                    sb.AppendLine($"  <div class=\"issue-item {issueClass}\">");
+                    sb.AppendLine($"    <span class=\"issue-severity\">{issue.Severity}</span>");
+                    sb.AppendLine($"    <span class=\"issue-message\">{EscapeHtml(issue.Message)}</span>");
+                    if (!string.IsNullOrEmpty(issue.Recommendation))
+                        sb.AppendLine($"    <span class=\"issue-recommendation\">{EscapeHtml(issue.Recommendation)}</span>");
+                    sb.AppendLine("  </div>");
+                }
+                sb.AppendLine("</div>");
+            }
+        }
+
+        // Unknown licenses
+        if (licenseReport.UnknownLicenses.Count > 0)
+        {
+            sb.AppendLine("<div class=\"unknown-licenses\">");
+            sb.AppendLine("  <h3>Unrecognized Licenses</h3>");
+            sb.AppendLine("  <p>The following licenses could not be automatically categorized:</p>");
+            sb.AppendLine("  <ul>");
+            foreach (var license in licenseReport.UnknownLicenses.Take(20))
+            {
+                sb.AppendLine($"    <li><code>{EscapeHtml(license)}</code></li>");
+            }
+            if (licenseReport.UnknownLicenses.Count > 20)
+                sb.AppendLine($"    <li><em>...and {licenseReport.UnknownLicenses.Count - 20} more</em></li>");
+            sb.AppendLine("  </ul>");
+            sb.AppendLine("</div>");
+        }
     }
 
     private void GenerateVulnerabilitiesSection(StringBuilder sb, CraReport report)
@@ -1147,6 +1294,191 @@ public sealed class CraReportGenerator
       border-radius: 4px;
       font-size: 0.9rem;
       font-family: monospace;
+    }
+
+    /* License Section Styles */
+    .license-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+    }
+
+    .license-status.healthy {
+      background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+      border: 1px solid #28a745;
+    }
+
+    .license-status.warning {
+      background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
+      border: 1px solid #ffc107;
+    }
+
+    .license-status.critical {
+      background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+      border: 1px solid #dc3545;
+    }
+
+    .license-status .status-icon {
+      font-size: 1.5rem;
+    }
+
+    .license-status .status-text {
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+
+    .license-status .status-detail {
+      color: #666;
+      font-size: 0.9rem;
+    }
+
+    .license-distribution {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .license-distribution h3 {
+      margin: 0 0 16px 0;
+      color: var(--text);
+    }
+
+    .distribution-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .dist-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      border-radius: 6px;
+      color: white;
+      font-weight: 500;
+      min-width: 120px;
+      transition: transform 0.2s;
+    }
+
+    .dist-bar:hover {
+      transform: translateX(4px);
+    }
+
+    .dist-bar.permissive { background: linear-gradient(90deg, #28a745, #34ce57); }
+    .dist-bar.weak-copyleft { background: linear-gradient(90deg, #17a2b8, #20c9e0); }
+    .dist-bar.strong-copyleft { background: linear-gradient(90deg, #dc3545, #e4606d); }
+    .dist-bar.public-domain { background: linear-gradient(90deg, #6f42c1, #8b5cf6); }
+    .dist-bar.unknown { background: linear-gradient(90deg, #6c757d, #868e96); }
+
+    .dist-count {
+      background: rgba(255,255,255,0.2);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+    }
+
+    .license-table-container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .license-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .license-table th, .license-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .license-table th {
+      background: #f8f9fa;
+      font-weight: 600;
+    }
+
+    .category-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: white;
+    }
+
+    .category-badge.permissive { background: #28a745; }
+    .category-badge.weak-copyleft { background: #17a2b8; }
+    .category-badge.strong-copyleft { background: #dc3545; }
+    .category-badge.public-domain { background: #6f42c1; }
+    .category-badge.unknown { background: #6c757d; }
+
+    .license-issues {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .issue-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+
+    .issue-item.error {
+      background: #f8d7da;
+      border-left: 4px solid #dc3545;
+    }
+
+    .issue-item.warning {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+    }
+
+    .issue-severity {
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+    }
+
+    .issue-message {
+      color: #333;
+    }
+
+    .issue-recommendation {
+      color: #666;
+      font-size: 0.9rem;
+      font-style: italic;
+    }
+
+    .unknown-licenses {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .unknown-licenses ul {
+      margin: 12px 0;
+      padding-left: 24px;
+    }
+
+    .unknown-licenses li {
+      margin: 4px 0;
     }
 
     .package-dependencies {
