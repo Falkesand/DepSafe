@@ -1021,6 +1021,12 @@ public sealed class CraReportGenerator
       cursor: help;
     }
 
+    .version-hint {
+      font-size: 0.75rem;
+      opacity: 0.7;
+      margin-left: 2px;
+    }
+
     .license-unknown {
       background: #f8d7da;
       color: #721c24;
@@ -1763,12 +1769,15 @@ function exportSbom(format) {{
     private static string FormatVersion(string? version, string packageId)
     {
         if (string.IsNullOrEmpty(version))
-            return "Unknown";
+            return "<span class=\"unresolved-version\">Unknown</span>";
 
         // Check for unresolved MSBuild variable
         if (version.StartsWith("$(") || version.Contains("$("))
         {
-            return $"<span class=\"unresolved-version\" title=\"MSBuild variable not resolved. Run 'dotnet restore' or check Directory.Build.props\">{EscapeHtml(version)}</span>";
+            // Extract variable name for the tooltip
+            var varName = version;
+            var tooltip = $"Version uses MSBuild variable '{varName}' which wasn't resolved. Run 'dotnet restore' first, or ensure Directory.Build.props defines this variable.";
+            return $"<span class=\"unresolved-version\" title=\"{EscapeHtml(tooltip)}\">Version not resolved <span class=\"version-hint\">ⓘ</span></span>";
         }
 
         return EscapeHtml(version);

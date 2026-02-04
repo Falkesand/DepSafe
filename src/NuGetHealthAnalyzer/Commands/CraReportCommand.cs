@@ -154,9 +154,49 @@ public static class CraReportCommand
                 }
             });
 
+        // Phase 1b: Collect and fetch dependencies of packages (for drill-down navigation)
+        var dependencyPackageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var info in nugetInfoMap.Values)
+        {
+            foreach (var dep in info.Dependencies)
+            {
+                // Only add if not already a direct or transitive package
+                if (!allReferences.ContainsKey(dep.PackageId) && !transitiveReferences.ContainsKey(dep.PackageId))
+                {
+                    dependencyPackageIds.Add(dep.PackageId);
+                }
+            }
+        }
+
+        if (dependencyPackageIds.Count > 0)
+        {
+            await AnsiConsole.Progress()
+                .StartAsync(async ctx =>
+                {
+                    var task = ctx.AddTask($"Fetching NuGet info for {dependencyPackageIds.Count} package dependencies", maxValue: dependencyPackageIds.Count);
+
+                    foreach (var packageId in dependencyPackageIds)
+                    {
+                        task.Description = $"Dependency: {packageId}";
+                        if (!nugetInfoMap.ContainsKey(packageId))
+                        {
+                            var info = await nugetClient.GetPackageInfoAsync(packageId);
+                            if (info is not null)
+                            {
+                                nugetInfoMap[packageId] = info;
+                            }
+                        }
+                        task.Increment(1);
+                    }
+                });
+        }
+
         // Phase 2: Batch fetch GitHub repo info (if not skipped)
         var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
         var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
+
+        // Include dependency packages in the list for GitHub lookups
+        var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {
@@ -188,13 +228,13 @@ public static class CraReportCommand
                     }
                 });
 
-            // Phase 3: Batch fetch vulnerabilities (including transitive)
+            // Phase 3: Batch fetch vulnerabilities (including transitive and dependencies)
             if (!githubClient.IsRateLimited && githubClient.HasToken)
             {
                 await AnsiConsole.Status()
                     .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
                     {
-                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allPackageIds);
+                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allPackageIdsWithDeps);
 
                         if (githubClient.IsRateLimited)
                         {
@@ -238,6 +278,29 @@ public static class CraReportCommand
             var health = calculator.Calculate(
                 packageId,
                 reference.Version,
+                nugetInfo,
+                repoInfo,
+                vulnerabilities);
+
+            transitivePackages.Add(health);
+        }
+
+        // Calculate health scores for package dependencies (for drill-down navigation)
+        foreach (var packageId in dependencyPackageIds)
+        {
+            // Skip if already in transitive list
+            if (transitivePackages.Any(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo))
+                continue;
+
+            repoInfoMap.TryGetValue(packageId, out var repoInfo);
+            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+
+            var health = calculator.Calculate(
+                packageId,
+                nugetInfo.LatestVersion, // Use latest version since we don't have a specific version reference
                 nugetInfo,
                 repoInfo,
                 vulnerabilities);
