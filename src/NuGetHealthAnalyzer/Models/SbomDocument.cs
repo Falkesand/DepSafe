@@ -78,6 +78,10 @@ public sealed class SbomPackage
 
     [JsonPropertyName("checksums")]
     public List<SbomChecksum>? Checksums { get; init; }
+
+    /// <summary>Package ecosystem for internal use (not serialized to SBOM).</summary>
+    [JsonIgnore]
+    public PackageEcosystem Ecosystem { get; init; } = PackageEcosystem.NuGet;
 }
 
 public sealed class SbomExternalRef

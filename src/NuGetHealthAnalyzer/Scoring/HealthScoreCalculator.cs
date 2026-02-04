@@ -15,7 +15,7 @@ public sealed class HealthScoreCalculator
     }
 
     /// <summary>
-    /// Calculate health score and status for a package.
+    /// Calculate health score and status for a NuGet package.
     /// </summary>
     public PackageHealth Calculate(
         string packageId,
@@ -25,9 +25,13 @@ public sealed class HealthScoreCalculator
         List<VulnerabilityInfo> vulnerabilities,
         DependencyType dependencyType = DependencyType.Direct)
     {
-        var metrics = BuildMetrics(nugetInfo, repoInfo, vulnerabilities);
+        // Filter to only vulnerabilities that actually affect this version
+        var activeVulnerabilities = FilterActiveVulnerabilities(version, vulnerabilities);
+
+        var metrics = BuildMetrics(nugetInfo, repoInfo, activeVulnerabilities);
         var score = CalculateScore(metrics);
         var status = GetStatus(score);
+        var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, nugetInfo.License, packageId, version);
         var recommendations = GenerateRecommendations(metrics, nugetInfo, repoInfo);
 
         return new PackageHealth
@@ -36,15 +40,67 @@ public sealed class HealthScoreCalculator
             Version = version,
             Score = score,
             Status = status,
+            CraScore = craScore,
+            CraStatus = craStatus,
             Metrics = metrics,
             RepositoryUrl = repoInfo is not null ? $"https://github.com/{repoInfo.FullName}" : nugetInfo.RepositoryUrl,
             License = nugetInfo.License,
-            Vulnerabilities = vulnerabilities.Count > 0
-                ? vulnerabilities.Select(v => v.Id).ToList()
+            Vulnerabilities = activeVulnerabilities.Count > 0
+                ? activeVulnerabilities.Select(v => v.Id).ToList()
                 : [],
             Recommendations = recommendations,
             Dependencies = nugetInfo.Dependencies,
             DependencyType = dependencyType
+        };
+    }
+
+    /// <summary>
+    /// Calculate health score and status for an npm package.
+    /// </summary>
+    public PackageHealth Calculate(
+        string packageName,
+        string version,
+        NpmPackageInfo npmInfo,
+        GitHubRepoInfo? repoInfo,
+        List<VulnerabilityInfo> vulnerabilities,
+        DependencyType dependencyType = DependencyType.Direct)
+    {
+        // Filter to only vulnerabilities that actually affect this version
+        var activeVulnerabilities = FilterActiveVulnerabilities(version, vulnerabilities);
+
+        var metrics = BuildMetrics(npmInfo, repoInfo, activeVulnerabilities);
+        var score = CalculateScore(metrics);
+        var status = GetStatus(score);
+        var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, npmInfo.License, packageName, version);
+        var recommendations = GenerateRecommendations(metrics, npmInfo, repoInfo);
+
+        // Convert npm dependencies to PackageDependency format
+        var dependencies = npmInfo.Dependencies
+            .Select(d => new PackageDependency
+            {
+                PackageId = d.Key,
+                VersionRange = d.Value
+            })
+            .ToList();
+
+        return new PackageHealth
+        {
+            PackageId = packageName,
+            Version = version,
+            Score = score,
+            Status = status,
+            CraScore = craScore,
+            CraStatus = craStatus,
+            Metrics = metrics,
+            RepositoryUrl = repoInfo is not null ? $"https://github.com/{repoInfo.FullName}" : npmInfo.RepositoryUrl,
+            License = npmInfo.License,
+            Vulnerabilities = activeVulnerabilities.Count > 0
+                ? activeVulnerabilities.Select(v => v.Id).ToList()
+                : [],
+            Recommendations = recommendations,
+            Dependencies = dependencies,
+            DependencyType = dependencyType,
+            Ecosystem = PackageEcosystem.Npm
         };
     }
 
@@ -84,7 +140,54 @@ public sealed class HealthScoreCalculator
         };
     }
 
+    private PackageMetrics BuildMetrics(
+        NpmPackageInfo npmInfo,
+        GitHubRepoInfo? repoInfo,
+        List<VulnerabilityInfo> vulnerabilities)
+    {
+        var versions = npmInfo.Versions
+            .Where(v => !v.IsDeprecated)
+            .OrderByDescending(v => v.PublishedDate)
+            .ToList();
+
+        int? daysSinceLastRelease = null;
+        if (versions.Count > 0 && versions[0].PublishedDate > new DateTime(2000, 1, 1))
+        {
+            daysSinceLastRelease = (int)(DateTime.UtcNow - versions[0].PublishedDate).TotalDays;
+        }
+
+        var releasesPerYear = CalculateNpmReleasesPerYear(versions);
+
+        // Estimate annual downloads from weekly downloads
+        var estimatedAnnualDownloads = npmInfo.WeeklyDownloads * 52;
+
+        return new PackageMetrics
+        {
+            DaysSinceLastRelease = daysSinceLastRelease,
+            ReleasesPerYear = releasesPerYear,
+            DownloadTrend = 0, // npm API doesn't provide historical download data for trend
+            TotalDownloads = estimatedAnnualDownloads,
+            DaysSinceLastCommit = repoInfo is not null
+                ? (int)(DateTime.UtcNow - repoInfo.LastCommitDate).TotalDays
+                : null,
+            OpenIssues = repoInfo?.OpenIssues,
+            Stars = repoInfo?.Stars,
+            VulnerabilityCount = vulnerabilities.Count
+        };
+    }
+
     private static double CalculateReleasesPerYear(List<VersionInfo> versions)
+    {
+        if (versions.Count < 2) return versions.Count;
+
+        var oldest = versions[^1].PublishedDate;
+        var newest = versions[0].PublishedDate;
+        var years = (newest - oldest).TotalDays / 365.0;
+
+        return years > 0 ? versions.Count / years : versions.Count;
+    }
+
+    private static double CalculateNpmReleasesPerYear(List<NpmVersionInfo> versions)
     {
         if (versions.Count < 2) return versions.Count;
 
@@ -138,6 +241,113 @@ public sealed class HealthScoreCalculator
             vulnScore * _weights.Vulnerabilities;
 
         return (int)Math.Round(Math.Clamp(weightedScore, 0, 100));
+    }
+
+    /// <summary>
+    /// Calculate CRA compliance score based on regulatory requirements.
+    /// Focuses on: vulnerabilities, license identification, package identifiability.
+    /// </summary>
+    private static (int Score, CraComplianceStatus Status) CalculateCraScore(
+        List<VulnerabilityInfo> vulnerabilities,
+        string? license,
+        string packageId,
+        string version)
+    {
+        // CRA compliance scoring:
+        // - No vulnerabilities: 60 points (critical requirement)
+        // - License identified: 25 points (Article 10(9))
+        // - Package identifiable (name + version): 15 points (Article 10 SBOM)
+
+        var score = 0;
+
+        // Vulnerability assessment (60 points max)
+        // CRA Article 11 - Vulnerability handling
+        var criticalVulns = vulnerabilities.Count(v =>
+            v.Severity?.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase) == true);
+        var highVulns = vulnerabilities.Count(v =>
+            v.Severity?.Equals("HIGH", StringComparison.OrdinalIgnoreCase) == true);
+        var otherVulns = vulnerabilities.Count - criticalVulns - highVulns;
+
+        if (vulnerabilities.Count == 0)
+        {
+            score += 60;
+        }
+        else if (criticalVulns > 0)
+        {
+            score += 0; // Critical vulns = 0 points for this section
+        }
+        else if (highVulns > 0)
+        {
+            score += 15; // High vulns = partial credit
+        }
+        else
+        {
+            score += 30; // Only low/medium vulns = more credit
+        }
+
+        // License identification (25 points max)
+        // CRA Article 10(9) - License information
+        if (!string.IsNullOrWhiteSpace(license))
+        {
+            var normalizedLicense = license.Trim().ToUpperInvariant();
+            // Well-known SPDX licenses get full credit
+            if (IsKnownSpdxLicense(normalizedLicense))
+            {
+                score += 25;
+            }
+            else
+            {
+                // Some license info, but not standard SPDX
+                score += 15;
+            }
+        }
+        // No license = 0 points for this section
+
+        // Package identifiability (15 points max)
+        // CRA Article 10 - SBOM requirements
+        if (!string.IsNullOrWhiteSpace(packageId) && !string.IsNullOrWhiteSpace(version))
+        {
+            score += 15;
+        }
+        else if (!string.IsNullOrWhiteSpace(packageId))
+        {
+            score += 10; // Name but no version
+        }
+
+        // Determine status
+        var status = (score, criticalVulns, highVulns) switch
+        {
+            ( >= 90, 0, 0) => CraComplianceStatus.Compliant,
+            ( >= 70, 0, _) => CraComplianceStatus.Review,
+            (_, > 0, _) => CraComplianceStatus.NonCompliant, // Critical vulns
+            (_, _, > 0) => CraComplianceStatus.ActionRequired, // High vulns
+            ( < 50, _, _) => CraComplianceStatus.NonCompliant,
+            _ => CraComplianceStatus.ActionRequired
+        };
+
+        return (score, status);
+    }
+
+    private static bool IsKnownSpdxLicense(string license)
+    {
+        // Common SPDX license identifiers
+        return license switch
+        {
+            "MIT" or "MIT-0" => true,
+            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
+            "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
+            "ISC" => true,
+            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" => true,
+            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" => true,
+            "MPL-2.0" => true,
+            "UNLICENSE" or "UNLICENSED" => true,
+            "CC0-1.0" or "CC-BY-4.0" => true,
+            "BSL-1.0" => true,
+            "WTFPL" => true,
+            "ZLIB" => true,
+            "MS-PL" or "MS-RL" => true,
+            _ => false
+        };
     }
 
     private static double CalculateFreshnessScore(int? daysSinceLastRelease)
@@ -217,6 +427,121 @@ public sealed class HealthScoreCalculator
         return Math.Clamp(commitScore + starBonus - issuePenalty, 0, 100);
     }
 
+    /// <summary>
+    /// Filter vulnerabilities to only those that actually affect the given version.
+    /// </summary>
+    private static List<VulnerabilityInfo> FilterActiveVulnerabilities(string version, List<VulnerabilityInfo> vulnerabilities)
+    {
+        if (vulnerabilities.Count == 0) return [];
+
+        var active = new List<VulnerabilityInfo>();
+        foreach (var vuln in vulnerabilities)
+        {
+            // Check if version is patched
+            if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+            {
+                try
+                {
+                    var current = NuGet.Versioning.NuGetVersion.Parse(version);
+                    var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
+                    if (current >= patched)
+                    {
+                        continue; // Patched in current version
+                    }
+                }
+                catch { /* Version parsing failed, check range */ }
+            }
+
+            // Check if version is in vulnerable range
+            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+            {
+                if (IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange))
+                {
+                    active.Add(vuln);
+                }
+            }
+            else
+            {
+                // No range specified, conservatively include
+                active.Add(vuln);
+            }
+        }
+
+        return active;
+    }
+
+    private static bool IsVersionInVulnerableRange(string version, string range)
+    {
+        try
+        {
+            var current = NuGet.Versioning.NuGetVersion.Parse(version);
+            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
+
+            // Track whether we have any range constraints
+            bool hasRangeConstraint = false;
+            bool hasExactMatch = false;
+
+            foreach (var part in parts)
+            {
+                if (part.StartsWith(">="))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
+                    if (current < v) return false;
+                }
+                else if (part.StartsWith(">"))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
+                    if (current <= v) return false;
+                }
+                else if (part.StartsWith("<="))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
+                    if (current > v) return false;
+                }
+                else if (part.StartsWith("<"))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
+                    if (current >= v) return false;
+                }
+                else if (!string.IsNullOrWhiteSpace(part))
+                {
+                    // Exact version match (e.g., "4.4.2" from OSV's versions list)
+                    try
+                    {
+                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
+                        if (current == v)
+                        {
+                            hasExactMatch = true;
+                        }
+                    }
+                    catch
+                    {
+                        // Not a parseable version, ignore
+                    }
+                }
+            }
+
+            // If we only have exact version matches, check if current matches any
+            if (!hasRangeConstraint)
+            {
+                return hasExactMatch;
+            }
+
+            // Range constraints passed
+            return true;
+        }
+        catch
+        {
+            // If we can't parse, assume affected (conservative for security)
+            // May result in false positives - user should verify
+            return true;
+        }
+    }
+
     private static double CalculateVulnerabilityScore(int vulnerabilityCount)
     {
         return vulnerabilityCount switch
@@ -278,6 +603,51 @@ public sealed class HealthScoreCalculator
         if (metrics.DaysSinceLastCommit > 365)
         {
             recommendations.Add("No repository activity in over a year");
+        }
+
+        return recommendations;
+    }
+
+    private static List<string> GenerateRecommendations(
+        PackageMetrics metrics,
+        NpmPackageInfo npmInfo,
+        GitHubRepoInfo? repoInfo)
+    {
+        var recommendations = new List<string>();
+
+        if (npmInfo.IsDeprecated)
+        {
+            recommendations.Add($"Package is deprecated: {npmInfo.DeprecationMessage ?? "No reason provided"}");
+        }
+
+        if (metrics.DaysSinceLastRelease.HasValue && metrics.DaysSinceLastRelease > 730)
+        {
+            recommendations.Add($"No releases in {metrics.DaysSinceLastRelease.Value / 365} years - consider alternatives");
+        }
+        else if (!metrics.DaysSinceLastRelease.HasValue)
+        {
+            recommendations.Add("Release date unknown - verify package is actively maintained");
+        }
+
+        if (metrics.VulnerabilityCount > 0)
+        {
+            recommendations.Add($"{metrics.VulnerabilityCount} known vulnerabilities - update or replace urgently");
+        }
+
+        if (repoInfo?.IsArchived == true)
+        {
+            recommendations.Add("Repository is archived - package is no longer maintained");
+        }
+
+        if (metrics.DaysSinceLastCommit > 365)
+        {
+            recommendations.Add("No repository activity in over a year");
+        }
+
+        // npm-specific: check for peer dependency warnings
+        if (npmInfo.PeerDependencies.Count > 0)
+        {
+            recommendations.Add($"Has {npmInfo.PeerDependencies.Count} peer dependencies - ensure compatibility");
         }
 
         return recommendations;

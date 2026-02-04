@@ -106,13 +106,14 @@ public static class LicenseCompatibility
 
     /// <summary>
     /// Get license information by identifier or name.
+    /// Supports SPDX license expressions like "(MIT OR Apache-2.0)".
     /// </summary>
     public static LicenseInfo? GetLicenseInfo(string? licenseText)
     {
         if (string.IsNullOrWhiteSpace(licenseText))
             return null;
 
-        // Try direct lookup
+        // Try direct lookup first
         if (KnownLicenses.TryGetValue(licenseText, out var info))
             return info;
 
@@ -120,6 +121,11 @@ public static class LicenseCompatibility
         if (LicenseAliases.TryGetValue(licenseText, out var normalized) &&
             KnownLicenses.TryGetValue(normalized, out info))
             return info;
+
+        // Check for SPDX license expressions (OR, AND, WITH)
+        var expressionResult = ParseSpdxExpression(licenseText);
+        if (expressionResult is not null)
+            return expressionResult;
 
         // Try partial matching for common patterns
         var lower = licenseText.ToLowerInvariant();
@@ -154,6 +160,135 @@ public static class LicenseCompatibility
             return KnownLicenses["Unlicense"];
         if (lower.Contains("cc0") || lower.Contains("public domain"))
             return KnownLicenses["CC0-1.0"];
+
+        return null;
+    }
+
+    /// <summary>
+    /// Parse SPDX license expressions like "(MIT OR Apache-2.0)" or "Apache-2.0 WITH LLVM-exception".
+    /// For OR expressions, returns the most permissive license (user can choose).
+    /// For AND expressions, returns the most restrictive license (all apply).
+    /// </summary>
+    private static LicenseInfo? ParseSpdxExpression(string expression)
+    {
+        // Remove outer parentheses
+        var text = expression.Trim();
+        if (text.StartsWith('(') && text.EndsWith(')'))
+        {
+            text = text[1..^1].Trim();
+        }
+
+        // Check for OR expression (dual-licensing - user can choose)
+        if (text.Contains(" OR ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = text.Split(new[] { " OR " }, StringSplitOptions.RemoveEmptyEntries);
+            var licenses = parts
+                .Select(p => GetLicenseInfoDirect(p.Trim()))
+                .Where(l => l is not null)
+                .ToList();
+
+            if (licenses.Count == 0) return null;
+
+            // For OR, return the most permissive (user can choose the best option)
+            // Priority: PublicDomain > Permissive > WeakCopyleft > StrongCopyleft
+            var best = licenses
+                .OrderBy(l => l!.Category switch
+                {
+                    LicenseCategory.PublicDomain => 0,
+                    LicenseCategory.Permissive => 1,
+                    LicenseCategory.WeakCopyleft => 2,
+                    LicenseCategory.StrongCopyleft => 3,
+                    _ => 4
+                })
+                .First()!;
+
+            // Return a synthetic license info describing the dual-license
+            return new LicenseInfo
+            {
+                Identifier = expression,
+                Name = $"Dual-licensed: {string.Join(" or ", licenses.Select(l => l!.Name))}",
+                Category = best.Category,
+                RequiresAttribution = licenses.All(l => l!.RequiresAttribution),
+                RequiresSourceDisclosure = licenses.Any(l => l!.RequiresSourceDisclosure), // Any might require
+                AllowsCommercialUse = licenses.Any(l => l!.AllowsCommercialUse),
+                SpdxId = expression
+            };
+        }
+
+        // Check for AND expression (all licenses apply)
+        if (text.Contains(" AND ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = text.Split(new[] { " AND " }, StringSplitOptions.RemoveEmptyEntries);
+            var licenses = parts
+                .Select(p => GetLicenseInfoDirect(p.Trim()))
+                .Where(l => l is not null)
+                .ToList();
+
+            if (licenses.Count == 0) return null;
+
+            // For AND, return the most restrictive (all apply)
+            var mostRestrictive = licenses
+                .OrderByDescending(l => l!.Category switch
+                {
+                    LicenseCategory.StrongCopyleft => 3,
+                    LicenseCategory.WeakCopyleft => 2,
+                    LicenseCategory.Permissive => 1,
+                    _ => 0
+                })
+                .First()!;
+
+            return new LicenseInfo
+            {
+                Identifier = expression,
+                Name = $"Combined: {string.Join(" and ", licenses.Select(l => l!.Name))}",
+                Category = mostRestrictive.Category,
+                RequiresAttribution = licenses.Any(l => l!.RequiresAttribution),
+                RequiresSourceDisclosure = licenses.Any(l => l!.RequiresSourceDisclosure),
+                AllowsCommercialUse = licenses.All(l => l!.AllowsCommercialUse),
+                SpdxId = expression
+            };
+        }
+
+        // Check for WITH exception (e.g., "Apache-2.0 WITH LLVM-exception")
+        if (text.Contains(" WITH ", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseLicense = text.Split(new[] { " WITH " }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            var baseInfo = GetLicenseInfoDirect(baseLicense);
+            if (baseInfo is not null)
+            {
+                return new LicenseInfo
+                {
+                    Identifier = expression,
+                    Name = $"{baseInfo.Name} (with exception)",
+                    Category = baseInfo.Category,
+                    RequiresAttribution = baseInfo.RequiresAttribution,
+                    RequiresSourceDisclosure = baseInfo.RequiresSourceDisclosure,
+                    AllowsCommercialUse = baseInfo.AllowsCommercialUse,
+                    SpdxId = expression
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Direct license lookup without expression parsing (to avoid recursion).
+    /// </summary>
+    private static LicenseInfo? GetLicenseInfoDirect(string licenseId)
+    {
+        if (string.IsNullOrWhiteSpace(licenseId))
+            return null;
+
+        // Remove any parentheses
+        var id = licenseId.Trim().Trim('(', ')');
+
+        if (KnownLicenses.TryGetValue(id, out var info))
+            return info;
+
+        if (LicenseAliases.TryGetValue(id, out var normalized) &&
+            KnownLicenses.TryGetValue(normalized, out info))
+            return info;
 
         return null;
     }

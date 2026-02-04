@@ -7,8 +7,19 @@ public sealed class PackageHealth
 {
     public required string PackageId { get; init; }
     public required string Version { get; init; }
+
+    /// <summary>General health score (0-100) based on freshness, popularity, activity.</summary>
     public required int Score { get; init; }
+
+    /// <summary>General health status derived from Score.</summary>
     public required HealthStatus Status { get; init; }
+
+    /// <summary>CRA compliance score (0-100) based on vulnerabilities, license, identifiability.</summary>
+    public int CraScore { get; init; }
+
+    /// <summary>CRA compliance status derived from CraScore.</summary>
+    public CraComplianceStatus CraStatus { get; init; }
+
     public required PackageMetrics Metrics { get; init; }
     public string? RepositoryUrl { get; init; }
     public string? License { get; init; }
@@ -18,6 +29,24 @@ public sealed class PackageHealth
 
     /// <summary>Type of dependency relationship.</summary>
     public DependencyType DependencyType { get; init; } = DependencyType.Direct;
+
+    /// <summary>Package ecosystem (NuGet or npm).</summary>
+    public PackageEcosystem Ecosystem { get; init; } = PackageEcosystem.NuGet;
+}
+
+/// <summary>
+/// CRA compliance status for a package.
+/// </summary>
+public enum CraComplianceStatus
+{
+    /// <summary>Fully compliant - no vulnerabilities, license identified.</summary>
+    Compliant,
+    /// <summary>Minor issues - license unclear or minor vulnerability.</summary>
+    Review,
+    /// <summary>Action required - vulnerabilities present.</summary>
+    ActionRequired,
+    /// <summary>Non-compliant - critical vulnerabilities or missing required info.</summary>
+    NonCompliant
 }
 
 /// <summary>

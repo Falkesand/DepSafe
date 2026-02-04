@@ -31,13 +31,16 @@ public sealed class VexGenerator
             foreach (var vuln in vulns)
             {
                 var status = DetermineStatus(vuln, pkg.Version);
+                // Generate appropriate URL based on vulnerability ID
+                var vulnUrl = vuln.Url ?? GetVulnerabilityUrl(vuln.Id);
+
                 var statement = new VexStatement
                 {
                     Vulnerability = new VexVulnerability
                     {
-                        Id = vuln.Url ?? $"https://github.com/advisories/{vuln.Id}",
+                        Id = vulnUrl,
                         Name = vuln.Id,
-                        Description = vuln.Summary,
+                        Description = !string.IsNullOrWhiteSpace(vuln.Summary) ? vuln.Summary : vuln.Description,
                         Aliases = vuln.Cves.Count > 0 ? vuln.Cves : null
                     },
                     Products =
@@ -176,5 +179,30 @@ public sealed class VexGenerator
         }
 
         return "Review the vulnerability and consider alternative packages or mitigation strategies.";
+    }
+
+    private static string GetVulnerabilityUrl(string vulnId)
+    {
+        // Generate URL based on vulnerability ID format
+        if (vulnId.StartsWith("GHSA-", StringComparison.OrdinalIgnoreCase))
+        {
+            // GitHub Security Advisory - use OSV which aggregates these
+            return $"https://osv.dev/vulnerability/{vulnId}";
+        }
+        if (vulnId.StartsWith("CVE-", StringComparison.OrdinalIgnoreCase))
+        {
+            // CVE - link to NVD
+            return $"https://nvd.nist.gov/vuln/detail/{vulnId}";
+        }
+        if (vulnId.StartsWith("PYSEC-", StringComparison.OrdinalIgnoreCase) ||
+            vulnId.StartsWith("GO-", StringComparison.OrdinalIgnoreCase) ||
+            vulnId.StartsWith("RUSTSEC-", StringComparison.OrdinalIgnoreCase))
+        {
+            // Other OSV ecosystems
+            return $"https://osv.dev/vulnerability/{vulnId}";
+        }
+
+        // Default to OSV for unknown formats
+        return $"https://osv.dev/vulnerability/{vulnId}";
     }
 }

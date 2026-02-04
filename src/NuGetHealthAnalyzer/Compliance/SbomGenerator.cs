@@ -31,7 +31,7 @@ public sealed class SbomGenerator
             Name = pkg.PackageId,
             VersionInfo = pkg.Version,
             Supplier = "NOASSERTION",
-            DownloadLocation = $"https://www.nuget.org/packages/{pkg.PackageId}/{pkg.Version}",
+            DownloadLocation = GetDownloadLocation(pkg),
             FilesAnalyzed = false,
             LicenseConcluded = MapLicenseToSpdx(pkg.License),
             LicenseDeclared = MapLicenseToSpdx(pkg.License),
@@ -42,9 +42,10 @@ public sealed class SbomGenerator
                 {
                     ReferenceCategory = "PACKAGE-MANAGER",
                     ReferenceType = "purl",
-                    ReferenceLocator = $"pkg:nuget/{pkg.PackageId}@{pkg.Version}"
+                    ReferenceLocator = GetPurl(pkg)
                 }
-            ]
+            ],
+            Ecosystem = pkg.Ecosystem
         }).ToList();
 
         var relationships = sbomPackages.Select(pkg => new SbomRelationship
@@ -131,10 +132,10 @@ public sealed class SbomGenerator
             Components = packageList.Select(pkg => new CycloneDxComponent
             {
                 Type = "library",
-                BomRef = $"pkg:nuget/{pkg.PackageId}@{pkg.Version}",
+                BomRef = GetPurl(pkg),
                 Name = pkg.PackageId,
                 Version = pkg.Version,
-                Purl = $"pkg:nuget/{pkg.PackageId}@{pkg.Version}",
+                Purl = GetPurl(pkg),
                 Licenses = string.IsNullOrEmpty(pkg.License) ? null :
                 [
                     new CycloneDxLicense
@@ -147,7 +148,7 @@ public sealed class SbomGenerator
                     new CycloneDxExternalRef
                     {
                         Type = "distribution",
-                        Url = $"https://www.nuget.org/packages/{pkg.PackageId}/{pkg.Version}"
+                        Url = GetDownloadLocation(pkg)
                     }
                 ]
             }).ToList()
@@ -157,6 +158,20 @@ public sealed class SbomGenerator
     private static string SanitizeId(string input)
     {
         return new string(input.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '.').ToArray());
+    }
+
+    private static string GetDownloadLocation(PackageHealth pkg)
+    {
+        return pkg.Ecosystem == PackageEcosystem.Npm
+            ? $"https://www.npmjs.com/package/{Uri.EscapeDataString(pkg.PackageId)}/v/{pkg.Version}"
+            : $"https://www.nuget.org/packages/{pkg.PackageId}/{pkg.Version}";
+    }
+
+    private static string GetPurl(PackageHealth pkg)
+    {
+        return pkg.Ecosystem == PackageEcosystem.Npm
+            ? $"pkg:npm/{Uri.EscapeDataString(pkg.PackageId)}@{pkg.Version}"
+            : $"pkg:nuget/{pkg.PackageId}@{pkg.Version}";
     }
 
     private static string MapLicenseToSpdx(string? license)

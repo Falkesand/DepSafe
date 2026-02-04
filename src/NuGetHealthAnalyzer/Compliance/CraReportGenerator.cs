@@ -25,7 +25,20 @@ public sealed class CraReportGenerator
         ProjectReport healthReport,
         IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities)
     {
-        var sbom = _sbomGenerator.Generate(healthReport.ProjectPath, healthReport.Packages);
+        // Build reverse dependency lookup for "Required by" information
+        BuildParentLookup();
+
+        // Build effective CRA scores (capped by worst dependency score)
+        BuildEffectiveCraScores();
+
+        // Include both direct and transitive packages in SBOM for CRA compliance
+        var allPackagesForSbom = healthReport.Packages.AsEnumerable();
+        if (_transitiveDataCache is not null)
+        {
+            allPackagesForSbom = allPackagesForSbom.Concat(_transitiveDataCache);
+        }
+
+        var sbom = _sbomGenerator.Generate(healthReport.ProjectPath, allPackagesForSbom);
         var vex = _vexGenerator.Generate(healthReport.Packages, vulnerabilities);
 
         var complianceItems = new List<CraComplianceItem>();
@@ -40,35 +53,32 @@ public sealed class CraReportGenerator
             Recommendation = null
         });
 
-        // Vulnerability documentation
-        var vulnCount = vulnerabilities.Values.Sum(v => v.Count);
+        // Vulnerability documentation - only count ACTIVE vulnerabilities (affecting current versions)
+        var activeVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Affected);
+        var fixedVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Fixed);
+        var totalVulnStatements = vex.Statements.Count;
         complianceItems.Add(new CraComplianceItem
         {
             Requirement = "CRA Article 11 - Vulnerability Handling",
             Description = "Documentation of known vulnerabilities and their status",
-            Status = vulnCount == 0 ? CraComplianceStatus.Compliant :
-                vex.Statements.Any(s => s.Status == VexStatus.Affected) ?
-                    CraComplianceStatus.ActionRequired : CraComplianceStatus.Compliant,
-            Evidence = $"VEX document generated with {vex.Statements.Count} statements. {vulnCount} vulnerabilities documented.",
-            Recommendation = vulnCount > 0
-                ? "Review affected vulnerabilities and apply available patches"
+            Status = activeVulnCount == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.ActionRequired,
+            Evidence = activeVulnCount == 0
+                ? $"No active vulnerabilities. {fixedVulnCount} vulnerabilities addressed in current versions."
+                : $"{activeVulnCount} active vulnerabilities require attention. {fixedVulnCount} already addressed.",
+            Recommendation = activeVulnCount > 0
+                ? "Update affected packages to patched versions"
                 : null
         });
 
-        // Update mechanism (health scoring)
-        var outdatedPackages = healthReport.Packages.Count(p =>
-            p.Metrics.DaysSinceLastRelease.HasValue && p.Metrics.DaysSinceLastRelease > 730);
+        // Security Updates - CRA requires a mechanism for updates, not that packages be recently updated
+        // Having an SBOM and VEX demonstrates capability to track and respond to security issues
         complianceItems.Add(new CraComplianceItem
         {
             Requirement = "CRA Article 10(6) - Security Updates",
             Description = "Mechanism to ensure timely security updates",
-            Status = outdatedPackages == 0 ? CraComplianceStatus.Compliant :
-                outdatedPackages > healthReport.Packages.Count / 2 ?
-                    CraComplianceStatus.NonCompliant : CraComplianceStatus.ActionRequired,
-            Evidence = $"{outdatedPackages} of {healthReport.Packages.Count} packages have not been updated in 2+ years",
-            Recommendation = outdatedPackages > 0
-                ? "Review and update stale dependencies or find maintained alternatives"
-                : null
+            Status = CraComplianceStatus.Compliant,
+            Evidence = $"SBOM tracks {sbom.Packages.Count} components. VEX documents {totalVulnStatements} vulnerability assessments.",
+            Recommendation = null
         });
 
         // License compliance
@@ -87,6 +97,10 @@ public sealed class CraReportGenerator
                 : null
         });
 
+        // Collect dependency issues from all trees
+        var versionConflictCount = _dependencyTrees.Sum(t => t.VersionConflictCount);
+        var allDependencyIssues = _dependencyTrees.SelectMany(t => t.Issues).ToList();
+
         return new CraReport
         {
             GeneratedAt = DateTime.UtcNow,
@@ -98,8 +112,11 @@ public sealed class CraReportGenerator
             Sbom = sbom,
             Vex = vex,
             PackageCount = healthReport.Packages.Count,
-            VulnerabilityCount = vulnCount,
-            CriticalPackageCount = healthReport.Summary.CriticalCount
+            TransitivePackageCount = _transitiveDataCache?.Count ?? 0,
+            VulnerabilityCount = activeVulnCount,
+            CriticalPackageCount = healthReport.Summary.CriticalCount,
+            VersionConflictCount = versionConflictCount,
+            DependencyIssues = allDependencyIssues
         };
     }
 
@@ -141,6 +158,8 @@ public sealed class CraReportGenerator
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('licenses')\" data-section=\"licenses\">Licenses</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('sbom')\" data-section=\"sbom\">SBOM</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('vulnerabilities')\" data-section=\"vulnerabilities\">Vulnerabilities</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('tree')\" data-section=\"tree\">Dependency Tree</a></li>");
+        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('issues')\" data-section=\"issues\">Dependency Issues</a></li>");
         sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('compliance')\" data-section=\"compliance\">Compliance</a></li>");
         sb.AppendLine("  </ul>");
         sb.AppendLine("</nav>");
@@ -179,12 +198,27 @@ public sealed class CraReportGenerator
         GenerateVulnerabilitiesSection(sb, report);
         sb.AppendLine("</section>");
 
+        // Dependency Tree Section
+        sb.AppendLine("<section id=\"tree\" class=\"section\">");
+        GenerateDependencyTreeSection(sb);
+        sb.AppendLine("</section>");
+
+        // Dependency Issues Section
+        sb.AppendLine("<section id=\"issues\" class=\"section\">");
+        GenerateDependencyIssuesSection(sb, report);
+        sb.AppendLine("</section>");
+
         // Compliance Section
         sb.AppendLine("<section id=\"compliance\" class=\"section\">");
         GenerateComplianceSection(sb, report);
         sb.AppendLine("</section>");
 
         sb.AppendLine("</main>");
+
+        // Footer with disclaimer - visible on all views
+        sb.AppendLine("<footer class=\"disclaimer-footer\">");
+        sb.AppendLine("  <p>This report assists with EU Cyber Resilience Act compliance assessment. It is not legal advice. Consult legal counsel for authoritative compliance guidance.</p>");
+        sb.AppendLine("</footer>");
 
         // JavaScript
         sb.Append(GetHtmlScripts(report));
@@ -226,7 +260,23 @@ public sealed class CraReportGenerator
 
         sb.AppendLine("<div class=\"overview-grid\">");
 
-        // Health Score Card
+        // CRA Compliance Score Card - based purely on regulatory requirements
+        var craScore = CalculateProjectCraScore(_healthDataCache ?? [], _transitiveDataCache ?? []);
+        var craScoreClass = GetCraScoreClass(craScore);
+        sb.AppendLine("  <div class=\"card score-card\">");
+        sb.AppendLine("    <h3>CRA Score</h3>");
+        sb.AppendLine($"    <div class=\"score-gauge {craScoreClass}\">");
+        sb.AppendLine($"      <svg viewBox=\"0 0 100 50\">");
+        sb.AppendLine($"        <path class=\"gauge-bg\" d=\"M 10 50 A 40 40 0 0 1 90 50\" />");
+        var craAngle = 180 * (craScore / 100.0);
+        sb.AppendLine($"        <path class=\"gauge-fill\" d=\"M 10 50 A 40 40 0 0 1 90 50\" style=\"stroke-dasharray: {craAngle * 1.26}, 226\" />");
+        sb.AppendLine($"      </svg>");
+        sb.AppendLine($"      <div class=\"score-value\">{craScore}</div>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine($"    <div class=\"score-label {craScoreClass}\">Vulnerabilities + Licenses</div>");
+        sb.AppendLine("  </div>");
+
+        // Health Score Card - based on freshness, activity, popularity
         sb.AppendLine("  <div class=\"card score-card\">");
         sb.AppendLine("    <h3>Health Score</h3>");
         sb.AppendLine($"    <div class=\"score-gauge {GetScoreClass(report.HealthScore)}\">");
@@ -237,7 +287,7 @@ public sealed class CraReportGenerator
         sb.AppendLine($"      </svg>");
         sb.AppendLine($"      <div class=\"score-value\">{report.HealthScore}</div>");
         sb.AppendLine("    </div>");
-        sb.AppendLine($"    <div class=\"score-label {GetScoreClass(report.HealthScore)}\">{report.HealthStatus}</div>");
+        sb.AppendLine($"    <div class=\"score-label {GetScoreClass(report.HealthScore)}\">Freshness + Activity</div>");
         sb.AppendLine("  </div>");
 
         // Compliance Status Card
@@ -249,9 +299,11 @@ public sealed class CraReportGenerator
         sb.AppendLine("  </div>");
 
         // Summary Cards
+        var totalPackages = report.PackageCount + report.TransitivePackageCount;
         sb.AppendLine("  <div class=\"card metric-card\">");
-        sb.AppendLine($"    <div class=\"metric-value\">{report.PackageCount}</div>");
-        sb.AppendLine("    <div class=\"metric-label\">Total Packages</div>");
+        sb.AppendLine($"    <div class=\"metric-value\">{totalPackages}</div>");
+        sb.AppendLine($"    <div class=\"metric-label\">Total Packages</div>");
+        sb.AppendLine($"    <div class=\"metric-detail\">{report.PackageCount} direct + {report.TransitivePackageCount} transitive</div>");
         sb.AppendLine("  </div>");
 
         sb.AppendLine("  <div class=\"card metric-card\">");
@@ -262,6 +314,11 @@ public sealed class CraReportGenerator
         sb.AppendLine("  <div class=\"card metric-card\">");
         sb.AppendLine($"    <div class=\"metric-value {(report.CriticalPackageCount > 0 ? "critical" : "")}\">{report.CriticalPackageCount}</div>");
         sb.AppendLine("    <div class=\"metric-label\">Critical Packages</div>");
+        sb.AppendLine("  </div>");
+
+        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine($"    <div class=\"metric-value {(report.VersionConflictCount > 0 ? "warning" : "")}\">{report.VersionConflictCount}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Version Conflicts</div>");
         sb.AppendLine("  </div>");
 
         sb.AppendLine("</div>");
@@ -289,11 +346,20 @@ public sealed class CraReportGenerator
         sb.AppendLine("</div>");
 
         sb.AppendLine("<div class=\"filter-bar\">");
-        sb.AppendLine("  <button class=\"filter-btn active\" onclick=\"filterByStatus('all')\">All</button>");
-        sb.AppendLine("  <button class=\"filter-btn healthy\" onclick=\"filterByStatus('healthy')\">Healthy</button>");
-        sb.AppendLine("  <button class=\"filter-btn watch\" onclick=\"filterByStatus('watch')\">Watch</button>");
-        sb.AppendLine("  <button class=\"filter-btn warning\" onclick=\"filterByStatus('warning')\">Warning</button>");
-        sb.AppendLine("  <button class=\"filter-btn critical\" onclick=\"filterByStatus('critical')\">Critical</button>");
+        sb.AppendLine("  <span class=\"filter-group\">");
+        sb.AppendLine("    <span class=\"filter-label\">Status:</span>");
+        sb.AppendLine("    <button class=\"filter-btn active\" onclick=\"filterByStatus('all')\">All</button>");
+        sb.AppendLine("    <button class=\"filter-btn healthy\" onclick=\"filterByStatus('healthy')\">Healthy</button>");
+        sb.AppendLine("    <button class=\"filter-btn watch\" onclick=\"filterByStatus('watch')\">Watch</button>");
+        sb.AppendLine("    <button class=\"filter-btn warning\" onclick=\"filterByStatus('warning')\">Warning</button>");
+        sb.AppendLine("    <button class=\"filter-btn critical\" onclick=\"filterByStatus('critical')\">Critical</button>");
+        sb.AppendLine("  </span>");
+        sb.AppendLine("  <span class=\"filter-group\">");
+        sb.AppendLine("    <span class=\"filter-label\">Ecosystem:</span>");
+        sb.AppendLine("    <button class=\"filter-btn ecosystem-btn active\" onclick=\"filterByEcosystem('all')\">All</button>");
+        sb.AppendLine("    <button class=\"filter-btn ecosystem-btn nuget\" onclick=\"filterByEcosystem('nuget')\">NuGet</button>");
+        sb.AppendLine("    <button class=\"filter-btn ecosystem-btn npm\" onclick=\"filterByEcosystem('npm')\">npm</button>");
+        sb.AppendLine("  </span>");
         sb.AppendLine("</div>");
 
         // Check for unresolved MSBuild variables
@@ -330,7 +396,13 @@ public sealed class CraReportGenerator
             foreach (var t in _transitiveDataCache)
                 allPackageIds.Add(t.PackageId);
 
-        foreach (var pkg in report.Sbom.Packages.Skip(1))
+        // Build set of direct package IDs for filtering
+        var directPackageIds = new HashSet<string>(
+            _healthDataCache?.Select(h => h.PackageId) ?? [],
+            StringComparer.OrdinalIgnoreCase);
+
+        // Only render direct packages here (transitives are shown in separate section)
+        foreach (var pkg in report.Sbom.Packages.Skip(1).Where(p => directPackageIds.Contains(p.Name)))
         {
             var pkgName = pkg.Name;
             var version = pkg.VersionInfo;
@@ -339,20 +411,32 @@ public sealed class CraReportGenerator
 
             // Find matching health data
             var healthData = _healthDataCache?.FirstOrDefault(h => h.PackageId == pkgName);
+            var ecosystemAttr = "nuget"; // Default for data attribute
             if (healthData != null)
             {
                 score = healthData.Score;
                 status = healthData.Status.ToString().ToLowerInvariant();
+                ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
             }
 
-            sb.AppendLine($"  <div class=\"package-card\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
+            var craScore = healthData?.CraScore ?? 100;
+            sb.AppendLine($"  <div class=\"package-card\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\">");
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
             sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
             sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
             sb.AppendLine($"      </div>");
-            sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
+            sb.AppendLine($"      <div class=\"package-scores\">");
+            sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
+            sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
+            sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(craScore)}\">{craScore}</span>");
+            sb.AppendLine($"        </div>");
+            sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
+            sb.AppendLine($"          <span class=\"score-label\">Health</span>");
+            sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(score)}\">{score}</span>");
+            sb.AppendLine($"        </div>");
+            sb.AppendLine($"      </div>");
             sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
             sb.AppendLine("    </div>");
             sb.AppendLine("    <div class=\"package-details\">");
@@ -416,8 +500,14 @@ public sealed class CraReportGenerator
                 }
             }
 
+            var ecosystem = healthData?.Ecosystem ?? pkg.Ecosystem;
+            var registryUrl = ecosystem == PackageEcosystem.Npm
+                ? $"https://www.npmjs.com/package/{Uri.EscapeDataString(pkgName)}/v/{Uri.EscapeDataString(version)}"
+                : $"https://www.nuget.org/packages/{EscapeHtml(pkgName)}/{EscapeHtml(version)}";
+            var registryName = ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
+
             sb.AppendLine($"      <div class=\"package-links\">");
-            sb.AppendLine($"        <a href=\"https://www.nuget.org/packages/{EscapeHtml(pkgName)}/{EscapeHtml(version)}\" target=\"_blank\">NuGet</a>");
+            sb.AppendLine($"        <a href=\"{registryUrl}\" target=\"_blank\">{registryName}</a>");
             if (!string.IsNullOrEmpty(healthData?.RepositoryUrl))
                 sb.AppendLine($"        <a href=\"{EscapeHtml(healthData.RepositoryUrl)}\" target=\"_blank\">Repository</a>");
             sb.AppendLine($"      </div>");
@@ -444,33 +534,62 @@ public sealed class CraReportGenerator
                 var score = healthData.Score;
                 var status = healthData.Status.ToString().ToLowerInvariant();
 
+                var ecosystemName = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
                 var depTypeBadge = healthData.DependencyType switch
                 {
                     DependencyType.SubDependency => "<span class=\"dep-type-badge sub-dep\" title=\"Sub-dependency - a dependency of another package\">sub-dependency</span>",
-                    _ => "<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by NuGet dependency resolution\">transitive</span>"
+                    _ => $"<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by {ecosystemName} dependency resolution\">transitive</span>"
                 };
 
-                sb.AppendLine($"  <div class=\"package-card transitive\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\">");
+                var craScore = healthData.CraScore;
+                var ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
+
+                // Check if we have real health data (not just defaults)
+                var hasRealHealthData = healthData.Metrics.TotalDownloads > 0 ||
+                                        healthData.Metrics.DaysSinceLastRelease.HasValue ||
+                                        healthData.Metrics.ReleasesPerYear > 0;
+
+                sb.AppendLine($"  <div class=\"package-card transitive\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
                 sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
                 sb.AppendLine($"        {depTypeBadge}");
                 sb.AppendLine($"      </div>");
-                sb.AppendLine($"      <div class=\"package-score {GetScoreClass(score)}\">{score}</div>");
+                sb.AppendLine($"      <div class=\"package-scores\">");
+                sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
+                sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
+                sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(craScore)}\">{craScore}</span>");
+                sb.AppendLine($"        </div>");
+                if (hasRealHealthData)
+                {
+                    sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
+                    sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
+                    sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(score)}\">{score}</span>");
+                    sb.AppendLine($"        </div>");
+                }
+                sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");
                 sb.AppendLine("    <div class=\"package-details\">");
 
+                // Check if we have actual metrics data (not just empty defaults from tree extraction)
+                var hasMetrics = healthData.Metrics.TotalDownloads > 0 ||
+                                 healthData.Metrics.DaysSinceLastRelease.HasValue ||
+                                 healthData.Metrics.ReleasesPerYear > 0;
+
                 sb.AppendLine("      <div class=\"detail-grid\">");
                 sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">License</span><span class=\"value\">{FormatLicense(healthData.License)}</span></div>");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{FormatDaysSinceRelease(healthData.Metrics.DaysSinceLastRelease)}</span></div>");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
-                sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
-                if (healthData.Metrics.Stars.HasValue)
-                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">GitHub Stars</span><span class=\"value\">{FormatNumber(healthData.Metrics.Stars.Value)}</span></div>");
-                if (healthData.Metrics.DaysSinceLastCommit.HasValue)
-                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Commit</span><span class=\"value\">{healthData.Metrics.DaysSinceLastCommit} days ago</span></div>");
+                if (hasMetrics)
+                {
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Release</span><span class=\"value\">{FormatDaysSinceRelease(healthData.Metrics.DaysSinceLastRelease)}</span></div>");
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Releases/Year</span><span class=\"value\">{healthData.Metrics.ReleasesPerYear:F1}</span></div>");
+                    sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Downloads</span><span class=\"value\">{FormatNumber(healthData.Metrics.TotalDownloads)}</span></div>");
+                    if (healthData.Metrics.Stars.HasValue)
+                        sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">GitHub Stars</span><span class=\"value\">{FormatNumber(healthData.Metrics.Stars.Value)}</span></div>");
+                    if (healthData.Metrics.DaysSinceLastCommit.HasValue)
+                        sb.AppendLine($"        <div class=\"detail-item\"><span class=\"label\">Last Commit</span><span class=\"value\">{healthData.Metrics.DaysSinceLastCommit} days ago</span></div>");
+                }
                 sb.AppendLine("      </div>");
 
                 if (healthData.Recommendations.Count > 0)
@@ -491,8 +610,33 @@ public sealed class CraReportGenerator
                     sb.AppendLine("      </div>");
                 }
 
+                // Show "Required by" - which packages depend on this transitive package
+                if (_parentLookup.TryGetValue(pkgName, out var parents) && parents.Count > 0)
+                {
+                    sb.AppendLine("      <div class=\"required-by\">");
+                    sb.AppendLine("        <span class=\"required-by-label\">Required by:</span>");
+                    sb.AppendLine("        <div class=\"parent-packages\">");
+                    foreach (var parentId in parents.Take(5)) // Limit to 5 parents
+                    {
+                        // Check if parent is a direct dependency
+                        var isDirect = _healthDataCache?.Any(p => p.PackageId.Equals(parentId, StringComparison.OrdinalIgnoreCase)) == true;
+                        var badgeClass = isDirect ? "parent-badge direct" : "parent-badge";
+                        sb.AppendLine($"          <a href=\"#\" class=\"{badgeClass}\" onclick=\"navigateToPackage('{EscapeHtml(parentId.ToLowerInvariant())}'); return false;\" title=\"{(isDirect ? "Direct dependency" : "Transitive dependency")}\">{EscapeHtml(parentId)}</a>");
+                    }
+                    if (parents.Count > 5)
+                    {
+                        sb.AppendLine($"          <span class=\"more-parents\">+{parents.Count - 5} more</span>");
+                    }
+                    sb.AppendLine("        </div>");
+                    sb.AppendLine("      </div>");
+                }
+
+                var registryUrl = healthData.Ecosystem == PackageEcosystem.Npm
+                    ? $"https://www.npmjs.com/package/{Uri.EscapeDataString(pkgName)}/v/{Uri.EscapeDataString(version)}"
+                    : $"https://www.nuget.org/packages/{EscapeHtml(pkgName)}/{EscapeHtml(version)}";
+
                 sb.AppendLine($"      <div class=\"package-links\">");
-                sb.AppendLine($"        <a href=\"https://www.nuget.org/packages/{EscapeHtml(pkgName)}/{EscapeHtml(version)}\" target=\"_blank\">NuGet</a>");
+                sb.AppendLine($"        <a href=\"{registryUrl}\" target=\"_blank\">{ecosystemName}</a>");
                 if (!string.IsNullOrEmpty(healthData.RepositoryUrl))
                     sb.AppendLine($"        <a href=\"{EscapeHtml(healthData.RepositoryUrl)}\" target=\"_blank\">Repository</a>");
                 sb.AppendLine($"      </div>");
@@ -534,10 +678,11 @@ public sealed class CraReportGenerator
             var versionDisplay = FormatVersionForSbom(pkg.VersionInfo);
             var purlDisplay = FormatPurlForSbom(purl);
 
+            var registryName = pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
             sb.AppendLine($"    <tr data-name=\"{EscapeHtml(pkg.Name.ToLowerInvariant())}\">");
             sb.AppendLine($"      <td class=\"component-name\">");
             sb.AppendLine($"        <strong>{EscapeHtml(pkg.Name)}</strong>");
-            sb.AppendLine($"        <a href=\"{EscapeHtml(pkg.DownloadLocation)}\" target=\"_blank\" class=\"external-link\">View on NuGet</a>");
+            sb.AppendLine($"        <a href=\"{EscapeHtml(pkg.DownloadLocation)}\" target=\"_blank\" class=\"external-link\">View on {registryName}</a>");
             sb.AppendLine($"      </td>");
             sb.AppendLine($"      <td>{versionDisplay}</td>");
             sb.AppendLine($"      <td><span class=\"license-badge\">{FormatLicense(pkg.LicenseDeclared)}</span></td>");
@@ -596,18 +741,19 @@ public sealed class CraReportGenerator
             sb.AppendLine($"  <span class=\"status-detail\">{licenseReport.ErrorCount} potential issues found</span>");
         sb.AppendLine("</div>");
 
-        // License distribution chart (simple bar chart)
+        // License distribution chart (stacked horizontal bar)
         sb.AppendLine("<div class=\"license-distribution\">");
         sb.AppendLine("  <h3>License Distribution</h3>");
-        sb.AppendLine("  <div class=\"distribution-chart\">");
 
         var total = licenseReport.CategoryDistribution.Values.Sum();
         if (total > 0)
         {
+            // Stacked bar
+            sb.AppendLine("  <div class=\"distribution-stacked-bar\">");
             foreach (var (category, count) in licenseReport.CategoryDistribution.OrderByDescending(x => x.Value))
             {
                 if (count == 0) continue;
-                var percent = (count * 100) / total;
+                var percent = (count * 100.0) / total;
                 var categoryClass = category switch
                 {
                     LicenseCompatibility.LicenseCategory.Permissive => "permissive",
@@ -616,13 +762,35 @@ public sealed class CraReportGenerator
                     LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
                     _ => "unknown"
                 };
-                sb.AppendLine($"    <div class=\"dist-bar {categoryClass}\" style=\"width: {Math.Max(percent, 5)}%\" title=\"{category}: {count} packages ({percent}%)\">");
-                sb.AppendLine($"      <span class=\"dist-label\">{category}</span>");
-                sb.AppendLine($"      <span class=\"dist-count\">{count}</span>");
-                sb.AppendLine("    </div>");
+                // Only show label if segment is wide enough (>10%)
+                var label = percent >= 10 ? $"<span class=\"segment-label\">{category}</span>" : "";
+                sb.AppendLine($"    <div class=\"bar-segment {categoryClass}\" style=\"width: {percent:F1}%\" title=\"{category}: {count} packages ({percent:F1}%)\">{label}</div>");
             }
+            sb.AppendLine("  </div>");
+
+            // Legend below the bar
+            sb.AppendLine("  <div class=\"distribution-legend\">");
+            foreach (var (category, count) in licenseReport.CategoryDistribution.OrderByDescending(x => x.Value))
+            {
+                if (count == 0) continue;
+                var percent = (count * 100.0) / total;
+                var categoryClass = category switch
+                {
+                    LicenseCompatibility.LicenseCategory.Permissive => "permissive",
+                    LicenseCompatibility.LicenseCategory.WeakCopyleft => "weak-copyleft",
+                    LicenseCompatibility.LicenseCategory.StrongCopyleft => "strong-copyleft",
+                    LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
+                    _ => "unknown"
+                };
+                sb.AppendLine($"    <div class=\"legend-item\">");
+                sb.AppendLine($"      <span class=\"legend-color {categoryClass}\"></span>");
+                sb.AppendLine($"      <span class=\"legend-label\">{category}</span>");
+                sb.AppendLine($"      <span class=\"legend-count\">{count}</span>");
+                sb.AppendLine($"      <span class=\"legend-percent\">({percent:F1}%)</span>");
+                sb.AppendLine($"    </div>");
+            }
+            sb.AppendLine("  </div>");
         }
-        sb.AppendLine("  </div>");
         sb.AppendLine("</div>");
 
         // License table
@@ -704,64 +872,133 @@ public sealed class CraReportGenerator
         sb.AppendLine("</div>");
 
         var statements = report.Vex.Statements;
+        var affectedStatements = statements.Where(s => s.Status == VexStatus.Affected).ToList();
+        var safeStatements = statements.Where(s => s.Status != VexStatus.Affected).ToList();
 
-        if (statements.Count == 0)
+        // Summary: focus on what needs action
+        if (affectedStatements.Count == 0)
         {
-            sb.AppendLine("<div class=\"card empty-state\">");
+            sb.AppendLine("<div class=\"card empty-state success\">");
             sb.AppendLine("  <div class=\"empty-icon\">&#10003;</div>");
-            sb.AppendLine("  <h3>No Known Vulnerabilities</h3>");
-            sb.AppendLine("  <p>No vulnerabilities were found in the analyzed packages.</p>");
+            sb.AppendLine("  <h3>No Vulnerabilities Requiring Action</h3>");
+            if (safeStatements.Count > 0)
+            {
+                sb.AppendLine($"  <p>{safeStatements.Count} vulnerabilities were checked - your package versions are safe.</p>");
+            }
+            else
+            {
+                sb.AppendLine("  <p>No known vulnerabilities found in your packages.</p>");
+            }
             sb.AppendLine("</div>");
+
+            // Show reviewed items in collapsible section for audit
+            if (safeStatements.Count > 0)
+            {
+                sb.AppendLine("<div class=\"reviewed-vulns-section\">");
+                sb.AppendLine("  <div class=\"reviewed-header\" onclick=\"toggleReviewedVulns()\">");
+                sb.AppendLine($"    <span>Show {safeStatements.Count} reviewed vulnerabilities (for audit)</span>");
+                sb.AppendLine("    <span id=\"reviewed-toggle\">+</span>");
+                sb.AppendLine("  </div>");
+                sb.AppendLine("  <div id=\"reviewed-vulns-list\" class=\"vulnerabilities-list\" style=\"display:none;\">");
+                foreach (var stmt in safeStatements)
+                {
+                    GenerateVulnerabilityCard(sb, stmt);
+                }
+                sb.AppendLine("  </div>");
+                sb.AppendLine("</div>");
+            }
             return;
         }
 
-        // Vulnerability summary
-        var affectedCount = statements.Count(s => s.Status == VexStatus.Affected);
-        var fixedCount = statements.Count(s => s.Status == VexStatus.Fixed);
-        var notAffectedCount = statements.Count(s => s.Status == VexStatus.NotAffected);
-
-        sb.AppendLine("<div class=\"vuln-summary\">");
-        sb.AppendLine($"  <div class=\"vuln-stat affected\"><span class=\"count\">{affectedCount}</span><span class=\"label\">Affected</span></div>");
-        sb.AppendLine($"  <div class=\"vuln-stat fixed\"><span class=\"count\">{fixedCount}</span><span class=\"label\">Fixed</span></div>");
-        sb.AppendLine($"  <div class=\"vuln-stat not-affected\"><span class=\"count\">{notAffectedCount}</span><span class=\"label\">Not Affected</span></div>");
+        // Show count of vulnerabilities needing action
+        sb.AppendLine("<div class=\"vuln-alert\">");
+        sb.AppendLine($"  <span class=\"vuln-alert-icon\">&#9888;</span>");
+        sb.AppendLine($"  <span class=\"vuln-alert-text\"><strong>{affectedStatements.Count}</strong> vulnerabilit{(affectedStatements.Count == 1 ? "y requires" : "ies require")} action</span>");
+        if (safeStatements.Count > 0)
+        {
+            sb.AppendLine($"  <span class=\"vuln-safe-note\">({safeStatements.Count} others checked and safe)</span>");
+        }
         sb.AppendLine("</div>");
 
+        // Show affected vulnerabilities
         sb.AppendLine("<div class=\"vulnerabilities-list\">");
-
-        foreach (var stmt in statements)
+        foreach (var stmt in affectedStatements)
         {
-            var statusClass = stmt.Status switch
-            {
-                VexStatus.Affected => "affected",
-                VexStatus.Fixed => "fixed",
-                _ => "not-affected"
-            };
+            GenerateVulnerabilityCard(sb, stmt);
+        }
+        sb.AppendLine("</div>");
 
-            sb.AppendLine($"  <div class=\"vuln-card {statusClass}\">");
-            sb.AppendLine("    <div class=\"vuln-header\">");
-            sb.AppendLine($"      <span class=\"vuln-id\">{EscapeHtml(stmt.Vulnerability.Name)}</span>");
-            sb.AppendLine($"      <span class=\"vuln-status {statusClass}\">{stmt.Status.Replace("_", " ")}</span>");
-            sb.AppendLine("    </div>");
-            sb.AppendLine($"    <p class=\"vuln-description\">{EscapeHtml(stmt.Vulnerability.Description ?? "")}</p>");
-            sb.AppendLine("    <div class=\"vuln-products\">");
-            sb.AppendLine("      <strong>Affected Package:</strong>");
-            foreach (var product in stmt.Products)
+        // Show reviewed items in collapsible section
+        if (safeStatements.Count > 0)
+        {
+            sb.AppendLine("<div class=\"reviewed-vulns-section\">");
+            sb.AppendLine("  <div class=\"reviewed-header\" onclick=\"toggleReviewedVulns()\">");
+            sb.AppendLine($"    <span>Show {safeStatements.Count} reviewed vulnerabilities (safe)</span>");
+            sb.AppendLine("    <span id=\"reviewed-toggle\">+</span>");
+            sb.AppendLine("  </div>");
+            sb.AppendLine("  <div id=\"reviewed-vulns-list\" class=\"vulnerabilities-list\" style=\"display:none;\">");
+            foreach (var stmt in safeStatements)
             {
-                sb.AppendLine($"      <code>{EscapeHtml(product.Identifiers.Purl)}</code>");
-            }
-            sb.AppendLine("    </div>");
-            if (!string.IsNullOrEmpty(stmt.ActionStatement))
-            {
-                sb.AppendLine($"    <div class=\"vuln-action\"><strong>Action:</strong> {EscapeHtml(stmt.ActionStatement)}</div>");
-            }
-            if (stmt.Vulnerability.Aliases?.Count > 0)
-            {
-                sb.AppendLine($"    <div class=\"vuln-aliases\"><strong>CVEs:</strong> {string.Join(", ", stmt.Vulnerability.Aliases.Select(EscapeHtml))}</div>");
+                GenerateVulnerabilityCard(sb, stmt);
             }
             sb.AppendLine("  </div>");
+            sb.AppendLine("</div>");
         }
+    }
 
-        sb.AppendLine("</div>");
+    private void GenerateVulnerabilityCard(StringBuilder sb, VexStatement stmt)
+    {
+        var statusClass = stmt.Status switch
+        {
+            VexStatus.Affected => "affected",
+            VexStatus.Fixed => "fixed",
+            _ => "not-affected"
+        };
+
+        var statusLabel = stmt.Status switch
+        {
+            VexStatus.Affected => "ACTION REQUIRED",
+            VexStatus.Fixed => "PATCHED",
+            _ => "NOT APPLICABLE"
+        };
+
+        sb.AppendLine($"  <div class=\"vuln-card {statusClass}\">");
+        sb.AppendLine("    <div class=\"vuln-header\">");
+        sb.AppendLine($"      <a href=\"{EscapeHtml(stmt.Vulnerability.Id)}\" target=\"_blank\" class=\"vuln-id\">{EscapeHtml(stmt.Vulnerability.Name)}</a>");
+        sb.AppendLine($"      <span class=\"vuln-status {statusClass}\">{statusLabel}</span>");
+        sb.AppendLine("    </div>");
+
+        var description = !string.IsNullOrWhiteSpace(stmt.Vulnerability.Description)
+            ? stmt.Vulnerability.Description
+            : "No description available. Click the vulnerability ID above for details.";
+        sb.AppendLine($"    <p class=\"vuln-description\">{EscapeHtml(description)}</p>");
+
+        sb.AppendLine("    <div class=\"vuln-products\">");
+        foreach (var product in stmt.Products)
+        {
+            sb.AppendLine($"      <div class=\"vuln-package-info\">");
+            sb.AppendLine($"        <strong>Package:</strong> <code>{EscapeHtml(product.Identifiers.Purl)}</code>");
+            if (stmt.Status == VexStatus.Fixed)
+            {
+                sb.AppendLine($"        <span class=\"vuln-patched-note\">&#10003; Your version includes the fix</span>");
+            }
+            else if (stmt.Status == VexStatus.Affected)
+            {
+                sb.AppendLine($"        <span class=\"vuln-affected-note\">&#9888; Your version is vulnerable</span>");
+            }
+            sb.AppendLine($"      </div>");
+        }
+        sb.AppendLine("    </div>");
+
+        if (!string.IsNullOrEmpty(stmt.ActionStatement) && stmt.Status == VexStatus.Affected)
+        {
+            sb.AppendLine($"    <div class=\"vuln-action\"><strong>Recommended Action:</strong> {EscapeHtml(stmt.ActionStatement)}</div>");
+        }
+        if (stmt.Vulnerability.Aliases?.Count > 0)
+        {
+            sb.AppendLine($"    <div class=\"vuln-aliases\"><strong>CVEs:</strong> {string.Join(", ", stmt.Vulnerability.Aliases.Select(EscapeHtml))}</div>");
+        }
+        sb.AppendLine("  </div>");
     }
 
     private void GenerateComplianceSection(StringBuilder sb, CraReport report)
@@ -803,11 +1040,244 @@ public sealed class CraReportGenerator
         }
 
         sb.AppendLine("</div>");
+    }
 
-        // Legal disclaimer
-        sb.AppendLine("<div class=\"card disclaimer\">");
-        sb.AppendLine("  <h4>Disclaimer</h4>");
-        sb.AppendLine("  <p>This report assists with EU Cyber Resilience Act compliance assessment. It is not legal advice. Consult legal counsel for authoritative compliance guidance.</p>");
+    private void GenerateDependencyTreeSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Dependency Tree</h2>");
+        sb.AppendLine("</div>");
+
+        if (_dependencyTrees.Count == 0 || _dependencyTrees.All(t => t.Roots.Count == 0))
+        {
+            sb.AppendLine("<div class=\"card empty-state\">");
+            sb.AppendLine("  <div class=\"empty-icon\">&#128230;</div>");
+            sb.AppendLine("  <h3>No Dependency Tree Available</h3>");
+            sb.AppendLine("  <p>Dependency tree data was not generated for this report.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        // Overall stats
+        var totalPackages = _dependencyTrees.Sum(t => t.TotalPackages);
+        var maxDepth = _dependencyTrees.Max(t => t.MaxDepth);
+        var vulnerableCount = _dependencyTrees.Sum(t => t.VulnerableCount);
+
+        sb.AppendLine("<div class=\"tree-stats\">");
+        sb.AppendLine($"  <span class=\"tree-stat\"><strong>Total Packages:</strong> {totalPackages}</span>");
+        sb.AppendLine($"  <span class=\"tree-stat\"><strong>Max Depth:</strong> {maxDepth}</span>");
+        if (vulnerableCount > 0)
+        {
+            sb.AppendLine($"  <span class=\"tree-stat vulnerable\"><strong>Vulnerable:</strong> {vulnerableCount}</span>");
+        }
+        if (_dependencyTrees.Count > 1)
+        {
+            sb.AppendLine($"  <span class=\"tree-stat\"><strong>Ecosystems:</strong> {string.Join(", ", _dependencyTrees.Select(t => t.ProjectType))}</span>");
+        }
+        else
+        {
+            sb.AppendLine($"  <span class=\"tree-stat\"><strong>Type:</strong> {_dependencyTrees[0].ProjectType}</span>");
+        }
+        sb.AppendLine("</div>");
+
+        // Tree controls
+        sb.AppendLine("<div class=\"tree-controls\">");
+        sb.AppendLine("  <button class=\"tree-btn\" onclick=\"expandAllTree()\">Expand All</button>");
+        sb.AppendLine("  <button class=\"tree-btn\" onclick=\"collapseAllTree()\">Collapse All</button>");
+        sb.AppendLine("  <input type=\"text\" id=\"tree-search\" class=\"search-input\" placeholder=\"Search packages...\" onkeyup=\"filterTree()\">");
+        if (_dependencyTrees.Count > 1)
+        {
+            sb.AppendLine("  <span class=\"filter-group tree-ecosystem-filter\">");
+            sb.AppendLine("    <span class=\"filter-label\">Ecosystem:</span>");
+            sb.AppendLine("    <button class=\"filter-btn ecosystem-btn active\" onclick=\"filterTreeByEcosystem('all')\">All</button>");
+            sb.AppendLine("    <button class=\"filter-btn ecosystem-btn nuget\" onclick=\"filterTreeByEcosystem('nuget')\">NuGet</button>");
+            sb.AppendLine("    <button class=\"filter-btn ecosystem-btn npm\" onclick=\"filterTreeByEcosystem('npm')\">npm</button>");
+            sb.AppendLine("  </span>");
+        }
+        sb.AppendLine("</div>");
+
+        // Generate tree for each ecosystem
+        foreach (var tree in _dependencyTrees)
+        {
+            if (tree.Roots.Count == 0) continue;
+
+            var ecosystemValue = tree.ProjectType == ProjectType.Npm ? "npm" : "nuget";
+
+            // Ecosystem header (only if multiple ecosystems)
+            if (_dependencyTrees.Count > 1)
+            {
+                var ecosystemIcon = tree.ProjectType == ProjectType.Npm ? "📦" : "🔷";
+                var ecosystemLabel = tree.ProjectType == ProjectType.Npm ? "npm" : "NuGet";
+                sb.AppendLine($"<div class=\"ecosystem-header\" data-ecosystem=\"{ecosystemValue}\">");
+                sb.AppendLine($"  <span class=\"ecosystem-icon\">{ecosystemIcon}</span>");
+                sb.AppendLine($"  <span class=\"ecosystem-label\">{ecosystemLabel}</span>");
+                sb.AppendLine($"  <span class=\"ecosystem-count\">{tree.TotalPackages} packages</span>");
+                sb.AppendLine($"</div>");
+            }
+
+            // Tree container
+            sb.AppendLine($"<div class=\"dependency-tree\" data-ecosystem=\"{ecosystemValue}\">");
+            sb.AppendLine("  <ul class=\"tree-root\">");
+
+            foreach (var root in tree.Roots)
+            {
+                GenerateTreeNode(sb, root, 1);
+            }
+
+            sb.AppendLine("  </ul>");
+            sb.AppendLine("</div>");
+        }
+    }
+
+    private void GenerateTreeNode(StringBuilder sb, DependencyTreeNode node, int indent)
+    {
+        var hasChildren = node.Children.Count > 0;
+        var indentStr = new string(' ', indent * 2);
+
+        var nodeClasses = new List<string> { "tree-node" };
+        if (node.IsDuplicate) nodeClasses.Add("duplicate");
+        if (node.HasVulnerabilities) nodeClasses.Add("has-vuln");
+        if (node.HasVulnerableDescendant) nodeClasses.Add("has-vuln-descendant");
+
+        var scoreClass = node.HealthScore.HasValue ? GetScoreClass(node.HealthScore.Value) : "";
+
+        sb.AppendLine($"{indentStr}<li class=\"{string.Join(" ", nodeClasses)}\" data-name=\"{EscapeHtml(node.PackageId.ToLowerInvariant())}\">");
+
+        if (hasChildren && !node.IsDuplicate)
+        {
+            // Trees are collapsed by default, so show [+]
+            sb.AppendLine($"{indentStr}  <span class=\"tree-toggle\" onclick=\"toggleTreeNode(this)\">[+]</span>");
+        }
+        else
+        {
+            sb.AppendLine($"{indentStr}  <span class=\"tree-toggle leaf\">&nbsp;&bull;&nbsp;</span>");
+        }
+
+        // Package name as link to registry
+        var packageUrl = node.Ecosystem == PackageEcosystem.Npm
+            ? $"https://www.npmjs.com/package/{Uri.EscapeDataString(node.PackageId)}"
+            : $"https://www.nuget.org/packages/{node.PackageId}";
+        sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(packageUrl)}\" target=\"_blank\" class=\"node-name\">{EscapeHtml(node.PackageId)}</a>");
+        sb.AppendLine($"{indentStr}  <span class=\"node-version\">{EscapeHtml(node.Version)}</span>");
+
+        // Look up package health data for CRA score
+        var healthData = _healthDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase))
+                      ?? _transitiveDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase));
+
+        if (healthData is not null)
+        {
+            // Get effective CRA score (considers dependency scores)
+            var ownCraScore = healthData.CraScore;
+            var effectiveCraScore = _effectiveCraScores.TryGetValue(node.PackageId, out var eff) ? eff : ownCraScore;
+            _craLimitingDependency.TryGetValue(node.PackageId, out var limitingDep);
+            var craScoreClass = GetCraScoreClass(effectiveCraScore);
+
+            // Build detailed tooltip explaining the score
+            var tooltip = BuildCraScoreTooltip(healthData, effectiveCraScore, limitingDep);
+            sb.AppendLine($"{indentStr}  <span class=\"node-score cra {craScoreClass}\" title=\"{tooltip}\">{effectiveCraScore}</span>");
+
+            // Show Health score
+            var healthScoreClass = GetScoreClass(healthData.Score);
+            sb.AppendLine($"{indentStr}  <span class=\"node-score health {healthScoreClass}\" title=\"Health Score\">{healthData.Score}</span>");
+        }
+        else if (node.HealthScore.HasValue)
+        {
+            // Fallback to tree node score if no health data found
+            sb.AppendLine($"{indentStr}  <span class=\"node-score {scoreClass}\">{node.HealthScore.Value}</span>");
+        }
+
+        if (node.IsDuplicate)
+        {
+            sb.AppendLine($"{indentStr}  <span class=\"node-badge duplicate\">dup</span>");
+        }
+
+        if (node.HasVulnerabilities)
+        {
+            var vulnUrl = node.VulnerabilityUrl ?? $"https://osv.dev/list?ecosystem={(node.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet")}&q={Uri.EscapeDataString(node.PackageId)}";
+            var vulnTooltip = EscapeHtml(node.VulnerabilitySummary ?? "Click for vulnerability details");
+            sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(vulnUrl)}\" target=\"_blank\" class=\"node-badge vuln\" title=\"{vulnTooltip}\">VULN</a>");
+        }
+        else if (node.HasVulnerableDescendant)
+        {
+            sb.AppendLine($"{indentStr}  <span class=\"node-badge transitive-vuln\" title=\"Has vulnerable sub-dependencies\">&#9888;</span>");
+        }
+
+        if (node.HasVersionConflict && node.ConflictingVersions.Count > 0)
+        {
+            var conflictTooltip = $"Also found: {string.Join(", ", node.ConflictingVersions)}";
+            sb.AppendLine($"{indentStr}  <span class=\"node-badge version-conflict\" title=\"{EscapeHtml(conflictTooltip)}\">CONFLICT</span>");
+        }
+
+        if (!string.IsNullOrEmpty(node.License))
+        {
+            sb.AppendLine($"{indentStr}  <span class=\"node-license\">{FormatLicenseWithLinks(node.License)}</span>");
+        }
+
+        if (hasChildren && !node.IsDuplicate)
+        {
+            // Trees are collapsed by default
+            sb.AppendLine($"{indentStr}  <ul class=\"tree-children collapsed\">");
+            foreach (var child in node.Children)
+            {
+                GenerateTreeNode(sb, child, indent + 2);
+            }
+            sb.AppendLine($"{indentStr}  </ul>");
+        }
+
+        sb.AppendLine($"{indentStr}</li>");
+    }
+
+    private static void GenerateDependencyIssuesSection(StringBuilder sb, CraReport report)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Dependency Issues</h2>");
+        sb.AppendLine("</div>");
+
+        if (report.DependencyIssues.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state\">");
+            sb.AppendLine("  <div class=\"empty-icon\">&#10004;</div>");
+            sb.AppendLine("  <h3>No Dependency Issues</h3>");
+            sb.AppendLine("  <p>No version conflicts or dependency issues detected.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        // Summary stats
+        sb.AppendLine("<div class=\"issues-summary\">");
+        var versionConflicts = report.DependencyIssues.Count(i => i.Type == DependencyIssueType.VersionConflict);
+        var peerMismatches = report.DependencyIssues.Count(i => i.Type == DependencyIssueType.PeerDependencyMismatch);
+        sb.AppendLine($"  <span class=\"issue-stat\"><strong>{versionConflicts}</strong> version conflicts</span>");
+        if (peerMismatches > 0)
+        {
+            sb.AppendLine($"  <span class=\"issue-stat\"><strong>{peerMismatches}</strong> peer dependency mismatches</span>");
+        }
+        sb.AppendLine("</div>");
+
+        // Issues list
+        sb.AppendLine("<div class=\"issues-list\">");
+        foreach (var issue in report.DependencyIssues.OrderByDescending(i => i.Versions.Count))
+        {
+            var severityClass = issue.Severity.ToLowerInvariant();
+            sb.AppendLine($"<div class=\"card issue-card {severityClass}\">");
+            sb.AppendLine($"  <div class=\"issue-header\">");
+            sb.AppendLine($"    <span class=\"issue-package\">{EscapeHtml(issue.PackageId)}</span>");
+            sb.AppendLine($"    <span class=\"issue-badge {severityClass}\">{issue.Versions.Count} versions</span>");
+            sb.AppendLine($"  </div>");
+            sb.AppendLine($"  <div class=\"issue-versions\">");
+            foreach (var version in issue.Versions)
+            {
+                sb.AppendLine($"    <span class=\"version-tag\">{EscapeHtml(version)}</span>");
+            }
+            sb.AppendLine($"  </div>");
+            if (!string.IsNullOrEmpty(issue.Recommendation))
+            {
+                sb.AppendLine($"  <div class=\"issue-recommendation\">");
+                sb.AppendLine($"    <strong>Recommendation:</strong> {EscapeHtml(issue.Recommendation)}");
+                sb.AppendLine($"  </div>");
+            }
+            sb.AppendLine("</div>");
+        }
         sb.AppendLine("</div>");
     }
 
@@ -884,6 +1354,7 @@ public sealed class CraReportGenerator
     .main-content {
       margin-left: var(--sidebar-width);
       padding: 30px;
+      padding-bottom: 60px;
       min-height: 100vh;
     }
 
@@ -1030,6 +1501,12 @@ public sealed class CraReportGenerator
       font-size: 0.9rem;
     }
 
+    .metric-detail {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+    }
+
     .search-input {
       padding: 10px 15px;
       border: 1px solid var(--border);
@@ -1065,6 +1542,25 @@ public sealed class CraReportGenerator
     .filter-btn.watch.active { background: var(--watch); border-color: var(--watch); }
     .filter-btn.warning.active { background: var(--warning); border-color: var(--warning); color: #000; }
     .filter-btn.critical.active { background: var(--danger); border-color: var(--danger); }
+
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .filter-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .filter-btn.nuget.active { background: #512bd4; border-color: #512bd4; }
+    .filter-btn.npm.active { background: #cb3837; border-color: #cb3837; }
+
+    .tree-ecosystem-filter {
+      margin-left: auto;
+    }
 
     .packages-list {
       display: flex;
@@ -1127,6 +1623,44 @@ public sealed class CraReportGenerator
     .package-score.watch { background: var(--watch); }
     .package-score.warning { background: var(--warning); color: #000; }
     .package-score.critical { background: var(--danger); }
+
+    .package-scores {
+      display: flex;
+      gap: 12px;
+      margin-right: 15px;
+    }
+
+    .package-score-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .package-score-item .score-label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .package-score-item .score-value {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: white;
+      background-color: #6c757d;
+    }
+
+    .package-score-item .score-value.healthy { background-color: #28a745 !important; }
+    .package-score-item .score-value.watch { background-color: #17a2b8 !important; }
+    .package-score-item .score-value.warning { background-color: #ffc107 !important; color: #000; }
+    .package-score-item .score-value.critical { background-color: #dc3545 !important; }
 
     .expand-icon {
       font-size: 1.25rem;
@@ -1348,39 +1882,81 @@ public sealed class CraReportGenerator
       color: var(--text);
     }
 
-    .distribution-chart {
+    .distribution-stacked-bar {
       display: flex;
-      flex-direction: column;
-      gap: 8px;
+      height: 40px;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
     }
 
-    .dist-bar {
+    .bar-segment {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      padding: 10px 16px;
-      border-radius: 6px;
+      justify-content: center;
       color: white;
       font-weight: 500;
-      min-width: 120px;
-      transition: transform 0.2s;
-    }
-
-    .dist-bar:hover {
-      transform: translateX(4px);
-    }
-
-    .dist-bar.permissive { background: linear-gradient(90deg, #28a745, #34ce57); }
-    .dist-bar.weak-copyleft { background: linear-gradient(90deg, #17a2b8, #20c9e0); }
-    .dist-bar.strong-copyleft { background: linear-gradient(90deg, #dc3545, #e4606d); }
-    .dist-bar.public-domain { background: linear-gradient(90deg, #6f42c1, #8b5cf6); }
-    .dist-bar.unknown { background: linear-gradient(90deg, #6c757d, #868e96); }
-
-    .dist-count {
-      background: rgba(255,255,255,0.2);
-      padding: 2px 8px;
-      border-radius: 10px;
       font-size: 0.85rem;
+      transition: filter 0.2s;
+      min-width: 0;
+    }
+
+    .bar-segment:hover {
+      filter: brightness(1.1);
+    }
+
+    .bar-segment .segment-label {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 0 8px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .bar-segment.permissive { background: linear-gradient(180deg, #34ce57, #28a745); }
+    .bar-segment.weak-copyleft { background: linear-gradient(180deg, #20c9e0, #17a2b8); }
+    .bar-segment.strong-copyleft { background: linear-gradient(180deg, #e4606d, #dc3545); }
+    .bar-segment.public-domain { background: linear-gradient(180deg, #8b5cf6, #6f42c1); }
+    .bar-segment.unknown { background: linear-gradient(180deg, #868e96, #6c757d); }
+
+    .distribution-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+    }
+
+    .legend-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+    }
+
+    .legend-color.permissive { background: #28a745; }
+    .legend-color.weak-copyleft { background: #17a2b8; }
+    .legend-color.strong-copyleft { background: #dc3545; }
+    .legend-color.public-domain { background: #6f42c1; }
+    .legend-color.unknown { background: #6c757d; }
+
+    .legend-label {
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .legend-count {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .legend-percent {
+      color: var(--text-muted);
     }
 
     .license-table-container {
@@ -1563,6 +2139,19 @@ public sealed class CraReportGenerator
       100% { box-shadow: none; }
     }
 
+    .highlight-flash {
+      animation: flashHighlight 2s ease-out;
+    }
+
+    @keyframes flashHighlight {
+      0%, 20% { background-color: rgba(37, 99, 235, 0.3); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.5); }
+      100% { background-color: transparent; box-shadow: none; }
+    }
+
+    .tree-node.highlight-flash {
+      background-color: rgba(37, 99, 235, 0.2);
+    }
+
     .recommendations {
       background: #fff3cd;
       padding: 15px;
@@ -1585,6 +2174,58 @@ public sealed class CraReportGenerator
       padding: 8px 15px;
       border-radius: 8px;
       display: inline-block;
+    }
+
+    .required-by {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .required-by-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-right: 8px;
+    }
+
+    .parent-packages {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .parent-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      background: var(--primary);
+      color: white;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .parent-badge:hover {
+      background: var(--primary-dark);
+      text-decoration: none;
+    }
+
+    .parent-badge.direct {
+      background: var(--success);
+    }
+
+    .parent-badge.direct:hover {
+      background: #1e7e34;
+    }
+
+    .more-parents {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      padding: 3px 6px;
     }
 
     .package-links {
@@ -1662,6 +2303,63 @@ public sealed class CraReportGenerator
       background: var(--primary-dark);
     }
 
+    .empty-state.success {
+      border: 2px solid var(--success);
+      background: rgba(34, 197, 94, 0.05);
+    }
+
+    .empty-state.success .empty-icon {
+      color: var(--success);
+    }
+
+    .vuln-alert {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--danger);
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .vuln-alert-icon {
+      font-size: 1.5rem;
+      color: var(--danger);
+    }
+
+    .vuln-alert-text {
+      font-size: 1.1rem;
+      color: var(--danger);
+    }
+
+    .vuln-safe-note {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .reviewed-vulns-section {
+      margin-top: 30px;
+      border-top: 1px solid var(--border);
+      padding-top: 20px;
+    }
+
+    .reviewed-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: var(--card-bg);
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .reviewed-header:hover {
+      background: var(--border);
+    }
+
     .vuln-summary {
       display: flex;
       gap: 20px;
@@ -1685,6 +2383,37 @@ public sealed class CraReportGenerator
     .vuln-stat.affected .count { color: var(--danger); }
     .vuln-stat.fixed .count { color: var(--success); }
     .vuln-stat.not-affected .count { color: var(--text-muted); }
+
+    .vuln-stat .label {
+      display: block;
+      font-weight: 600;
+      margin-top: 5px;
+    }
+
+    .vuln-stat .sublabel {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .vuln-package-info {
+      margin: 8px 0;
+    }
+
+    .vuln-patched-note {
+      display: block;
+      color: var(--success);
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+
+    .vuln-affected-note {
+      display: block;
+      color: var(--danger);
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
 
     .vulnerabilities-list {
       display: flex;
@@ -1712,6 +2441,11 @@ public sealed class CraReportGenerator
     .vuln-id {
       font-weight: 700;
       font-size: 1.1rem;
+      color: var(--primary);
+      text-decoration: none;
+    }
+    .vuln-id:hover {
+      text-decoration: underline;
     }
 
     .vuln-status {
@@ -1836,13 +2570,24 @@ public sealed class CraReportGenerator
       margin-bottom: 20px;
     }
 
-    .disclaimer {
-      background: var(--bg);
-      border-left: 4px solid var(--primary);
+    .disclaimer-footer {
+      position: fixed;
+      bottom: 0;
+      left: var(--sidebar-width);
+      right: 0;
+      background: var(--card-bg);
+      border-top: 1px solid var(--border);
+      padding: 12px 30px;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      z-index: 100;
     }
 
-    .disclaimer h4 {
-      margin-bottom: 10px;
+    .disclaimer-footer p {
+      margin: 0;
+      max-width: 800px;
+      margin: 0 auto;
     }
 
     .action-list {
@@ -1935,6 +2680,344 @@ public sealed class CraReportGenerator
       border-left-width: 3px;
     }
 
+    /* Dependency Issues */
+    .issues-summary {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .issue-stat {
+      background: var(--bg);
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+
+    .issues-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .issue-card {
+      border-left: 4px solid var(--warning);
+    }
+
+    .issue-card.critical {
+      border-left-color: var(--danger);
+    }
+
+    .issue-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .issue-package {
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+
+    .issue-badge {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: var(--warning);
+      color: #000;
+    }
+
+    .issue-badge.critical {
+      background: var(--danger);
+      color: white;
+    }
+
+    .issue-versions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .version-tag {
+      background: var(--bg);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.85rem;
+    }
+
+    .issue-recommendation {
+      background: rgba(255, 193, 7, 0.1);
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    /* Dependency Tree */
+    .tree-stats {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    .tree-stat {
+      padding: 8px 16px;
+      background: var(--card-bg);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .tree-stat.vulnerable {
+      background: #f8d7da;
+      color: var(--danger);
+    }
+
+    .tree-controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .tree-btn {
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      background: white;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .tree-btn:hover {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .dependency-tree {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
+      font-size: 0.9rem;
+      overflow-x: auto;
+    }
+
+    .tree-root, .tree-children {
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+    }
+
+    .tree-children {
+      margin-left: 16px;
+      margin-top: 4px;
+      padding: 8px 8px 8px 16px;
+      border-left: 3px solid var(--primary);
+      background: rgba(0, 102, 204, 0.03);
+      border-radius: 0 8px 8px 0;
+    }
+
+    .tree-children .tree-children {
+      border-left-color: var(--success);
+      background: rgba(40, 167, 69, 0.03);
+    }
+
+    .tree-children .tree-children .tree-children {
+      border-left-color: var(--watch);
+      background: rgba(23, 162, 184, 0.03);
+    }
+
+    .tree-children .tree-children .tree-children .tree-children {
+      border-left-color: var(--warning);
+      background: rgba(255, 193, 7, 0.03);
+    }
+
+    .tree-node {
+      padding: 8px 12px;
+      margin: 4px 0;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      background: white;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      transition: box-shadow 0.2s;
+    }
+
+    .tree-node:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .tree-node.duplicate {
+      opacity: 0.6;
+    }
+
+    .tree-node.duplicate .node-name {
+      font-style: italic;
+    }
+
+    .tree-node.has-vuln {
+      background: rgba(220, 53, 69, 0.15);
+      margin: 0 -10px;
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+
+    .tree-node.has-vuln-descendant:not(.has-vuln) {
+      border-left: 3px solid var(--danger);
+      margin-left: -3px;
+      padding-left: 7px;
+    }
+
+    .tree-node.has-vuln-descendant:not(.has-vuln) > .tree-toggle,
+    .tree-node.has-vuln-descendant:not(.has-vuln) > .node-name {
+      color: var(--danger);
+    }
+
+    .tree-toggle {
+      cursor: pointer;
+      color: var(--text-muted);
+      width: 24px;
+      text-align: center;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .tree-toggle:not(.leaf):hover {
+      color: var(--primary);
+    }
+
+    .tree-toggle.leaf {
+      cursor: default;
+      color: var(--border);
+    }
+
+    .node-name {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .node-version {
+      color: var(--text-muted);
+      font-size: 0.85em;
+    }
+
+    .node-score {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7em;
+      font-weight: 600;
+      color: white;
+    }
+
+    .node-score::before {
+      font-weight: 400;
+      margin-right: 3px;
+      opacity: 0.9;
+    }
+
+    .node-score.cra::before { content: ""CRA""; }
+    .node-score.health::before { content: ""H""; }
+
+    .node-score.healthy { background: var(--success); }
+    .node-score.watch { background: var(--watch); }
+    .node-score.warning { background: var(--warning); color: #000; }
+    .node-score.critical { background: var(--danger); }
+
+    .node-badge {
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.7em;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .node-badge.duplicate {
+      background: var(--text-muted);
+      color: white;
+    }
+
+    a.node-badge.vuln {
+      background: var(--danger);
+      color: white;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    a.node-badge.vuln:hover {
+      background: #c82333;
+      text-decoration: underline;
+    }
+
+    .node-badge.transitive-vuln {
+      background: transparent;
+      color: var(--danger);
+      font-size: 1em;
+      padding: 0 4px;
+    }
+
+    .node-badge.version-conflict {
+      background: var(--warning);
+      color: #000;
+    }
+
+    .node-license {
+      color: var(--text-muted);
+      font-size: 0.75em;
+      padding: 1px 6px;
+      background: var(--bg);
+      border-radius: 4px;
+    }
+
+    .tree-children.collapsed {
+      display: none;
+    }
+
+    .tree-node.hidden {
+      display: none;
+    }
+
+    .ecosystem-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%);
+      border-radius: 8px;
+      margin: 20px 0 10px 0;
+      border-left: 4px solid var(--primary);
+    }
+
+    .ecosystem-header:first-of-type {
+      margin-top: 0;
+    }
+
+    .ecosystem-icon {
+      font-size: 1.25rem;
+    }
+
+    .ecosystem-label {
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+
+    .ecosystem-count {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-left: auto;
+    }
+
     @media (max-width: 768px) {
       .sidebar {
         width: 100%;
@@ -1972,6 +3055,56 @@ function togglePackage(header) {{
   header.parentElement.classList.toggle('expanded');
 }}
 
+function navigateToPackage(packageName) {{
+  // First try to find in direct packages
+  const directPkg = document.querySelector(`.package-card:not(.transitive)[data-name='${{packageName}}']`);
+  if (directPkg) {{
+    showSection('packages');
+    directPkg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+    directPkg.classList.add('expanded');
+    directPkg.classList.add('highlight-flash');
+    setTimeout(() => directPkg.classList.remove('highlight-flash'), 2000);
+    return;
+  }}
+
+  // Try transitive packages
+  const transitivePkg = document.querySelector(`.package-card.transitive[data-name='${{packageName}}']`);
+  if (transitivePkg) {{
+    showSection('packages');
+    // Expand transitive section if collapsed
+    const transitiveList = document.getElementById('transitive-list');
+    if (transitiveList && transitiveList.style.display === 'none') {{
+      toggleTransitive();
+    }}
+    transitivePkg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+    transitivePkg.classList.add('expanded');
+    transitivePkg.classList.add('highlight-flash');
+    setTimeout(() => transitivePkg.classList.remove('highlight-flash'), 2000);
+    return;
+  }}
+
+  // Try dependency tree
+  const treeNode = document.querySelector(`.tree-node[data-name='${{packageName}}']`);
+  if (treeNode) {{
+    showSection('tree');
+    // Expand parent nodes to make this node visible
+    let parent = treeNode.parentElement;
+    while (parent) {{
+      if (parent.classList && parent.classList.contains('tree-children')) {{
+        parent.style.display = 'block';
+        const toggle = parent.previousElementSibling?.querySelector('.tree-toggle');
+        if (toggle && toggle.textContent === '[+]') {{
+          toggle.textContent = '[-]';
+        }}
+      }}
+      parent = parent.parentElement;
+    }}
+    treeNode.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+    treeNode.classList.add('highlight-flash');
+    setTimeout(() => treeNode.classList.remove('highlight-flash'), 2000);
+  }}
+}}
+
 function filterPackages() {{
   const search = document.getElementById('package-search').value.toLowerCase();
   document.querySelectorAll('.package-card').forEach(card => {{
@@ -1980,18 +3113,28 @@ function filterPackages() {{
   }});
 }}
 
-let currentFilter = 'all';
-function filterByStatus(status) {{
-  currentFilter = status;
-  document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-  event.target.classList.add('active');
+let currentStatusFilter = 'all';
+let currentEcosystemFilter = 'all';
 
+function filterByStatus(status) {{
+  currentStatusFilter = status;
+  document.querySelectorAll('.filter-btn:not(.ecosystem-btn)').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  applyPackageFilters();
+}}
+
+function filterByEcosystem(ecosystem) {{
+  currentEcosystemFilter = ecosystem;
+  document.querySelectorAll('.filter-btn.ecosystem-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  applyPackageFilters();
+}}
+
+function applyPackageFilters() {{
   document.querySelectorAll('.package-card').forEach(card => {{
-    if (status === 'all' || card.dataset.status === status) {{
-      card.style.display = '';
-    }} else {{
-      card.style.display = 'none';
-    }}
+    const statusMatch = currentStatusFilter === 'all' || card.dataset.status === currentStatusFilter;
+    const ecosystemMatch = currentEcosystemFilter === 'all' || card.dataset.ecosystem === currentEcosystemFilter;
+    card.style.display = (statusMatch && ecosystemMatch) ? '' : 'none';
   }});
 }}
 
@@ -2012,6 +3155,18 @@ function toggleTransitive() {{
   }} else {{
     list.style.display = 'none';
     toggle.textContent = 'Show';
+  }}
+}}
+
+function toggleReviewedVulns() {{
+  const list = document.getElementById('reviewed-vulns-list');
+  const toggle = document.getElementById('reviewed-toggle');
+  if (list.style.display === 'none') {{
+    list.style.display = '';
+    toggle.textContent = '-';
+  }} else {{
+    list.style.display = 'none';
+    toggle.textContent = '+';
   }}
 }}
 
@@ -2044,8 +3199,9 @@ function navigateToPackage(packageId) {{
     filterPackages();
   }}
 
-  // Reset status filter to 'all'
-  currentFilter = 'all';
+  // Reset filters to 'all'
+  currentStatusFilter = 'all';
+  currentEcosystemFilter = 'all';
   document.querySelectorAll('.filter-btn').forEach(btn => {{
     btn.classList.remove('active');
     if (btn.textContent.toLowerCase() === 'all') btn.classList.add('active');
@@ -2085,11 +3241,113 @@ function exportSbom(format) {{
   a.click();
   URL.revokeObjectURL(url);
 }}
+
+// Dependency Tree functions
+function toggleTreeNode(toggle) {{
+  const li = toggle.closest('.tree-node');
+  const children = li.querySelector('.tree-children');
+  if (children) {{
+    const isCollapsed = children.classList.contains('collapsed');
+    children.classList.toggle('collapsed');
+    toggle.textContent = isCollapsed ? '[-]' : '[+]';
+  }}
+}}
+
+function expandAllTree() {{
+  document.querySelectorAll('.tree-children').forEach(el => {{
+    el.classList.remove('collapsed');
+  }});
+  document.querySelectorAll('.tree-toggle:not(.leaf)').forEach(el => {{
+    el.textContent = '[-]';
+  }});
+}}
+
+function collapseAllTree() {{
+  document.querySelectorAll('.tree-children').forEach(el => {{
+    el.classList.add('collapsed');
+  }});
+  document.querySelectorAll('.tree-toggle:not(.leaf)').forEach(el => {{
+    el.textContent = '[+]';
+  }});
+}}
+
+function filterTree() {{
+  const search = document.getElementById('tree-search').value.toLowerCase();
+
+  if (!search) {{
+    // Show all nodes
+    document.querySelectorAll('.tree-node').forEach(node => {{
+      node.classList.remove('hidden');
+    }});
+    return;
+  }}
+
+  // First, hide all nodes
+  document.querySelectorAll('.tree-node').forEach(node => {{
+    node.classList.add('hidden');
+  }});
+
+  // Find matching nodes and show them with their ancestors
+  document.querySelectorAll('.tree-node').forEach(node => {{
+    const name = node.dataset.name || '';
+    if (name.includes(search)) {{
+      // Show this node
+      node.classList.remove('hidden');
+
+      // Show all ancestors
+      let parent = node.parentElement;
+      while (parent) {{
+        if (parent.classList && parent.classList.contains('tree-node')) {{
+          parent.classList.remove('hidden');
+        }}
+        parent = parent.parentElement;
+      }}
+
+      // Expand ancestor tree-children
+      let ancestor = node.parentElement;
+      while (ancestor) {{
+        if (ancestor.classList && ancestor.classList.contains('tree-children')) {{
+          ancestor.classList.remove('collapsed');
+          const toggle = ancestor.previousElementSibling?.querySelector('.tree-toggle');
+          if (toggle && !toggle.classList.contains('leaf')) {{
+            toggle.textContent = '[-]';
+          }}
+        }}
+        ancestor = ancestor.parentElement;
+      }}
+    }}
+  }});
+}}
+
+function filterTreeByEcosystem(ecosystem) {{
+  document.querySelectorAll('.tree-ecosystem-filter .filter-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+
+  document.querySelectorAll('.dependency-tree').forEach(tree => {{
+    const header = tree.previousElementSibling;
+    if (ecosystem === 'all') {{
+      tree.style.display = '';
+      if (header && header.classList.contains('ecosystem-header')) {{
+        header.style.display = '';
+      }}
+    }} else {{
+      const match = tree.dataset.ecosystem === ecosystem;
+      tree.style.display = match ? '' : 'none';
+      if (header && header.classList.contains('ecosystem-header')) {{
+        header.style.display = match ? '' : 'none';
+      }}
+    }}
+  }});
+}}
 </script>";
     }
 
     private List<PackageHealth>? _healthDataCache;
     private List<PackageHealth>? _transitiveDataCache;
+    private List<DependencyTree> _dependencyTrees = [];
+    private Dictionary<string, List<string>> _parentLookup = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, int> _effectiveCraScores = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string?> _craLimitingDependency = new(StringComparer.OrdinalIgnoreCase);
     private bool _hasIncompleteTransitive;
     private bool _hasUnresolvedVersions;
 
@@ -2118,6 +3376,186 @@ function exportSbom(format) {{
         _hasUnresolvedVersions = unresolvedVersions;
     }
 
+    /// <summary>
+    /// Set dependency tree for tree visualization.
+    /// </summary>
+    public void SetDependencyTree(DependencyTree? tree)
+    {
+        if (tree is not null)
+        {
+            _dependencyTrees = [tree];
+        }
+    }
+
+    /// <summary>
+    /// Add a dependency tree for tree visualization (supports multiple ecosystems).
+    /// </summary>
+    public void AddDependencyTree(DependencyTree? tree)
+    {
+        if (tree is not null)
+        {
+            _dependencyTrees.Add(tree);
+        }
+    }
+
+    /// <summary>
+    /// Build reverse dependency lookup (package -> list of packages that depend on it).
+    /// Must be called after setting dependency trees.
+    /// </summary>
+    private void BuildParentLookup()
+    {
+        _parentLookup.Clear();
+
+        foreach (var tree in _dependencyTrees)
+        {
+            foreach (var root in tree.Roots)
+            {
+                BuildParentLookupRecursive(root, null);
+            }
+        }
+    }
+
+    private void BuildParentLookupRecursive(DependencyTreeNode node, string? parentId)
+    {
+        // Record this node's parent
+        if (parentId is not null)
+        {
+            if (!_parentLookup.TryGetValue(node.PackageId, out var parents))
+            {
+                parents = [];
+                _parentLookup[node.PackageId] = parents;
+            }
+            if (!parents.Contains(parentId, StringComparer.OrdinalIgnoreCase))
+            {
+                parents.Add(parentId);
+            }
+        }
+
+        // Process children
+        foreach (var child in node.Children)
+        {
+            BuildParentLookupRecursive(child, node.PackageId);
+        }
+    }
+
+    /// <summary>
+    /// Build effective CRA scores that account for dependency scores.
+    /// A package's effective CRA score is capped by its worst dependency's score.
+    /// </summary>
+    private void BuildEffectiveCraScores()
+    {
+        _effectiveCraScores.Clear();
+        _craLimitingDependency.Clear();
+
+        foreach (var tree in _dependencyTrees)
+        {
+            foreach (var root in tree.Roots)
+            {
+                CalculateEffectiveCraScore(root);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Calculate effective CRA score for a node (minimum of own score and all descendants).
+    /// Returns (effectiveScore, limitingPackageId).
+    /// </summary>
+    private (int Score, string? LimitingPackage) CalculateEffectiveCraScore(DependencyTreeNode node)
+    {
+        // Get this package's own CRA score
+        var healthData = _healthDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase))
+                      ?? _transitiveDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase));
+
+        var ownScore = healthData?.CraScore ?? 100;
+
+        // Find minimum score among all children and track which one limits
+        var minChildScore = 100;
+        string? limitingChild = null;
+        foreach (var child in node.Children)
+        {
+            var (childEffectiveScore, childLimiter) = CalculateEffectiveCraScore(child);
+            if (childEffectiveScore < minChildScore)
+            {
+                minChildScore = childEffectiveScore;
+                // The limiter is either the child itself or what limits the child
+                limitingChild = childLimiter ?? child.PackageId;
+            }
+        }
+
+        // Effective score is minimum of own and children's scores
+        int effectiveScore;
+        string? limitingPackage;
+        if (minChildScore < ownScore)
+        {
+            effectiveScore = minChildScore;
+            limitingPackage = limitingChild;
+        }
+        else
+        {
+            effectiveScore = ownScore;
+            limitingPackage = null; // Own score is the limit
+        }
+
+        // Store for lookup (use the worst effective score if package appears multiple times)
+        if (_effectiveCraScores.TryGetValue(node.PackageId, out var existing))
+        {
+            if (effectiveScore < existing)
+            {
+                _effectiveCraScores[node.PackageId] = effectiveScore;
+                _craLimitingDependency[node.PackageId] = limitingPackage;
+            }
+        }
+        else
+        {
+            _effectiveCraScores[node.PackageId] = effectiveScore;
+            _craLimitingDependency[node.PackageId] = limitingPackage;
+        }
+
+        return (effectiveScore, limitingPackage);
+    }
+
+    /// <summary>
+    /// Build a detailed tooltip explaining the CRA score.
+    /// </summary>
+    private string BuildCraScoreTooltip(PackageHealth healthData, int effectiveScore, string? limitingDep)
+    {
+        var parts = new List<string>();
+
+        // Explain own score breakdown
+        var vulnCount = healthData.Vulnerabilities.Count;
+        var license = healthData.License;
+
+        if (vulnCount > 0)
+        {
+            parts.Add($"Vulnerabilities: {vulnCount} found (-points)");
+        }
+        else
+        {
+            parts.Add("Vulnerabilities: None ✓");
+        }
+
+        if (string.IsNullOrWhiteSpace(license) ||
+            license.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase) ||
+            license.Equals("NOASSERTION", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add("License: Unknown (-25 points)");
+        }
+        else
+        {
+            parts.Add($"License: {license} ✓");
+        }
+
+        parts.Add($"Own CRA score: {healthData.CraScore}");
+
+        // Explain if limited by dependency
+        if (limitingDep is not null && effectiveScore < healthData.CraScore)
+        {
+            parts.Add($"Limited by: {limitingDep} (CRA {effectiveScore})");
+        }
+
+        return string.Join("&#10;", parts); // &#10; is newline in HTML title
+    }
+
     private static string GetScoreClass(int score) => score switch
     {
         >= 80 => "healthy",
@@ -2125,6 +3563,90 @@ function exportSbom(format) {{
         >= 40 => "warning",
         _ => "critical"
     };
+
+    private static string GetCraScoreClass(int score) => score switch
+    {
+        >= 90 => "healthy",
+        >= 70 => "watch",
+        >= 50 => "warning",
+        _ => "critical"
+    };
+
+    /// <summary>
+    /// Get inline style for score circle with explicit colors.
+    /// </summary>
+    private static string GetScoreStyle(int score)
+    {
+        var (bg, fg) = score switch
+        {
+            >= 80 => ("#28a745", "#fff"),  // green
+            >= 60 => ("#17a2b8", "#fff"),  // teal
+            >= 40 => ("#ffc107", "#000"),  // yellow
+            _ => ("#dc3545", "#fff")       // red
+        };
+        return $"background-color:{bg};color:{fg};width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;";
+    }
+
+    /// <summary>
+    /// Calculate aggregate CRA compliance score for the project.
+    /// Based on vulnerabilities and license coverage - not freshness/activity.
+    /// </summary>
+    private static int CalculateProjectCraScore(
+        IEnumerable<PackageHealth> directPackages,
+        IEnumerable<PackageHealth> transitivePackages)
+    {
+        var allPackages = directPackages.Concat(transitivePackages).ToList();
+        if (allPackages.Count == 0) return 100;
+
+        // Calculate base score from individual package CRA scores
+        var totalCraScore = 0;
+        foreach (var pkg in allPackages)
+        {
+            totalCraScore += pkg.CraScore;
+        }
+        var baseScore = (double)totalCraScore / allPackages.Count;
+
+        // Count packages with unknown/missing licenses (CRA Article 10(9) requirement)
+        var unknownLicenseCount = allPackages.Count(p =>
+            string.IsNullOrWhiteSpace(p.License) ||
+            p.License.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase) ||
+            p.License.Equals("NOASSERTION", StringComparison.OrdinalIgnoreCase));
+
+        // Count packages with active vulnerabilities
+        var vulnerableCount = allPackages.Count(p => p.Vulnerabilities.Count > 0);
+
+        // Apply penalties based on compliance gaps
+        var penalty = 0.0;
+
+        // Unknown licenses penalty - CRA requires license identification
+        if (unknownLicenseCount > 0)
+        {
+            var unknownPercent = (double)unknownLicenseCount / allPackages.Count * 100;
+            // Scale penalty: 1-5 packages = 5 points, 5%+ = 10 points, 10%+ = 15 points
+            penalty += unknownPercent switch
+            {
+                >= 10 => 15,
+                >= 5 => 10,
+                _ => Math.Min(unknownLicenseCount, 5)  // 1 point per package, max 5
+            };
+        }
+
+        // Vulnerable packages penalty (in addition to individual score impact)
+        if (vulnerableCount > 0)
+        {
+            var vulnPercent = (double)vulnerableCount / allPackages.Count * 100;
+            penalty += vulnPercent switch
+            {
+                >= 10 => 20,
+                >= 5 => 15,
+                >= 1 => 10,
+                _ => 5
+            };
+        }
+
+        var finalScore = Math.Max(0, baseScore - penalty);
+        return (int)Math.Round(finalScore);
+    }
 
     private static string FormatNumber(long number) => number switch
     {
@@ -2268,6 +3790,95 @@ function exportSbom(format) {{
         });
     }
 
+    private static string? GetLicenseUrl(string license)
+    {
+        // Normalize license identifier
+        var normalized = license.Trim();
+
+        // Map common license identifiers to SPDX URLs
+        return normalized.ToUpperInvariant() switch
+        {
+            "MIT" => "https://spdx.org/licenses/MIT.html",
+            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => "https://spdx.org/licenses/Apache-2.0.html",
+            "BSD-2-CLAUSE" or "BSD 2-CLAUSE" => "https://spdx.org/licenses/BSD-2-Clause.html",
+            "BSD-3-CLAUSE" or "BSD 3-CLAUSE" => "https://spdx.org/licenses/BSD-3-Clause.html",
+            "GPL-2.0" or "GPL-2.0-ONLY" or "GPL2" => "https://spdx.org/licenses/GPL-2.0-only.html",
+            "GPL-3.0" or "GPL-3.0-ONLY" or "GPL3" => "https://spdx.org/licenses/GPL-3.0-only.html",
+            "GPL-3.0-OR-LATER" => "https://spdx.org/licenses/GPL-3.0-or-later.html",
+            "LGPL-2.1" or "LGPL-2.1-ONLY" => "https://spdx.org/licenses/LGPL-2.1-only.html",
+            "LGPL-3.0" or "LGPL-3.0-ONLY" => "https://spdx.org/licenses/LGPL-3.0-only.html",
+            "ISC" => "https://spdx.org/licenses/ISC.html",
+            "MPL-2.0" => "https://spdx.org/licenses/MPL-2.0.html",
+            "UNLICENSE" or "UNLICENSED" => "https://spdx.org/licenses/Unlicense.html",
+            "CC0-1.0" or "CC0" => "https://spdx.org/licenses/CC0-1.0.html",
+            "WTFPL" => "https://spdx.org/licenses/WTFPL.html",
+            "0BSD" => "https://spdx.org/licenses/0BSD.html",
+            "MS-PL" => "https://spdx.org/licenses/MS-PL.html",
+            "MS-RL" => "https://spdx.org/licenses/MS-RL.html",
+            "ZLIB" => "https://spdx.org/licenses/Zlib.html",
+            _ => normalized.StartsWith("HTTP", StringComparison.OrdinalIgnoreCase)
+                ? normalized  // Already a URL
+                : $"https://spdx.org/licenses/{Uri.EscapeDataString(normalized)}.html"  // Try SPDX lookup
+        };
+    }
+
+    /// <summary>
+    /// Format a license expression with individual links for each license.
+    /// Handles SPDX expressions like "(MIT OR GPL-3.0-or-later)".
+    /// </summary>
+    private static string FormatLicenseWithLinks(string license)
+    {
+        if (string.IsNullOrWhiteSpace(license))
+            return EscapeHtml(license);
+
+        // Remove outer parentheses for display
+        var text = license.Trim();
+        if (text.StartsWith('(') && text.EndsWith(')'))
+        {
+            text = text[1..^1].Trim();
+        }
+
+        // Check for compound expressions
+        if (text.Contains(" OR ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = text.Split(new[] { " OR " }, StringSplitOptions.RemoveEmptyEntries);
+            var linkedParts = parts.Select(p => FormatSingleLicenseLink(p.Trim()));
+            return "(" + string.Join(" OR ", linkedParts) + ")";
+        }
+
+        if (text.Contains(" AND ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = text.Split(new[] { " AND " }, StringSplitOptions.RemoveEmptyEntries);
+            var linkedParts = parts.Select(p => FormatSingleLicenseLink(p.Trim()));
+            return "(" + string.Join(" AND ", linkedParts) + ")";
+        }
+
+        if (text.Contains(" WITH ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = text.Split(new[] { " WITH " }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+            {
+                return FormatSingleLicenseLink(parts[0].Trim()) + " WITH " + EscapeHtml(parts[1].Trim());
+            }
+        }
+
+        // Simple single license
+        return FormatSingleLicenseLink(text);
+    }
+
+    /// <summary>
+    /// Format a single license identifier as a link.
+    /// </summary>
+    private static string FormatSingleLicenseLink(string license)
+    {
+        var url = GetLicenseUrl(license);
+        if (url is not null)
+        {
+            return $"<a href=\"{EscapeHtml(url)}\" target=\"_blank\" title=\"View license\">{EscapeHtml(license)}</a>";
+        }
+        return EscapeHtml(license);
+    }
+
     private static string EscapeHtml(string input)
     {
         return input
@@ -2300,8 +3911,11 @@ public sealed class CraReport
     public required SbomDocument Sbom { get; init; }
     public required VexDocument Vex { get; init; }
     public required int PackageCount { get; init; }
+    public required int TransitivePackageCount { get; init; }
     public required int VulnerabilityCount { get; init; }
     public required int CriticalPackageCount { get; init; }
+    public int VersionConflictCount { get; init; }
+    public List<DependencyIssue> DependencyIssues { get; init; } = [];
 }
 
 public sealed class CraComplianceItem
@@ -2313,9 +3927,4 @@ public sealed class CraComplianceItem
     public string? Recommendation { get; init; }
 }
 
-public enum CraComplianceStatus
-{
-    Compliant,
-    ActionRequired,
-    NonCompliant
-}
+// CraComplianceStatus enum is defined in Models/PackageHealth.cs
