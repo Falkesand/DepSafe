@@ -1386,7 +1386,8 @@ public sealed class CraReportGenerator
             sb.AppendLine($"    <span class=\"issue-badge {severityClass}\">{issue.Versions.Count} versions</span>");
             sb.AppendLine($"  </div>");
             sb.AppendLine($"  <div class=\"issue-versions\">");
-            foreach (var version in issue.Versions)
+            sb.AppendLine($"    <span class=\"versions-label\">Found in tree:</span>");
+            foreach (var version in issue.Versions.OrderByDescending(v => v))
             {
                 sb.AppendLine($"    <span class=\"version-tag\">{EscapeHtml(version)}</span>");
             }
@@ -3134,6 +3135,13 @@ public sealed class CraReportGenerator
       flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .versions-label {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-right: 4px;
     }
 
     .version-tag {
