@@ -1,0 +1,706 @@
+# DepSafe
+
+**Dependency Safety and Compliance for .NET and npm Projects**
+
+DepSafe is a comprehensive dependency analysis tool that helps development teams assess package health, ensure EU Cyber Resilience Act (CRA) compliance, and manage supply chain security for both .NET (NuGet) and JavaScript (npm) projects.
+
+[![NuGet](https://img.shields.io/nuget/v/DepSafe.svg)](https://www.nuget.org/packages/DepSafe)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/DepSafe.svg)](https://www.nuget.org/packages/DepSafe)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat)
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Commands](#commands)
+  - [cra-report](#cra-report---generate-cra-compliance-report)
+  - [analyze](#analyze---analyze-project-health)
+  - [check](#check---check-single-package)
+  - [sbom](#sbom---generate-software-bill-of-materials)
+  - [vex](#vex---generate-vulnerability-exchange-document)
+  - [licenses](#licenses---analyze-license-compatibility)
+  - [badge](#badge---generate-readme-badges)
+- [Configuration](#configuration)
+- [CRA Compliance Report](#cra-compliance-report)
+- [Health Score Calculation](#health-score-calculation)
+- [License Compatibility](#license-compatibility)
+- [Environment Variables](#environment-variables)
+- [CI/CD Integration](#cicd-integration)
+- [MSBuild Integration](#msbuild-integration)
+- [License](#license)
+
+---
+
+## Features
+
+### Multi-Ecosystem Support
+- **NuGet packages** - Full support for .NET projects, solutions, and Directory.Build.props
+- **npm packages** - Full support for package.json and package-lock.json
+- **Mixed projects** - Analyze repositories containing both .NET and npm components
+
+### Health Scoring
+- **0-100 health score** based on freshness, release cadence, download trends, repository activity, and vulnerabilities
+- **Abandonment prediction** - Identifies packages at risk of being abandoned
+- **Version status tracking** - Shows available updates with color-coded urgency indicators
+- **Peer dependency analysis** - Lists peer dependencies with version requirements (npm)
+
+### EU Cyber Resilience Act (CRA) Compliance
+- **Article 10 - SBOM** - Software Bill of Materials generation (SPDX 3.0 and CycloneDX)
+- **Article 10(4) - KEV Monitoring** - CISA Known Exploited Vulnerabilities catalog integration
+- **Article 10(6) - Security Updates** - Tracks packages with deprecated or abandoned status
+- **Article 10(9) - License Information** - SPDX license identification and compatibility
+- **Article 11 - Vulnerability Handling** - VEX document generation with OSV vulnerability data
+- **Article 11(5) - Security Policy** - GitHub security policy detection
+
+### Security Analysis
+- **OSV Vulnerability Database** - Real-time vulnerability scanning (no API key required)
+- **CISA KEV Catalog** - Actively exploited vulnerability detection
+- **GitHub Advisory Database** - Additional vulnerability context via GitHub API
+- **Version-aware filtering** - Only reports vulnerabilities affecting your specific versions
+
+### Reporting
+- **Interactive HTML reports** - Dashboard with drill-down, filtering, and dependency trees
+- **JSON export** - Machine-readable format for automation
+- **License attribution files** - Generate THIRD-PARTY-NOTICES in TXT, HTML, or Markdown
+- **shields.io badges** - Embeddable status badges for your README
+
+---
+
+## Installation
+
+### As a Global Tool
+
+```bash
+dotnet tool install -g DepSafe
+```
+
+### As a Local Tool
+
+```bash
+dotnet new tool-manifest  # If you don't have a manifest yet
+dotnet tool install DepSafe
+```
+
+### Verify Installation
+
+```bash
+depsafe --version
+```
+
+---
+
+## Quick Start
+
+```bash
+# Navigate to your project directory
+cd /path/to/your/project
+
+# Generate comprehensive CRA compliance report
+depsafe cra-report
+
+# Quick health analysis
+depsafe analyze
+
+# Check a single package
+depsafe check Newtonsoft.Json
+
+# Generate SBOM
+depsafe sbom --output sbom.spdx.json
+
+# Check license compatibility
+depsafe licenses
+```
+
+---
+
+## Commands
+
+### `cra-report` - Generate CRA Compliance Report
+
+Generates a comprehensive EU Cyber Resilience Act compliance report with interactive HTML dashboard.
+
+```bash
+depsafe cra-report [<path>] [options]
+```
+
+**Arguments:**
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `<path>` | Path to project, solution, or directory | `.` (current directory) |
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-f, --format <Html\|Json>` | Output format | `Html` |
+| `-o, --output <path>` | Output file path | `cra-report.html` |
+| `-d, --deep` | Fetch full metadata for all transitive packages | `false` |
+| `--skip-github` | Skip GitHub API calls (faster, less data) | `false` |
+| `-l, --licenses <Html\|Md\|Txt>` | Generate license attribution file | - |
+| `-s, --sbom <CycloneDx\|Spdx>` | Export SBOM in specified format | - |
+
+**Examples:**
+```bash
+# Basic report
+depsafe cra-report
+
+# Full analysis with transitive packages
+depsafe cra-report --deep
+
+# Generate report with SBOM and license file
+depsafe cra-report --sbom spdx --licenses txt
+
+# JSON output for automation
+depsafe cra-report --format json --output compliance.json
+
+# Analyze specific solution
+depsafe cra-report ./src/MyApp.sln --deep
+```
+
+---
+
+### `analyze` - Analyze Project Health
+
+Performs health analysis on all direct dependencies with console output.
+
+```bash
+depsafe analyze [<path>] [options]
+```
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-f, --format <Table\|Json\|Markdown>` | Output format | `Table` |
+| `--fail-below <score>` | Exit with error if project score below threshold | - |
+| `--skip-github` | Skip GitHub API calls | `false` |
+
+**Examples:**
+```bash
+# Analyze current project
+depsafe analyze
+
+# CI/CD - fail if health score drops below 60
+depsafe analyze --fail-below 60
+
+# Generate markdown report
+depsafe analyze --format markdown > health-report.md
+```
+
+---
+
+### `check` - Check Single Package
+
+Check health of a specific NuGet or npm package.
+
+```bash
+depsafe check <package> [options]
+```
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-v, --version <version>` | Specific version to check | Latest |
+| `-f, --format <Table\|Json\|Markdown>` | Output format | `Table` |
+| `--skip-github` | Skip GitHub API calls | `false` |
+
+**Examples:**
+```bash
+# Check latest version
+depsafe check Newtonsoft.Json
+
+# Check specific version
+depsafe check Serilog --version 3.1.1
+
+# JSON output
+depsafe check react --format json
+```
+
+---
+
+### `sbom` - Generate Software Bill of Materials
+
+Generate SBOM in SPDX 3.0 or CycloneDX format.
+
+```bash
+depsafe sbom [<path>] [options]
+```
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-f, --format <Spdx\|CycloneDx>` | Output format | `Spdx` |
+| `-o, --output <path>` | Output file path | stdout |
+| `--skip-github` | Skip vulnerability enrichment | `false` |
+
+**Examples:**
+```bash
+# SPDX format to stdout
+depsafe sbom
+
+# CycloneDX to file
+depsafe sbom --format cyclonedx --output bom.json
+
+# SPDX with full vulnerability data
+depsafe sbom --output sbom.spdx.json
+```
+
+---
+
+### `vex` - Generate Vulnerability Exchange Document
+
+Generate OpenVEX document with vulnerability status for all dependencies.
+
+```bash
+depsafe vex [<path>] [options]
+```
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-o, --output <path>` | Output file path | stdout |
+
+**Examples:**
+```bash
+# Output to console
+depsafe vex
+
+# Save to file
+depsafe vex --output vulnerabilities.vex.json
+```
+
+---
+
+### `licenses` - Analyze License Compatibility
+
+Analyze dependency licenses for compatibility with your project license.
+
+```bash
+depsafe licenses [<path>] [options]
+```
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-l, --project-license <license>` | Your project's SPDX license identifier | `MIT` |
+| `-f, --format <table\|json>` | Output format | `table` |
+| `-t, --include-transitive` | Include transitive dependencies | `false` |
+
+**Examples:**
+```bash
+# Check against MIT license
+depsafe licenses
+
+# Check against Apache-2.0
+depsafe licenses --project-license Apache-2.0
+
+# Include transitive dependencies
+depsafe licenses --include-transitive
+
+# JSON output
+depsafe licenses --format json
+```
+
+---
+
+### `badge` - Generate README Badges
+
+Generate shields.io badges for your README.
+
+```bash
+depsafe badge [<path>] [options]
+```
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-f, --format <Markdown\|Html\|Json\|Url>` | Output format | `Markdown` |
+| `-o, --output <path>` | Output file path | stdout |
+| `-s, --style <style>` | Badge style (flat, flat-square, plastic, for-the-badge) | `flat` |
+| `--skip-github` | Skip GitHub API calls | `false` |
+
+**Examples:**
+```bash
+# Generate markdown badges
+depsafe badge
+
+# Different style
+depsafe badge --style for-the-badge
+
+# HTML format
+depsafe badge --format html --output badges.html
+```
+
+---
+
+## Configuration
+
+### `.cra-config.json`
+
+Create a `.cra-config.json` file in your project root to customize CRA analysis:
+
+```json
+{
+  "licenseOverrides": {
+    "SixLabors.ImageSharp": "Apache-2.0",
+    "SomeInternalPackage": "MIT"
+  },
+  "excludePackages": [
+    "MyCompany.Internal.Utils"
+  ],
+  "complianceNotes": {
+    "OldLegacyPackage": "Approved for use until Q4 2025 migration"
+  }
+}
+```
+
+**Configuration Options:**
+
+| Option | Description |
+|--------|-------------|
+| `licenseOverrides` | Override detected licenses for packages (useful when detection fails) |
+| `excludePackages` | Exclude specific packages from analysis (internal/private packages) |
+| `complianceNotes` | Add notes/justifications for compliance decisions |
+
+---
+
+## CRA Compliance Report
+
+The HTML report includes comprehensive compliance information:
+
+### Dashboard
+- Overall CRA compliance status
+- Health score gauge
+- Package count breakdown (direct vs transitive)
+- Vulnerability summary
+- Deprecated package alerts
+
+### CRA Requirements Checklist
+| Requirement | Description |
+|-------------|-------------|
+| Art. 10 - SBOM | Software Bill of Materials with all components |
+| Art. 10(4) - KEV | No actively exploited vulnerabilities (CISA KEV) |
+| Art. 10(6) - Updates | No deprecated or abandoned components |
+| Art. 10(9) - Licenses | All licenses identified and documented |
+| Art. 10 - Crypto | Cryptographic compliance assessment |
+| Art. 11 - Vulnerabilities | Vulnerability handling process |
+| Art. 11(5) - Security Policy | Security policy availability |
+
+### Package Cards
+Each package displays:
+- **Health score** (0-100) with status indicator
+- **CRA compliance score** (0-100)
+- **License** information
+- **Version status** - Shows if update available with upgrade urgency
+- **Release information** - Last release date, releases per year
+- **Repository stats** - Stars, last commit (when GitHub token available)
+- **Vulnerabilities** - CVE IDs with links to details
+- **Peer dependencies** - For npm packages
+- **Dependencies** - Clickable links to navigate dependency tree
+- **Recommendations** - Actionable improvement suggestions
+
+### Dependency Tree
+Interactive tree visualization showing:
+- Full dependency hierarchy
+- Health status per node
+- Vulnerability indicators (red highlight for KEV)
+- Expand/collapse navigation
+
+### SBOM & VEX
+- Embedded SBOM (SPDX 3.0 format)
+- Embedded VEX document
+- Export buttons for both formats
+
+---
+
+## Health Score Calculation
+
+Each package receives a health score (0-100) based on weighted factors:
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| **Freshness** | 25% | Days since last release |
+| **Release Cadence** | 15% | Average releases per year |
+| **Download Trend** | 20% | Growing/stable/declining downloads |
+| **Repository Activity** | 25% | Recent commits, stars, open issues |
+| **Vulnerabilities** | 15% | Known security vulnerabilities |
+
+### Score Interpretation
+
+| Score | Status | Description |
+|-------|--------|-------------|
+| 80-100 | **Healthy** | Actively maintained, low risk |
+| 60-79 | **Watch** | Some concerns, monitor closely |
+| 40-59 | **Warning** | Consider alternatives |
+| 0-39 | **Critical** | High abandonment risk, action needed |
+
+### CRA Compliance Score
+
+Separate from health score, focuses on regulatory requirements:
+
+| Factor | Points | Description |
+|--------|--------|-------------|
+| No vulnerabilities | 60 | Critical/High = 0-15 pts, Medium/Low = 30 pts |
+| License identified | 25 | SPDX license = 25 pts, Non-standard = 15 pts |
+| Package identifiable | 15 | Name + version present |
+
+---
+
+## License Compatibility
+
+The `licenses` command detects potential license conflicts:
+
+| Category | Licenses | Risk Level |
+|----------|----------|------------|
+| **Permissive** | MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unlicense | Low |
+| **Weak Copyleft** | LGPL-2.1, LGPL-3.0, MPL-2.0, EPL-2.0 | Medium |
+| **Strong Copyleft** | GPL-2.0, GPL-3.0, AGPL-3.0 | High |
+
+### Compatibility Matrix
+
+| Your License | Can Use Permissive | Can Use Weak Copyleft | Can Use Strong Copyleft |
+|--------------|-------------------|----------------------|------------------------|
+| MIT | ✅ | ⚠️ (with care) | ❌ |
+| Apache-2.0 | ✅ | ⚠️ (with care) | ❌ |
+| GPL-3.0 | ✅ | ✅ | ✅ |
+
+---
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub personal access token for higher API rate limits, vulnerability data, and private repository access |
+
+### Setting Up GitHub Token
+
+For best results, create a GitHub personal access token with `public_repo` scope:
+
+1. Go to GitHub Settings → Developer settings → Personal access tokens
+2. Generate a new token with `public_repo` scope
+3. Set the environment variable:
+
+**Windows (PowerShell):**
+```powershell
+$env:GITHUB_TOKEN = "ghp_your_token_here"
+```
+
+**Linux/macOS:**
+```bash
+export GITHUB_TOKEN="ghp_your_token_here"
+```
+
+---
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+name: Dependency Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install DepSafe
+        run: dotnet tool install -g DepSafe
+
+      - name: Run Health Analysis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: depsafe analyze --fail-below 60
+
+      - name: Generate CRA Report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: depsafe cra-report --deep --output cra-report.html
+
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cra-compliance-report
+          path: cra-report.html
+```
+
+### Azure DevOps
+
+```yaml
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  - task: UseDotNet@2
+    inputs:
+      version: '8.0.x'
+
+  - script: dotnet tool install -g DepSafe
+    displayName: 'Install DepSafe'
+
+  - script: depsafe analyze --fail-below 60
+    displayName: 'Check Dependency Health'
+    env:
+      GITHUB_TOKEN: $(GITHUB_TOKEN)
+
+  - script: depsafe cra-report --deep --output $(Build.ArtifactStagingDirectory)/cra-report.html
+    displayName: 'Generate CRA Report'
+    env:
+      GITHUB_TOKEN: $(GITHUB_TOKEN)
+
+  - task: PublishBuildArtifacts@1
+    inputs:
+      pathToPublish: $(Build.ArtifactStagingDirectory)
+      artifactName: compliance-reports
+```
+
+### GitLab CI
+
+```yaml
+dependency-health:
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - dotnet tool install -g DepSafe
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    - depsafe analyze --fail-below 60
+    - depsafe cra-report --deep --output cra-report.html
+  artifacts:
+    paths:
+      - cra-report.html
+    expire_in: 30 days
+  only:
+    - main
+    - merge_requests
+```
+
+---
+
+## MSBuild Integration
+
+Add to your `.csproj` to enable build-time health checks:
+
+```xml
+<PropertyGroup>
+  <!-- Enable health checking during build -->
+  <DepSafeEnabled>true</DepSafeEnabled>
+
+  <!-- Fail build if score below threshold (0 = disabled) -->
+  <DepSafeFailBelow>60</DepSafeFailBelow>
+
+  <!-- Warn if score below threshold -->
+  <DepSafeWarnBelow>80</DepSafeWarnBelow>
+
+  <!-- Skip GitHub API for faster builds -->
+  <DepSafeSkipGitHub>true</DepSafeSkipGitHub>
+</PropertyGroup>
+```
+
+### MSBuild Targets
+
+```bash
+# Run health check manually
+dotnet msbuild -t:DepSafeCheck
+
+# Generate health report
+dotnet msbuild -t:DepSafeReport
+
+# Check license compatibility
+dotnet msbuild -t:DepSafeLicenseCheck
+
+# Generate badges
+dotnet msbuild -t:DepSafeBadges
+```
+
+---
+
+## Data Sources
+
+DepSafe integrates with multiple data sources:
+
+| Source | Data | Authentication |
+|--------|------|----------------|
+| **NuGet API** | Package metadata, versions, downloads | None required |
+| **npm Registry** | Package metadata, versions, dependencies | None required |
+| **OSV Database** | Vulnerability data for all ecosystems | None required |
+| **CISA KEV** | Actively exploited vulnerabilities | None required |
+| **GitHub API** | Repository stats, security policies, advisories | Optional (GITHUB_TOKEN) |
+
+---
+
+## Troubleshooting
+
+### Rate Limiting
+
+If you encounter rate limiting errors:
+1. Set `GITHUB_TOKEN` environment variable
+2. Use `--skip-github` for faster runs without GitHub data
+3. Run during off-peak hours
+
+### Mixed Project Detection
+
+DepSafe automatically detects project type:
+- **.NET only** - Contains `.csproj`, `.sln`, or `Directory.Build.props`
+- **npm only** - Contains `package.json` without .NET files
+- **Mixed** - Contains both .NET and npm files
+
+### False Positive Vulnerabilities
+
+If a vulnerability doesn't apply to your usage:
+1. Check the vulnerability details in the report
+2. Create a VEX document to document your assessment
+3. Use `.cra-config.json` to add compliance notes
+
+---
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit issues and pull requests.
+
+---
+
+## Disclaimer
+
+**This software is provided for informational purposes only and does not constitute legal, compliance, or security advice.**
+
+The compliance assessments, health scores, vulnerability reports, and other outputs generated by this software are based on automated analysis and publicly available data sources. They may be incomplete, inaccurate, or outdated.
+
+- Users are solely responsible for verifying compliance requirements with qualified professionals
+- Security assessments should be validated with appropriate security experts
+- Use of this software does not establish compliance with any regulation, including the EU Cyber Resilience Act (CRA)
+- The authors are not liable for any damages resulting from use of this software
+
+**USE AT YOUR OWN RISK.**
+
+---
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+## Acknowledgments
+
+- [OSV](https://osv.dev/) - Open Source Vulnerability database
+- [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) - Known Exploited Vulnerabilities catalog
+- [SPDX](https://spdx.dev/) - Software Package Data Exchange
+- [CycloneDX](https://cyclonedx.org/) - Software Bill of Materials standard
+- [OpenVEX](https://openvex.dev/) - Vulnerability Exploitability eXchange
