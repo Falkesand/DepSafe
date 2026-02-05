@@ -82,17 +82,13 @@ public sealed class VexGenerator
 
     private static string DetermineStatus(VulnerabilityInfo vuln, string packageVersion)
     {
-        // FIRST check vulnerable version range
+        var inVulnerableRange = true; // Conservative default
         if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
         {
-            if (!IsVersionInRange(packageVersion, vuln.VulnerableVersionRange))
-            {
-                return VexStatus.NotAffected; // Not in vulnerable range
-            }
+            inVulnerableRange = IsVersionInRange(packageVersion, vuln.VulnerableVersionRange);
         }
-        // If no range specified, conservatively assume in range
 
-        // THEN check if version is patched (only matters if we're in the vulnerable range)
+        // Check if version is at or above the patched version
         if (!string.IsNullOrEmpty(vuln.PatchedVersion))
         {
             try
@@ -107,11 +103,15 @@ public sealed class VexGenerator
             }
             catch
             {
-                // Version parsing failed, assume still affected
+                // Version parsing failed, fall through to range-based logic
             }
         }
 
-        // Version is in vulnerable range and not patched
+        if (!inVulnerableRange)
+        {
+            return VexStatus.NotAffected;
+        }
+
         return VexStatus.Affected;
     }
 

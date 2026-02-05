@@ -11,8 +11,10 @@ namespace DepSafe.DataSources;
 /// Client for GitHub API using Octokit with rate limit handling,
 /// batch queries, and graceful degradation.
 /// </summary>
-public sealed partial class GitHubApiClient
+public sealed partial class GitHubApiClient : IDisposable
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     private readonly GitHubClient _client;
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
@@ -155,7 +157,7 @@ public sealed partial class GitHubApiClient
             {
                 var (_, owner, repo) = repoList[i];
                 queryBuilder.Append($@"
-                    repo{i}: repository(owner: ""{owner}"", name: ""{repo}"") {{
+                    repo{i}: repository(owner: ""{SanitizeGraphQLString(owner)}"", name: ""{SanitizeGraphQLString(repo)}"") {{
                         nameWithOwner
                         stargazerCount
                         forkCount
@@ -197,8 +199,7 @@ public sealed partial class GitHubApiClient
                 return results;
             }
 
-            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(jsonOptions, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(s_jsonOptions, ct);
 
             if (json.TryGetProperty("data", out var data))
             {
@@ -443,7 +444,7 @@ public sealed partial class GitHubApiClient
             for (int i = 0; i < packages.Count; i++)
             {
                 queryBuilder.Append($@"
-                    pkg{i}: securityVulnerabilities(first: 20, ecosystem: NUGET, package: ""{packages[i]}"") {{
+                    pkg{i}: securityVulnerabilities(first: 20, ecosystem: NUGET, package: ""{SanitizeGraphQLString(packages[i])}"") {{
                         nodes {{
                             advisory {{
                                 ghsaId
@@ -479,8 +480,7 @@ public sealed partial class GitHubApiClient
                 return results;
             }
 
-            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(jsonOptions, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(s_jsonOptions, ct);
 
             if (json.TryGetProperty("data", out var data))
             {
@@ -619,6 +619,21 @@ public sealed partial class GitHubApiClient
             return (owner, repo);
         }
         return (null, null);
+    }
+
+    /// <summary>
+    /// Sanitize a string for safe use in GraphQL string literals.
+    /// Escapes backslashes and double quotes to prevent injection.
+    /// </summary>
+    private static string SanitizeGraphQLString(string input)
+    {
+        return input.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+
+    public void Dispose()
+    {
+        _httpClient.Dispose();
+        _requestLimiter.Dispose();
     }
 
     [GeneratedRegex(@"github\.com[/:](?<owner>[^/]+)/(?<repo>[^/\s?#]+)", RegexOptions.IgnoreCase)]

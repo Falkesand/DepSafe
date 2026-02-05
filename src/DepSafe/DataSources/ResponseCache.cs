@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -34,7 +35,7 @@ public sealed class ResponseCache
             if (File.Exists(metaPath))
             {
                 var meta = await File.ReadAllTextAsync(metaPath, ct);
-                var expiry = DateTime.Parse(meta);
+                var expiry = DateTime.Parse(meta, CultureInfo.InvariantCulture);
                 if (DateTime.UtcNow > expiry)
                 {
                     // Cache expired
@@ -78,6 +79,45 @@ public sealed class ResponseCache
             foreach (var file in Directory.GetFiles(_cacheDir))
             {
                 try { File.Delete(file); } catch { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Remove expired cache files from disk.
+    /// </summary>
+    public void CleanupExpired()
+    {
+        if (!Directory.Exists(_cacheDir))
+            return;
+
+        foreach (var file in Directory.GetFiles(_cacheDir))
+        {
+            // Skip meta files - we check them with their parent
+            if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                var metaPath = file + ".meta";
+                if (File.Exists(metaPath))
+                {
+                    var meta = File.ReadAllText(metaPath);
+                    if (DateTime.TryParse(meta, CultureInfo.InvariantCulture, DateTimeStyles.None, out var expiry) && DateTime.UtcNow > expiry)
+                    {
+                        File.Delete(file);
+                        File.Delete(metaPath);
+                    }
+                }
+                else
+                {
+                    // Cache file without meta - delete orphan
+                    File.Delete(file);
+                }
+            }
+            catch
+            {
+                // Ignore cleanup failures
             }
         }
     }

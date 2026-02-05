@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Text.Json;
 using DepSafe.Compliance;
@@ -229,7 +230,7 @@ public static class CraReportCommand
         var packagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
 
         // Phase 1: Fetch npm info for direct packages (and transitive if deep scan)
-        var npmInfoMap = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var npmInfoMap = new ConcurrentDictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
 
         await AnsiConsole.Progress()
             .StartAsync(async ctx =>
@@ -246,10 +247,7 @@ public static class CraReportCommand
                         var info = await npmClient.GetPackageInfoAsync(packageName);
                         if (info is not null)
                         {
-                            lock (npmInfoMap)
-                            {
-                                npmInfoMap[packageName] = info;
-                            }
+                            npmInfoMap[packageName] = info;
                         }
                     }
                     finally
@@ -475,7 +473,7 @@ public static class CraReportCommand
         List<DependencyTreeNode> roots,
         HashSet<string> excludePackageIds,
         Dictionary<string, List<VulnerabilityInfo>> vulnerabilities,
-        Dictionary<string, NpmPackageInfo> npmInfoMap,
+        IDictionary<string, NpmPackageInfo> npmInfoMap,
         Dictionary<string, GitHubRepoInfo?> repoInfoMap,
         HealthScoreCalculator calculator)
     {
@@ -1012,7 +1010,7 @@ public static class CraReportCommand
         }
 
         // Phase 1: Fetch all NuGet info (including transitive)
-        var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var nugetInfoMap = new ConcurrentDictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
         var allPackageIds = allReferences.Keys.Concat(transitiveReferences.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         await AnsiConsole.Progress()
@@ -1030,10 +1028,7 @@ public static class CraReportCommand
                         var info = await nugetClient.GetPackageInfoAsync(packageId);
                         if (info is not null)
                         {
-                            lock (nugetInfoMap)
-                            {
-                                nugetInfoMap[packageId] = info;
-                            }
+                            nugetInfoMap[packageId] = info;
                         }
                     }
                     finally
@@ -1347,7 +1342,7 @@ public static class CraReportCommand
                 AnsiConsole.MarkupLine($"[dim]Found {allReferences.Count} NuGet packages and {transitiveReferences.Count} transitive[/]");
 
                 // Fetch NuGet info
-                var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+                var nugetInfoMap = new ConcurrentDictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
                 var allPackageIds = allReferences.Keys.Concat(transitiveReferences.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
                 await AnsiConsole.Progress()
@@ -1365,10 +1360,7 @@ public static class CraReportCommand
                                 var info = await nugetClient.GetPackageInfoAsync(packageId);
                                 if (info is not null)
                                 {
-                                    lock (nugetInfoMap)
-                                    {
-                                        nugetInfoMap[packageId] = info;
-                                    }
+                                    nugetInfoMap[packageId] = info;
                                 }
                             }
                             finally
@@ -1491,13 +1483,19 @@ public static class CraReportCommand
                     allTransitivePackages.Add(calculator.Calculate(packageId, reference.Version, nugetInfo, repoInfo, vulnerabilities, DependencyType.Transitive));
                 }
 
+                // Build HashSet for O(1) lookups instead of O(n) Any() per iteration
+                var transitivePackageIds = new HashSet<string>(
+                    allTransitivePackages.Select(p => p.PackageId),
+                    StringComparer.OrdinalIgnoreCase);
+
                 foreach (var packageId in dependencyPackageIds)
                 {
-                    if (allTransitivePackages.Any(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (transitivePackageIds.Contains(packageId)) continue;
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
                     var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
                     allTransitivePackages.Add(calculator.Calculate(packageId, nugetInfo.LatestVersion, nugetInfo, repoInfo, vulnerabilities, DependencyType.SubDependency));
+                    transitivePackageIds.Add(packageId); // Keep in sync for subsequent iterations
                 }
 
                 // Build .NET dependency tree
@@ -1714,6 +1712,20 @@ public static class CraReportCommand
             _ => HealthStatus.Critical
         };
 
+        // Single pass to count status categories (O(n) instead of O(5n))
+        int healthyCount = 0, watchCount = 0, warningCount = 0, criticalCount = 0, vulnerableCount = 0;
+        foreach (var p in packages)
+        {
+            switch (p.Status)
+            {
+                case HealthStatus.Healthy: healthyCount++; break;
+                case HealthStatus.Watch: watchCount++; break;
+                case HealthStatus.Warning: warningCount++; break;
+                case HealthStatus.Critical: criticalCount++; break;
+            }
+            if (p.Vulnerabilities.Count > 0) vulnerableCount++;
+        }
+
         var healthReport = new ProjectReport
         {
             ProjectPath = path,
@@ -1724,11 +1736,11 @@ public static class CraReportCommand
             Summary = new ProjectSummary
             {
                 TotalPackages = packages.Count,
-                HealthyCount = packages.Count(p => p.Status == HealthStatus.Healthy),
-                WatchCount = packages.Count(p => p.Status == HealthStatus.Watch),
-                WarningCount = packages.Count(p => p.Status == HealthStatus.Warning),
-                CriticalCount = packages.Count(p => p.Status == HealthStatus.Critical),
-                VulnerableCount = packages.Count(p => p.Vulnerabilities.Count > 0)
+                HealthyCount = healthyCount,
+                WatchCount = watchCount,
+                WarningCount = warningCount,
+                CriticalCount = criticalCount,
+                VulnerableCount = vulnerableCount
             }
         };
 
@@ -2176,7 +2188,7 @@ public static class CraReportCommand
     private static async Task FetchGitHubRepoInfoAsync(
         GitHubApiClient githubClient,
         List<string> repoUrls,
-        Dictionary<string, NpmPackageInfo> npmInfoMap,
+        IDictionary<string, NpmPackageInfo> npmInfoMap,
         Dictionary<string, GitHubRepoInfo?> repoInfoMap)
     {
         await AnsiConsole.Status()
@@ -2289,6 +2301,20 @@ public static class CraReportCommand
             _ => HealthStatus.Critical
         };
 
+        // Single pass to count status categories (O(n) instead of O(5n))
+        int healthyCount = 0, watchCount = 0, warningCount = 0, criticalCount = 0, vulnerableCount = 0;
+        foreach (var p in packages)
+        {
+            switch (p.Status)
+            {
+                case HealthStatus.Healthy: healthyCount++; break;
+                case HealthStatus.Watch: watchCount++; break;
+                case HealthStatus.Warning: warningCount++; break;
+                case HealthStatus.Critical: criticalCount++; break;
+            }
+            if (p.Vulnerabilities.Count > 0) vulnerableCount++;
+        }
+
         var healthReport = new ProjectReport
         {
             ProjectPath = path,
@@ -2299,11 +2325,11 @@ public static class CraReportCommand
             Summary = new ProjectSummary
             {
                 TotalPackages = packages.Count,
-                HealthyCount = packages.Count(p => p.Status == HealthStatus.Healthy),
-                WatchCount = packages.Count(p => p.Status == HealthStatus.Watch),
-                WarningCount = packages.Count(p => p.Status == HealthStatus.Warning),
-                CriticalCount = packages.Count(p => p.Status == HealthStatus.Critical),
-                VulnerableCount = packages.Count(p => p.Vulnerabilities.Count > 0)
+                HealthyCount = healthyCount,
+                WatchCount = watchCount,
+                WarningCount = warningCount,
+                CriticalCount = criticalCount,
+                VulnerableCount = vulnerableCount
             }
         };
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -112,14 +113,13 @@ public sealed class NuGetApiClient : IDisposable
         int maxConcurrency = 10,
         CancellationToken ct = default)
     {
-        var results = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var results = new ConcurrentDictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
         var packageList = packageIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         if (packageList.Count == 0)
-            return results;
+            return new Dictionary<string, NuGetPackageInfo>(results);
 
         var semaphore = new SemaphoreSlim(maxConcurrency);
-        var lockObj = new object();
 
         var tasks = packageList.Select(async packageId =>
         {
@@ -129,10 +129,7 @@ public sealed class NuGetApiClient : IDisposable
                 var info = await GetPackageInfoAsync(packageId, ct);
                 if (info is not null)
                 {
-                    lock (lockObj)
-                    {
-                        results[packageId] = info;
-                    }
+                    results[packageId] = info;
                 }
             }
             finally
@@ -142,7 +139,7 @@ public sealed class NuGetApiClient : IDisposable
         });
 
         await Task.WhenAll(tasks);
-        return results;
+        return new Dictionary<string, NuGetPackageInfo>(results);
     }
 
     private static string? ExtractRepositoryUrl(IPackageSearchMetadata metadata)

@@ -13,16 +13,19 @@ namespace DepSafe.DataSources;
 public sealed class OsvApiClient : IDisposable
 {
     private readonly HttpClient _httpClient;
+    private readonly ResponseCache _cache;
     private const string OsvApiUrl = "https://api.osv.dev/v1";
     private const int BatchSize = 1000; // OSV supports up to 1000 queries per batch
 
-    public OsvApiClient()
+    public OsvApiClient(ResponseCache? cache = null)
     {
         _httpClient = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "DepSafe");
+        _cache = cache ?? new ResponseCache();
     }
 
     /// <summary>
@@ -54,10 +57,30 @@ public sealed class OsvApiClient : IDisposable
         if (packageList.Count == 0)
             return results;
 
-        // Process in batches
-        for (int i = 0; i < packageList.Count; i += BatchSize)
+        // Check cache first, collect packages that need fetching
+        var packagesToFetch = new List<(string Name, string? Version, PackageEcosystem Ecosystem)>();
+        foreach (var pkg in packageList)
         {
-            var batch = packageList.Skip(i).Take(BatchSize).ToList();
+            var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
+            var cached = await _cache.GetAsync<List<VulnerabilityInfo>>(cacheKey, ct);
+            if (cached is not null)
+            {
+                results[pkg.Name] = cached;
+            }
+            else
+            {
+                packagesToFetch.Add(pkg);
+            }
+        }
+
+        if (packagesToFetch.Count == 0)
+            return results;
+
+        // Process uncached packages in batches
+        for (int i = 0; i < packagesToFetch.Count; i += BatchSize)
+        {
+            int take = Math.Min(BatchSize, packagesToFetch.Count - i);
+            var batch = packagesToFetch.GetRange(i, take);
             var batchResults = await QueryBatchInternalAsync(batch, ct);
 
             foreach (var (name, vulns) in batchResults)
@@ -65,6 +88,25 @@ public sealed class OsvApiClient : IDisposable
                 if (!results.ContainsKey(name))
                     results[name] = [];
                 results[name].AddRange(vulns);
+
+                // Cache individual results
+                var pkg = batch.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (pkg != default)
+                {
+                    var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
+                    await _cache.SetAsync(cacheKey, vulns, TimeSpan.FromHours(6), ct);
+                }
+            }
+
+            // Also cache empty results for packages with no vulnerabilities
+            foreach (var pkg in batch)
+            {
+                if (!results.ContainsKey(pkg.Name))
+                {
+                    results[pkg.Name] = [];
+                    var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
+                    await _cache.SetAsync(cacheKey, new List<VulnerabilityInfo>(), TimeSpan.FromHours(6), ct);
+                }
             }
         }
 
