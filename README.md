@@ -601,16 +601,16 @@ Add to your `.csproj` to enable build-time health checks:
 ```xml
 <PropertyGroup>
   <!-- Enable health checking during build -->
-  <NuGetHealthEnabled>true</NuGetHealthEnabled>
+  <DepSafeEnabled>true</DepSafeEnabled>
 
   <!-- Fail build if score below threshold (0 = disabled) -->
-  <NuGetHealthFailBelow>60</NuGetHealthFailBelow>
+  <DepSafeFailBelow>60</DepSafeFailBelow>
 
   <!-- Warn if score below threshold -->
-  <NuGetHealthWarnBelow>80</NuGetHealthWarnBelow>
+  <DepSafeWarnBelow>80</DepSafeWarnBelow>
 
   <!-- Skip GitHub API for faster builds -->
-  <NuGetHealthSkipGitHub>true</NuGetHealthSkipGitHub>
+  <DepSafeSkipGitHub>true</DepSafeSkipGitHub>
 </PropertyGroup>
 ```
 
@@ -618,16 +618,16 @@ Add to your `.csproj` to enable build-time health checks:
 
 ```bash
 # Run health check manually
-dotnet msbuild -t:NuGetHealthCheck
+dotnet msbuild -t:DepSafeCheck
 
 # Generate health report
-dotnet msbuild -t:NuGetHealthReport
+dotnet msbuild -t:DepSafeReport
 
 # Check license compatibility
-dotnet msbuild -t:NuGetHealthLicenseCheck
+dotnet msbuild -t:DepSafeLicenseCheck
 
 # Generate badges
-dotnet msbuild -t:NuGetHealthBadges
+dotnet msbuild -t:DepSafeBadges
 ```
 
 ---

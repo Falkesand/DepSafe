@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--
+    DepSafe MSBuild Integration
+
+    Usage in your .csproj:
+    <PropertyGroup>
+      <DepSafeEnabled>true</DepSafeEnabled>
+      <DepSafeFailBelow>60</DepSafeFailBelow>
+      <DepSafeWarnBelow>80</DepSafeWarnBelow>
+      <DepSafeSkipGitHub>false</DepSafeSkipGitHub>
+    </PropertyGroup>
+  -->
+
+  <PropertyGroup>
+    <!-- Default values -->
+    <DepSafeEnabled Condition="'$(DepSafeEnabled)' == ''">false</DepSafeEnabled>
+    <DepSafeFailBelow Condition="'$(DepSafeFailBelow)' == ''">0</DepSafeFailBelow>
+    <DepSafeWarnBelow Condition="'$(DepSafeWarnBelow)' == ''">60</DepSafeWarnBelow>
+    <DepSafeSkipGitHub Condition="'$(DepSafeSkipGitHub)' == ''">true</DepSafeSkipGitHub>
+    <DepSafeRunOnRestore Condition="'$(DepSafeRunOnRestore)' == ''">false</DepSafeRunOnRestore>
+    <DepSafeRunOnBuild Condition="'$(DepSafeRunOnBuild)' == ''">true</DepSafeRunOnBuild>
+    <DepSafeCacheMinutes Condition="'$(DepSafeCacheMinutes)' == ''">60</DepSafeCacheMinutes>
+    <DepSafeOutputFile Condition="'$(DepSafeOutputFile)' == ''">$(IntermediateOutputPath)depsafe.json</DepSafeOutputFile>
+  </PropertyGroup>
+
+  <!-- Run after restore if enabled -->
+  <Target Name="DepSafeCheckOnRestore"
+          AfterTargets="Restore"
+          Condition="'$(DepSafeEnabled)' == 'true' AND '$(DepSafeRunOnRestore)' == 'true'">
+    <CallTarget Targets="DepSafeCheck" />
+  </Target>
+
+  <!-- Run before build if enabled -->
+  <Target Name="DepSafeCheckOnBuild"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(DepSafeEnabled)' == 'true' AND '$(DepSafeRunOnBuild)' == 'true'">
+    <CallTarget Targets="DepSafeCheck" />
+  </Target>
+
+  <!-- Main health check target -->
+  <Target Name="DepSafeCheck">
+    <PropertyGroup>
+      <_DepSafeArgs>analyze "$(MSBuildProjectFullPath)" --format json</_DepSafeArgs>
+      <_DepSafeArgs Condition="'$(DepSafeSkipGitHub)' == 'true'">$(_DepSafeArgs) --skip-github</_DepSafeArgs>
+      <_DepSafeArgs Condition="$(DepSafeFailBelow) > 0">$(_DepSafeArgs) --fail-below $(DepSafeFailBelow)</_DepSafeArgs>
+    </PropertyGroup>
+
+    <Message Text="Running DepSafe Health Analysis..." Importance="High" />
+
+    <Exec Command="dotnet depsafe $(_DepSafeArgs)"
+          ConsoleToMsBuild="true"
+          StandardOutputImportance="Low"
+          StandardErrorImportance="High"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_DepSafeExitCode" />
+      <Output TaskParameter="ConsoleOutput" PropertyName="_DepSafeOutput" />
+    </Exec>
+
+    <!-- Parse JSON output for score -->
+    <PropertyGroup>
+      <_DepSafeScore>$([System.Text.RegularExpressions.Regex]::Match($(_DepSafeOutput), '"overallScore":\s*(\d+)').Groups[1].Value)</_DepSafeScore>
+    </PropertyGroup>
+
+    <!-- Warning if below warn threshold -->
+    <Warning Text="DepSafe Health Score is $(_DepSafeScore)/100 (below warning threshold of $(DepSafeWarnBelow)). Run 'depsafe analyze' for details."
+             Condition="$(_DepSafeScore) != '' AND $(_DepSafeScore) &lt; $(DepSafeWarnBelow) AND $(_DepSafeScore) >= $(DepSafeFailBelow)" />
+
+    <!-- Error if below fail threshold -->
+    <Error Text="DepSafe Health Score is $(_DepSafeScore)/100 (below required threshold of $(DepSafeFailBelow)). Run 'depsafe analyze' for details."
+           Condition="$(DepSafeFailBelow) > 0 AND $(_DepSafeScore) != '' AND $(_DepSafeScore) &lt; $(DepSafeFailBelow)" />
+
+    <Message Text="DepSafe Health Score: $(_DepSafeScore)/100"
+             Importance="High"
+             Condition="$(_DepSafeScore) != ''" />
+  </Target>
+
+  <!-- Target to generate health report -->
+  <Target Name="DepSafeReport">
+    <PropertyGroup>
+      <_ReportOutput Condition="'$(DepSafeReportOutput)' == ''">$(MSBuildProjectDirectory)\health-report.html</_ReportOutput>
+      <_ReportOutput Condition="'$(DepSafeReportOutput)' != ''">$(DepSafeReportOutput)</_ReportOutput>
+    </PropertyGroup>
+
+    <Message Text="Generating DepSafe Health Report..." Importance="High" />
+
+    <Exec Command="dotnet depsafe cra-report &quot;$(MSBuildProjectFullPath)&quot; -o &quot;$(_ReportOutput)&quot;"
+          ConsoleToMsBuild="true" />
+
+    <Message Text="Health report generated: $(_ReportOutput)" Importance="High" />
+  </Target>
+
+  <!-- Target to check licenses -->
+  <Target Name="DepSafeLicenseCheck">
+    <PropertyGroup>
+      <_LicenseArgs>licenses "$(MSBuildProjectFullPath)"</_LicenseArgs>
+      <_LicenseArgs Condition="'$(ProjectLicense)' != ''">$(_LicenseArgs) --project-license $(ProjectLicense)</_LicenseArgs>
+    </PropertyGroup>
+
+    <Message Text="Checking license compatibility..." Importance="High" />
+
+    <Exec Command="dotnet depsafe $(_LicenseArgs)"
+          ConsoleToMsBuild="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_LicenseExitCode" />
+    </Exec>
+
+    <Error Text="License compatibility issues found. Run 'depsafe licenses' for details."
+           Condition="$(_LicenseExitCode) != 0 AND '$(DepSafeLicenseCheckRequired)' == 'true'" />
+
+    <Warning Text="License compatibility issues found. Run 'depsafe licenses' for details."
+             Condition="$(_LicenseExitCode) != 0 AND '$(DepSafeLicenseCheckRequired)' != 'true'" />
+  </Target>
+
+  <!-- Target to generate badges -->
+  <Target Name="DepSafeBadges">
+    <PropertyGroup>
+      <_BadgeOutput Condition="'$(DepSafeBadgeOutput)' == ''">$(MSBuildProjectDirectory)\BADGES.md</_BadgeOutput>
+      <_BadgeOutput Condition="'$(DepSafeBadgeOutput)' != ''">$(DepSafeBadgeOutput)</_BadgeOutput>
+    </PropertyGroup>
+
+    <Message Text="Generating health badges..." Importance="High" />
+
+    <Exec Command="dotnet depsafe badge &quot;$(MSBuildProjectFullPath)&quot; -o &quot;$(_BadgeOutput)&quot;"
+          ConsoleToMsBuild="true" />
+
+    <Message Text="Badges generated: $(_BadgeOutput)" Importance="High" />
+  </Target>
+
+</Project>
