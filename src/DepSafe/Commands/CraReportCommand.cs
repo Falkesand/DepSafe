@@ -38,6 +38,10 @@ public static class CraReportCommand
             ["--licenses", "-l"],
             "Generate license attribution file (txt, html, or md)");
 
+        var sbomOption = new Option<SbomFormat?>(
+            ["--sbom", "-s"],
+            "Export SBOM in specified format (cyclonedx or spdx)");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -45,10 +49,11 @@ public static class CraReportCommand
             outputOption,
             skipGitHubOption,
             deepOption,
-            licensesOption
+            licensesOption,
+            sbomOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption);
+        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption);
 
         return command;
     }
@@ -102,7 +107,7 @@ public static class CraReportCommand
         return config.LicenseOverrides.TryGetValue(packageId, out var license) ? license : null;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat)
+    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat)
     {
         var startTime = DateTime.UtcNow;
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
@@ -141,14 +146,14 @@ public static class CraReportCommand
         // Process based on project type
         return projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, config, startTime),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, config, startTime),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, config, startTime),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime),
             _ => 0
         };
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, CraConfig? config, DateTime startTime)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -325,6 +330,11 @@ public static class CraReportCommand
             }
         }
 
+        // Collect CRA compliance data from npm packages
+        var deprecatedPackages = npmInfoMap.Values.Where(n => n.IsDeprecated).Select(n => n.Name).ToList();
+        var pkgsWithSecurityPolicy = repoInfoMap.Values.Count(r => r?.HasSecurityPolicy == true);
+        var pkgsWithRepo = repoInfoMap.Values.Count(r => r is not null);
+
         return await GenerateReportAsync(
             path,
             packages,
@@ -336,7 +346,11 @@ public static class CraReportCommand
             false,
             false,
             startTime,
-            licensesFormat);
+            licensesFormat,
+            sbomFormat,
+            deprecatedPackages,
+            pkgsWithSecurityPolicy,
+            pkgsWithRepo);
     }
 
     private static List<PackageHealth> ExtractTransitivePackagesFromTree(
@@ -873,7 +887,7 @@ public static class CraReportCommand
         };
     }
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, CraConfig? config, DateTime startTime)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1156,6 +1170,11 @@ public static class CraReportCommand
             transitivePackages,
             allVulnerabilities);
 
+        // Collect CRA compliance data from .NET packages
+        var deprecatedPackages = nugetInfoMap.Values.Where(n => n.IsDeprecated).Select(n => n.PackageId).ToList();
+        var pkgsWithSecurityPolicy = repoInfoMap.Values.Count(r => r?.HasSecurityPolicy == true);
+        var pkgsWithRepo = repoInfoMap.Values.Count(r => r is not null);
+
         return await GenerateReportAsync(
             path,
             packages,
@@ -1167,10 +1186,14 @@ public static class CraReportCommand
             incompleteTransitive,
             hasUnresolvedVersions,
             startTime,
-            licensesFormat);
+            licensesFormat,
+            sbomFormat,
+            deprecatedPackages,
+            pkgsWithSecurityPolicy,
+            pkgsWithRepo);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, CraConfig? config, DateTime startTime)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1190,6 +1213,11 @@ public static class CraReportCommand
         var dependencyTrees = new List<DependencyTree>();
         var incompleteTransitive = false;
         var hasUnresolvedVersions = false;
+
+        // CRA compliance data collectors
+        var allDeprecatedPackages = new List<string>();
+        var totalPackagesWithSecurityPolicy = 0;
+        var totalPackagesWithRepo = 0;
 
         // ===== Analyze .NET packages =====
         AnsiConsole.MarkupLine("\n[bold blue]Analyzing .NET packages...[/]");
@@ -1332,6 +1360,11 @@ public static class CraReportCommand
                         });
                 }
 
+                // Collect CRA compliance data from NuGet packages
+                allDeprecatedPackages.AddRange(nugetInfoMap.Values.Where(n => n.IsDeprecated).Select(n => n.PackageId));
+                totalPackagesWithSecurityPolicy += nugetRepoInfoMap.Values.Count(r => r?.HasSecurityPolicy == true);
+                totalPackagesWithRepo += nugetRepoInfoMap.Values.Count(r => r is not null);
+
                 // Calculate health for NuGet packages
                 foreach (var (packageId, reference) in allReferences)
                 {
@@ -1460,6 +1493,11 @@ public static class CraReportCommand
                             });
                     }
 
+                    // Collect CRA compliance data from npm packages
+                    allDeprecatedPackages.AddRange(npmInfoMap.Values.Where(n => n.IsDeprecated).Select(n => n.Name));
+                    totalPackagesWithSecurityPolicy += npmRepoInfoMap.Values.Count(r => r?.HasSecurityPolicy == true);
+                    totalPackagesWithRepo += npmRepoInfoMap.Values.Count(r => r is not null);
+
                     // Build lookup of installed versions from npm dependency tree
                     var npmInstalledVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     if (npmTree is not null)
@@ -1534,7 +1572,11 @@ public static class CraReportCommand
             incompleteTransitive,
             hasUnresolvedVersions,
             startTime,
-            licensesFormat);
+            licensesFormat,
+            sbomFormat,
+            allDeprecatedPackages,
+            totalPackagesWithSecurityPolicy,
+            totalPackagesWithRepo);
     }
 
     private static async Task<int> GenerateMixedReportAsync(
@@ -1548,7 +1590,11 @@ public static class CraReportCommand
         bool incompleteTransitive,
         bool hasUnresolvedVersions,
         DateTime startTime,
-        LicenseOutputFormat? licensesFormat = null)
+        LicenseOutputFormat? licensesFormat = null,
+        SbomFormat? sbomFormat = null,
+        List<string>? deprecatedPackages = null,
+        int packagesWithSecurityPolicy = 0,
+        int packagesWithRepo = 0)
     {
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
@@ -1588,6 +1634,27 @@ public static class CraReportCommand
             reportGenerator.AddDependencyTree(tree);
         }
 
+        // Set additional CRA compliance data (passed from caller)
+        reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
+        reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
+
+        // CISA KEV check (collect all CVEs from vulnerabilities)
+        var allCves = allVulnerabilities.Values
+            .SelectMany(vl => vl.SelectMany(v => v.Cves))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        using var kevService = new CisaKevService();
+        await kevService.LoadCatalogAsync();
+        var knownExploitedCves = kevService.GetKnownExploitedCves(allCves);
+        reportGenerator.SetKnownExploitedVulnerabilities(knownExploitedCves);
+
+        // Crypto compliance check
+        var allPackageTuples = packages.Concat(transitivePackages)
+            .Select(p => (p.PackageId, p.Version))
+            .ToList();
+        var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
+        reportGenerator.SetCryptoCompliance(cryptoResult);
+
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
 
         if (string.IsNullOrEmpty(outputPath))
@@ -1603,6 +1670,13 @@ public static class CraReportCommand
         if (licensesFormat.HasValue)
         {
             licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
+        }
+
+        // Generate SBOM if requested
+        string? sbomFilePath = null;
+        if (sbomFormat.HasValue)
+        {
+            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path);
         }
 
         var output = format == CraOutputFormat.Json
@@ -1632,6 +1706,11 @@ public static class CraReportCommand
         {
             var ecosystems = string.Join(" + ", dependencyTrees.Select(t => $"{t.ProjectType} ({t.TotalPackages})"));
             AnsiConsole.MarkupLine($"[bold]Dependency Trees:[/] {ecosystems}");
+        }
+
+        if (sbomFilePath is not null)
+        {
+            AnsiConsole.MarkupLine($"[bold]SBOM:[/] {sbomFilePath}");
         }
 
         AnsiConsole.WriteLine();
@@ -2056,7 +2135,11 @@ public static class CraReportCommand
         bool incompleteTransitive,
         bool hasUnresolvedVersions,
         DateTime startTime,
-        LicenseOutputFormat? licensesFormat = null)
+        LicenseOutputFormat? licensesFormat = null,
+        SbomFormat? sbomFormat = null,
+        List<string>? deprecatedPackages = null,
+        int packagesWithSecurityPolicy = 0,
+        int packagesWithRepo = 0)
     {
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
@@ -2091,6 +2174,28 @@ public static class CraReportCommand
         reportGenerator.SetTransitiveData(transitivePackages);
         reportGenerator.SetCompletenessWarnings(incompleteTransitive, hasUnresolvedVersions);
         reportGenerator.SetDependencyTree(dependencyTree);
+
+        // Set additional CRA compliance data (passed from caller)
+        reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
+        reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
+
+        // CISA KEV check (collect all CVEs from vulnerabilities)
+        var allCves = allVulnerabilities.Values
+            .SelectMany(vl => vl.SelectMany(v => v.Cves))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        using var kevService = new CisaKevService();
+        await kevService.LoadCatalogAsync();
+        var knownExploitedCves = kevService.GetKnownExploitedCves(allCves);
+        reportGenerator.SetKnownExploitedVulnerabilities(knownExploitedCves);
+
+        // 4. Crypto compliance check
+        var allPackageTuples = packages.Concat(transitivePackages)
+            .Select(p => (p.PackageId, p.Version))
+            .ToList();
+        var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
+        reportGenerator.SetCryptoCompliance(cryptoResult);
+
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
 
         // Determine output path
@@ -2107,6 +2212,13 @@ public static class CraReportCommand
         if (licensesFormat.HasValue)
         {
             licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
+        }
+
+        // Generate SBOM if requested
+        string? sbomFilePath = null;
+        if (sbomFormat.HasValue)
+        {
+            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path);
         }
 
         string output;
@@ -2141,6 +2253,11 @@ public static class CraReportCommand
         if (dependencyTree is not null)
         {
             AnsiConsole.MarkupLine($"[bold]Dependency Tree:[/] {dependencyTree.TotalPackages} packages, max depth {dependencyTree.MaxDepth}");
+        }
+
+        if (sbomFilePath is not null)
+        {
+            AnsiConsole.MarkupLine($"[bold]SBOM:[/] {sbomFilePath}");
         }
 
         AnsiConsole.WriteLine();
@@ -2313,6 +2430,53 @@ public static class CraReportCommand
         sb.AppendLine($"*Generated by DepSafe on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC*");
 
         return ("ATTRIBUTION.md", sb.ToString());
+    }
+
+    private static async Task<string> GenerateSbomAsync(
+        List<PackageHealth> packages,
+        List<PackageHealth> transitivePackages,
+        SbomFormat format,
+        string basePath)
+    {
+        var allPackages = packages.Concat(transitivePackages)
+            .DistinctBy(p => $"{p.PackageId}@{p.Version}")
+            .OrderBy(p => p.PackageId)
+            .ToList();
+
+        var projectName = Path.GetFileNameWithoutExtension(basePath);
+        var sbomGenerator = new SbomGenerator("DepSafe", "1.0.0");
+
+        var outputDir = File.Exists(basePath) ? Path.GetDirectoryName(basePath)! : basePath;
+        string fileName;
+        string content;
+
+        if (format == SbomFormat.CycloneDx)
+        {
+            var bom = sbomGenerator.GenerateCycloneDx(projectName, allPackages);
+            content = JsonSerializer.Serialize(bom, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            });
+            fileName = $"{projectName}-sbom.cdx.json";
+        }
+        else
+        {
+            var sbom = sbomGenerator.Generate(projectName, allPackages);
+            content = JsonSerializer.Serialize(sbom, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            });
+            fileName = $"{projectName}-sbom.spdx.json";
+        }
+
+        var outputPath = Path.Combine(outputDir, fileName);
+        await File.WriteAllTextAsync(outputPath, content);
+        AnsiConsole.MarkupLine($"[green]SBOM written to {outputPath}[/]");
+        return outputPath;
     }
 }
 

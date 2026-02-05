@@ -173,6 +173,7 @@ public sealed partial class GitHubApiClient
                                 }}
                             }}
                         }}
+                        securityPolicy: object(expression: ""HEAD:SECURITY.md"") {{ id }}
                     }}");
             }
             queryBuilder.Append(" }");
@@ -280,6 +281,10 @@ public sealed partial class GitHubApiClient
             license = spdx.GetString();
         }
 
+        // Check for SECURITY.md file (CRA Art. 11(5) - coordinated vulnerability disclosure)
+        var hasSecurityPolicy = repoData.TryGetProperty("securityPolicy", out var sp) &&
+                                sp.ValueKind != JsonValueKind.Null;
+
         return new GitHubRepoInfo
         {
             Owner = owner,
@@ -293,7 +298,8 @@ public sealed partial class GitHubApiClient
             IsArchived = isArchived,
             IsFork = isFork,
             License = license,
-            CommitsLastYear = 0 // Not fetched in batch for simplicity
+            CommitsLastYear = 0, // Not fetched in batch for simplicity
+            HasSecurityPolicy = hasSecurityPolicy
         };
     }
 
@@ -320,6 +326,15 @@ public sealed partial class GitHubApiClient
 
             var lastCommitDate = repository.PushedAt?.UtcDateTime ?? DateTime.MinValue;
 
+            // Check for SECURITY.md (CRA Art. 11(5))
+            var hasSecurityPolicy = false;
+            try
+            {
+                await _client.Repository.Content.GetAllContents(owner, repo, "SECURITY.md");
+                hasSecurityPolicy = true;
+            }
+            catch (NotFoundException) { /* No SECURITY.md */ }
+
             var result = new GitHubRepoInfo
             {
                 Owner = owner,
@@ -333,7 +348,8 @@ public sealed partial class GitHubApiClient
                 IsArchived = repository.Archived,
                 IsFork = repository.Fork,
                 License = repository.License?.SpdxId,
-                CommitsLastYear = 0
+                CommitsLastYear = 0,
+                HasSecurityPolicy = hasSecurityPolicy
             };
 
             await _cache.SetAsync(cacheKey, result, TimeSpan.FromHours(24), ct);

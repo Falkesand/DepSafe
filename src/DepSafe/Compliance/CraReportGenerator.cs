@@ -48,23 +48,106 @@ public sealed class CraReportGenerator
 
         var complianceItems = new List<CraComplianceItem>();
 
-        // CRA Article 10 - SBOM
+        // Vulnerability documentation - only count ACTIVE vulnerabilities (affecting current versions)
+        var activeVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Affected);
+        var fixedVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Fixed);
+        var totalVulnStatements = vex.Statements.Count;
+
+        // ============================================
+        // CRA ARTICLE 10 - Product Requirements
+        // ============================================
+
+        // Art. 10 - SBOM
         complianceItems.Add(new CraComplianceItem
         {
-            Requirement = "CRA Article 10 - Software Bill of Materials",
+            Requirement = "CRA Art. 10 - Software Bill of Materials",
             Description = "Machine-readable inventory of software components",
             Status = sbom.Packages.Count > 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.NonCompliant,
             Evidence = $"SBOM generated with {sbom.Packages.Count} components in SPDX 3.0 format",
             Recommendation = null
         });
 
-        // Vulnerability documentation - only count ACTIVE vulnerabilities (affecting current versions)
-        var activeVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Affected);
-        var fixedVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Fixed);
-        var totalVulnStatements = vex.Statements.Count;
+        // Art. 10(4) - No known exploitable vulnerabilities (CISA KEV)
+        var kevCount = _kevCves.Count;
         complianceItems.Add(new CraComplianceItem
         {
-            Requirement = "CRA Article 11 - Vulnerability Handling",
+            Requirement = "CRA Art. 10(4) - Exploited Vulnerabilities (CISA KEV)",
+            Description = kevCount == 0
+                ? "No known actively exploited vulnerabilities"
+                : $"{kevCount} actively exploited vulnerability(ies) detected",
+            Status = kevCount == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.NonCompliant,
+            Evidence = kevCount == 0
+                ? "No CVEs found in CISA Known Exploited Vulnerabilities catalog"
+                : $"CVE(s) in CISA KEV: {string.Join(", ", _kevCves.Take(5))}{(kevCount > 5 ? "..." : "")}",
+            Recommendation = kevCount > 0
+                ? "CRITICAL: Update packages with actively exploited vulnerabilities immediately"
+                : null
+        });
+
+        // Art. 10(6) - Security Updates
+        complianceItems.Add(new CraComplianceItem
+        {
+            Requirement = "CRA Art. 10(6) - Security Updates",
+            Description = "Mechanism to ensure timely security updates",
+            Status = CraComplianceStatus.Compliant,
+            Evidence = $"SBOM tracks {sbom.Packages.Count} components. VEX documents {totalVulnStatements} vulnerability assessments.",
+            Recommendation = null
+        });
+
+        // Art. 10(9) - License Information
+        var noLicensePackages = healthReport.Packages.Count(p =>
+            string.IsNullOrEmpty(p.License) || p.License == "NOASSERTION");
+        complianceItems.Add(new CraComplianceItem
+        {
+            Requirement = "CRA Art. 10(9) - License Information",
+            Description = "License information for all components",
+            Status = noLicensePackages == 0 ? CraComplianceStatus.Compliant :
+                noLicensePackages > healthReport.Packages.Count / 4 ?
+                    CraComplianceStatus.ActionRequired : CraComplianceStatus.Compliant,
+            Evidence = $"{healthReport.Packages.Count - noLicensePackages} of {healthReport.Packages.Count} packages have license information",
+            Recommendation = noLicensePackages > 0
+                ? "Investigate and document licenses for packages without license information"
+                : null
+        });
+
+        // Art. 10 - Deprecated Components
+        complianceItems.Add(new CraComplianceItem
+        {
+            Requirement = "CRA Art. 10 - No Deprecated Components",
+            Description = "Components should not be deprecated or abandoned",
+            Status = _deprecatedPackageCount == 0 ? CraComplianceStatus.Compliant :
+                _deprecatedPackageCount > 2 ? CraComplianceStatus.ActionRequired : CraComplianceStatus.Review,
+            Evidence = _deprecatedPackageCount == 0
+                ? "No deprecated packages found"
+                : $"{_deprecatedPackageCount} deprecated package(s): {string.Join(", ", _deprecatedPackages.Take(3))}{(_deprecatedPackageCount > 3 ? "..." : "")}",
+            Recommendation = _deprecatedPackageCount > 0
+                ? "Replace deprecated packages with maintained alternatives"
+                : null
+        });
+
+        // Art. 10 - Cryptographic Compliance
+        var cryptoIssueCount = _cryptoCompliance?.Issues.Count ?? 0;
+        complianceItems.Add(new CraComplianceItem
+        {
+            Requirement = "CRA Art. 10 - Cryptographic Compliance",
+            Description = "No deprecated cryptographic algorithms or libraries",
+            Status = cryptoIssueCount == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.Review,
+            Evidence = cryptoIssueCount == 0
+                ? $"No deprecated crypto libraries. {_cryptoCompliance?.CryptoPackagesFound.Count ?? 0} crypto-related packages reviewed."
+                : $"{cryptoIssueCount} potential crypto issue(s) found",
+            Recommendation = cryptoIssueCount > 0
+                ? "Review flagged cryptographic packages for compliance"
+                : null
+        });
+
+        // ============================================
+        // CRA ARTICLE 11 - Vulnerability Handling
+        // ============================================
+
+        // Art. 11 - Vulnerability Handling
+        complianceItems.Add(new CraComplianceItem
+        {
+            Requirement = "CRA Art. 11 - Vulnerability Handling",
             Description = "Documentation of known vulnerabilities and their status",
             Status = activeVulnCount == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.ActionRequired,
             Evidence = activeVulnCount == 0
@@ -75,30 +158,21 @@ public sealed class CraReportGenerator
                 : null
         });
 
-        // Security Updates - CRA requires a mechanism for updates, not that packages be recently updated
-        // Having an SBOM and VEX demonstrates capability to track and respond to security issues
+        // Art. 11(5) - Coordinated Vulnerability Disclosure (Security Policy)
+        var securityPolicyPercent = _totalPackagesWithRepo > 0
+            ? (int)Math.Round(100.0 * _packagesWithSecurityPolicy / _totalPackagesWithRepo)
+            : 0;
         complianceItems.Add(new CraComplianceItem
         {
-            Requirement = "CRA Article 10(6) - Security Updates",
-            Description = "Mechanism to ensure timely security updates",
-            Status = CraComplianceStatus.Compliant,
-            Evidence = $"SBOM tracks {sbom.Packages.Count} components. VEX documents {totalVulnStatements} vulnerability assessments.",
-            Recommendation = null
-        });
-
-        // License compliance
-        var noLicensePackages = healthReport.Packages.Count(p =>
-            string.IsNullOrEmpty(p.License) || p.License == "NOASSERTION");
-        complianceItems.Add(new CraComplianceItem
-        {
-            Requirement = "CRA Article 10(9) - License Information",
-            Description = "License information for all components",
-            Status = noLicensePackages == 0 ? CraComplianceStatus.Compliant :
-                noLicensePackages > healthReport.Packages.Count / 4 ?
-                    CraComplianceStatus.ActionRequired : CraComplianceStatus.Compliant,
-            Evidence = $"{healthReport.Packages.Count - noLicensePackages} of {healthReport.Packages.Count} packages have license information",
-            Recommendation = noLicensePackages > 0
-                ? "Investigate and document licenses for packages without license information"
+            Requirement = "CRA Art. 11(5) - Security Policy",
+            Description = "Coordinated vulnerability disclosure policy (SECURITY.md)",
+            Status = securityPolicyPercent >= 50 ? CraComplianceStatus.Compliant :
+                securityPolicyPercent >= 25 ? CraComplianceStatus.Review : CraComplianceStatus.ActionRequired,
+            Evidence = _totalPackagesWithRepo > 0
+                ? $"{_packagesWithSecurityPolicy} of {_totalPackagesWithRepo} packages with repos have SECURITY.md ({securityPolicyPercent}%)"
+                : "No packages with GitHub repositories to check",
+            Recommendation = securityPolicyPercent < 50
+                ? "Consider using packages with documented security policies"
                 : null
         });
 
@@ -1472,12 +1546,18 @@ public sealed class CraReportGenerator
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html, body {
+      height: auto;
+      min-height: 100%;
+    }
+
     body {
       font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       background: var(--bg-secondary);
       color: var(--text-primary);
       line-height: 1.5;
       transition: background 0.3s ease, color 0.3s ease;
+      overflow-y: auto;
     }
 
     .app-container {
@@ -2929,6 +3009,9 @@ public sealed class CraReportGenerator
       font-size: 0.9rem;
     }
 
+    .compliance-item.non-compliant .compliance-info p { color: var(--danger); font-weight: 500; }
+    .compliance-item.action-required .compliance-info p { color: #856404; }
+
     .compliance-status {
       padding: 4px 12px;
       border-radius: 20px;
@@ -2947,8 +3030,11 @@ public sealed class CraReportGenerator
       font-size: 0.9rem;
     }
 
+    .compliance-item.non-compliant .compliance-evidence { color: var(--danger); }
+
     .compliance-recommendation {
       background: #fff3cd;
+      color: #856404;
       padding: 15px;
       border-radius: 8px;
       border-top: none;
@@ -3780,6 +3866,14 @@ function filterTreeByEcosystem(ecosystem) {{
     private bool _hasIncompleteTransitive;
     private bool _hasUnresolvedVersions;
 
+    // Additional CRA compliance data
+    private int _deprecatedPackageCount;
+    private List<string> _deprecatedPackages = [];
+    private int _packagesWithSecurityPolicy;
+    private int _totalPackagesWithRepo;
+    private List<string> _kevCves = [];
+    private CryptoComplianceResult? _cryptoCompliance;
+
     /// <summary>
     /// Set package health data for detailed report generation.
     /// </summary>
@@ -3803,6 +3897,40 @@ function filterTreeByEcosystem(ecosystem) {{
     {
         _hasIncompleteTransitive = incompleteTransitive;
         _hasUnresolvedVersions = unresolvedVersions;
+    }
+
+    /// <summary>
+    /// Set deprecated packages data (CRA Article 10 - deprecated components).
+    /// </summary>
+    public void SetDeprecatedPackages(IEnumerable<string> deprecatedPackages)
+    {
+        _deprecatedPackages = deprecatedPackages.ToList();
+        _deprecatedPackageCount = _deprecatedPackages.Count;
+    }
+
+    /// <summary>
+    /// Set security policy statistics from GitHub repos (CRA Article 11(5)).
+    /// </summary>
+    public void SetSecurityPolicyStats(int packagesWithPolicy, int totalPackagesWithRepo)
+    {
+        _packagesWithSecurityPolicy = packagesWithPolicy;
+        _totalPackagesWithRepo = totalPackagesWithRepo;
+    }
+
+    /// <summary>
+    /// Set CISA KEV (Known Exploited Vulnerabilities) data (CRA Article 10(4)).
+    /// </summary>
+    public void SetKnownExploitedVulnerabilities(IEnumerable<string> kevCves)
+    {
+        _kevCves = kevCves.ToList();
+    }
+
+    /// <summary>
+    /// Set cryptographic compliance check results (CRA Article 10).
+    /// </summary>
+    public void SetCryptoCompliance(CryptoComplianceResult result)
+    {
+        _cryptoCompliance = result;
     }
 
     /// <summary>
