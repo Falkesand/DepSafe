@@ -1827,6 +1827,7 @@ public sealed class CraReportGenerator
       flex: 1;
       margin-left: var(--sidebar-width);
       min-height: 100vh;
+      padding-bottom: 100px;
     }
 
     .main-header {
