@@ -160,8 +160,12 @@ public sealed class CraReportGenerator
         });
 
         // Art. 11(5) - Coordinated Vulnerability Disclosure (Security Policy)
+        var totalPackageCount = healthReport.Packages.Count + (_transitiveDataCache?.Count ?? 0);
         var securityPolicyPercent = _totalPackagesWithRepo > 0
             ? (int)Math.Round(100.0 * _packagesWithSecurityPolicy / _totalPackagesWithRepo)
+            : 0;
+        var coveragePercent = totalPackageCount > 0
+            ? (int)Math.Round(100.0 * _totalPackagesWithRepo / totalPackageCount)
             : 0;
         complianceItems.Add(new CraComplianceItem
         {
@@ -170,7 +174,8 @@ public sealed class CraReportGenerator
             Status = securityPolicyPercent >= 50 ? CraComplianceStatus.Compliant :
                 securityPolicyPercent >= 25 ? CraComplianceStatus.Review : CraComplianceStatus.ActionRequired,
             Evidence = _totalPackagesWithRepo > 0
-                ? $"{_packagesWithSecurityPolicy} of {_totalPackagesWithRepo} packages with repos have SECURITY.md ({securityPolicyPercent}%)"
+                ? $"{_packagesWithSecurityPolicy} of {_totalPackagesWithRepo} packages with GitHub repos have SECURITY.md ({securityPolicyPercent}%)" +
+                  (coveragePercent < 50 ? $". Note: Only {_totalPackagesWithRepo} of {totalPackageCount} packages ({coveragePercent}%) have GitHub repo data. Use -d flag for full coverage." : "")
                 : "No packages with GitHub repositories to check",
             Recommendation = securityPolicyPercent < 50
                 ? "Consider using packages with documented security policies"
