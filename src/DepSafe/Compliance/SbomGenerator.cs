@@ -45,6 +45,7 @@ public sealed class SbomGenerator
                     ReferenceLocator = GetPurl(pkg)
                 }
             ],
+            Checksums = ParseIntegrity(pkg.ContentIntegrity),
             Ecosystem = pkg.Ecosystem
         }).ToList();
 
@@ -153,6 +154,19 @@ public sealed class SbomGenerator
                 ]
             }).ToList()
         };
+    }
+
+    private static List<SbomChecksum>? ParseIntegrity(string? integrity)
+    {
+        if (string.IsNullOrEmpty(integrity)) return null;
+
+        // Format: "sha512-base64data==" or "sha256-base64data=="
+        var dashIndex = integrity.IndexOf('-');
+        if (dashIndex < 0) return null;
+
+        var algorithm = integrity[..dashIndex].ToUpperInvariant();
+        var hash = integrity[(dashIndex + 1)..];
+        return [new SbomChecksum { Algorithm = algorithm, ChecksumValue = hash }];
     }
 
     private static string SanitizeId(string input)

@@ -98,6 +98,9 @@ public sealed class NpmApiClient : IDisposable
             // Fetch download count separately
             var weeklyDownloads = await GetDownloadCountAsync(packageName, ct);
 
+            // Extract author - can be a string or an object with "name" property
+            var authorName = ExtractAuthorName(latestVersionNode?["author"] ?? doc["author"]);
+
             var result = new NpmPackageInfo
             {
                 Name = packageName,
@@ -111,6 +114,7 @@ public sealed class NpmApiClient : IDisposable
                 Keywords = ParseStringArray(doc["keywords"]),
                 IsDeprecated = isDeprecated,
                 DeprecationMessage = deprecationMessage,
+                Author = authorName,
                 Dependencies = dependencies,
                 DevDependencies = devDependencies,
                 PeerDependencies = peerDependencies
@@ -259,6 +263,7 @@ public sealed class NpmApiClient : IDisposable
                         var resolved = pkgNode?["resolved"]?.GetValue<string>() ?? "";
                         var isDev = pkgNode?["dev"]?.GetValue<bool>() ?? false;
                         var isOptional = pkgNode?["optional"]?.GetValue<bool>() ?? false;
+                        var integrity = pkgNode?["integrity"]?.GetValue<string>();
                         var deps = ParseDependencyObject(pkgNode?["dependencies"]);
 
                         dependencies.Add(new NpmLockDependency
@@ -268,6 +273,7 @@ public sealed class NpmApiClient : IDisposable
                             ResolvedUrl = resolved,
                             IsDev = isDev,
                             IsOptional = isOptional,
+                            Integrity = integrity,
                             Dependencies = deps
                         });
                     }
@@ -300,6 +306,7 @@ public sealed class NpmApiClient : IDisposable
             var resolved = node?["resolved"]?.GetValue<string>() ?? "";
             var devFlag = node?["dev"]?.GetValue<bool>() ?? isDev;
             var optional = node?["optional"]?.GetValue<bool>() ?? false;
+            var integrity = node?["integrity"]?.GetValue<string>();
             var subDeps = ParseDependencyObject(node?["requires"]);
 
             dependencies.Add(new NpmLockDependency
@@ -309,6 +316,7 @@ public sealed class NpmApiClient : IDisposable
                 ResolvedUrl = resolved,
                 IsDev = devFlag,
                 IsOptional = optional,
+                Integrity = integrity,
                 Dependencies = subDeps
             });
 
@@ -567,6 +575,31 @@ public sealed class NpmApiClient : IDisposable
         }
 
         return result;
+    }
+
+    private static string? ExtractAuthorName(JsonNode? node)
+    {
+        if (node is null) return null;
+
+        // Author can be a string (e.g., "John Doe <john@example.com>")
+        if (node is JsonValue val)
+        {
+            var authorStr = val.GetValue<string>();
+            // Strip email/url parts: "Name <email> (url)" -> "Name"
+            var ltIndex = authorStr.IndexOf('<');
+            if (ltIndex > 0) authorStr = authorStr[..ltIndex].Trim();
+            var parenIndex = authorStr.IndexOf('(');
+            if (parenIndex > 0) authorStr = authorStr[..parenIndex].Trim();
+            return string.IsNullOrWhiteSpace(authorStr) ? null : authorStr;
+        }
+
+        // Author can be an object with "name" property
+        if (node is JsonObject obj)
+        {
+            return obj["name"]?.GetValue<string>();
+        }
+
+        return null;
     }
 
     private static string? ExtractRepositoryUrl(JsonNode? node)

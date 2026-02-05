@@ -44,9 +44,6 @@ public sealed partial class CraReportGenerator
         // Build reverse dependency lookup for "Required by" information
         BuildParentLookup();
 
-        // Build effective CRA scores (capped by worst dependency score)
-        BuildEffectiveCraScores();
-
         // Include both direct and transitive packages in SBOM for CRA compliance
         var allPackagesForSbom = healthReport.Packages.AsEnumerable();
         if (_transitiveDataCache is not null)
@@ -954,8 +951,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("  <span class=\"filter-group\">");
         sb.AppendLine("    <span class=\"filter-label\">Sort:</span>");
         sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('name')\">Name</button>");
-        sb.AppendLine("    <button class=\"filter-btn sort-btn active\" onclick=\"sortPackages('cra')\">CRA Score</button>");
-        sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('health')\">Health</button>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn active\" onclick=\"sortPackages('health')\">Health</button>");
         sb.AppendLine("  </span>");
         sb.AppendLine("</div>");
 
@@ -1016,10 +1012,9 @@ public sealed partial class CraReportGenerator
                 ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
             }
 
-            var craScore = healthData?.CraScore ?? 100;
             var hasKev = _kevPackageIds.Contains(pkgName);
             var kevClass = hasKev ? " has-kev" : "";
-            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-cra=\"{craScore}\" data-health=\"{score}\">");
+            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\">");
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1044,12 +1039,8 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <div class=\"package-scores\">");
-            sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
-            sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
-            sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
-            sb.AppendLine($"        </div>");
-            sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
-            sb.AppendLine($"          <span class=\"score-label\">Health</span>");
+            sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness, activity, and maintenance\">");
+            sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
             sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
             sb.AppendLine($"        </div>");
             sb.AppendLine($"      </div>");
@@ -1083,7 +1074,6 @@ public sealed partial class CraReportGenerator
                 var ecosystemName = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
                 var depTypeBadge = $"<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by {ecosystemName} dependency resolution\">transitive</span>";
 
-                var craScore = healthData.CraScore;
                 var ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
 
                 // Check if we have real health data (not just defaults)
@@ -1093,7 +1083,7 @@ public sealed partial class CraReportGenerator
 
                 var hasKevTrans = _kevPackageIds.Contains(pkgName);
                 var kevClassTrans = hasKevTrans ? " has-kev" : "";
-                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-cra=\"{craScore}\" data-health=\"{score}\">");
+                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1132,10 +1122,6 @@ public sealed partial class CraReportGenerator
                     sb.AppendLine($"          <span class=\"score-value na\">—</span>");
                     sb.AppendLine($"        </div>");
                 }
-                sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
-                sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
-                sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
-                sb.AppendLine($"        </div>");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");
@@ -2116,16 +2102,6 @@ public sealed partial class CraReportGenerator
 
         if (healthData is not null)
         {
-            // Get effective CRA score (considers dependency scores)
-            var ownCraScore = healthData.CraScore;
-            var effectiveCraScore = _effectiveCraScores.TryGetValue(node.PackageId, out var eff) ? eff : ownCraScore;
-            _craLimitingDependency.TryGetValue(node.PackageId, out var limitingDep);
-            var craScoreClass = GetCraScoreClass(effectiveCraScore);
-
-            // Build detailed tooltip explaining the score
-            var tooltip = BuildCraScoreTooltip(healthData, effectiveCraScore, limitingDep);
-            sb.AppendLine($"{indentStr}  <span class=\"node-score cra {craScoreClass}\" title=\"{tooltip}\">{effectiveCraScore}</span>");
-
             // Show Health score
             var healthScoreClass = GetScoreClass(healthData.Score);
             sb.AppendLine($"{indentStr}  <span class=\"node-score health {healthScoreClass}\" title=\"Health Score\">{healthData.Score}</span>");
@@ -4401,7 +4377,6 @@ public sealed partial class CraReportGenerator
       opacity: 0.9;
     }
 
-    .node-score.cra::before { content: ""CRA""; }
     .node-score.health::before { content: ""H""; }
 
     .node-score.healthy { background: var(--success); }
@@ -5036,9 +5011,6 @@ function sortPackages(sortBy, isInitial) {{
     let result = 0;
     if (sortBy === 'name') {{
       result = a.dataset.name.localeCompare(b.dataset.name);
-    }} else if (sortBy === 'cra') {{
-      result = parseInt(a.dataset.cra || 100) - parseInt(b.dataset.cra || 100);
-      if (result === 0) result = a.dataset.name.localeCompare(b.dataset.name);
     }} else if (sortBy === 'health') {{
       result = parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
       if (result === 0) result = a.dataset.name.localeCompare(b.dataset.name);
@@ -5062,7 +5034,7 @@ function sortPackages(sortBy, isInitial) {{
 }}
 
 // Apply default sort on page load
-document.addEventListener('DOMContentLoaded', () => sortPackages('cra', true));
+document.addEventListener('DOMContentLoaded', () => sortPackages('health', true));
 
 function applyPackageFilters() {{
   document.querySelectorAll('.package-card').forEach(card => {{
@@ -5230,8 +5202,6 @@ function filterTreeByEcosystem(ecosystem) {{
     private List<PackageHealth>? _transitiveDataCache;
     private List<DependencyTree> _dependencyTrees = [];
     private Dictionary<string, List<string>> _parentLookup = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<string, int> _effectiveCraScores = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<string, string?> _craLimitingDependency = new(StringComparer.OrdinalIgnoreCase);
     private bool _hasIncompleteTransitive;
     private bool _hasUnresolvedVersions;
 
@@ -5536,7 +5506,6 @@ function filterTreeByEcosystem(ecosystem) {{
             name = pkg.PackageId,
             version = pkg.Version,
             score = pkg.Score,
-            craScore = pkg.CraScore,
             status = pkg.Status.ToString().ToLowerInvariant(),
             ecosystem,
             isDirect,
@@ -5558,141 +5527,11 @@ function filterTreeByEcosystem(ecosystem) {{
         };
     }
 
-    /// <summary>
-    /// Build effective CRA scores that account for dependency scores.
-    /// A package's effective CRA score is capped by its worst dependency's score.
-    /// </summary>
-    private void BuildEffectiveCraScores()
-    {
-        _effectiveCraScores.Clear();
-        _craLimitingDependency.Clear();
-
-        foreach (var tree in _dependencyTrees)
-        {
-            foreach (var root in tree.Roots)
-            {
-                CalculateEffectiveCraScore(root);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Calculate effective CRA score for a node (minimum of own score and all descendants).
-    /// Returns (effectiveScore, limitingPackageId).
-    /// </summary>
-    private (int Score, string? LimitingPackage) CalculateEffectiveCraScore(DependencyTreeNode node)
-    {
-        // Get this package's own CRA score
-        var healthData = _healthDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase))
-                      ?? _transitiveDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase));
-
-        var ownScore = healthData?.CraScore ?? 100;
-
-        // Find minimum score among all children and track which one limits
-        var minChildScore = 100;
-        string? limitingChild = null;
-        foreach (var child in node.Children)
-        {
-            var (childEffectiveScore, childLimiter) = CalculateEffectiveCraScore(child);
-            if (childEffectiveScore < minChildScore)
-            {
-                minChildScore = childEffectiveScore;
-                // The limiter is either the child itself or what limits the child
-                limitingChild = childLimiter ?? child.PackageId;
-            }
-        }
-
-        // Effective score is minimum of own and children's scores
-        int effectiveScore;
-        string? limitingPackage;
-        if (minChildScore < ownScore)
-        {
-            effectiveScore = minChildScore;
-            limitingPackage = limitingChild;
-        }
-        else
-        {
-            effectiveScore = ownScore;
-            limitingPackage = null; // Own score is the limit
-        }
-
-        // Store for lookup (use the worst effective score if package appears multiple times)
-        if (_effectiveCraScores.TryGetValue(node.PackageId, out var existing))
-        {
-            if (effectiveScore < existing)
-            {
-                _effectiveCraScores[node.PackageId] = effectiveScore;
-                _craLimitingDependency[node.PackageId] = limitingPackage;
-            }
-        }
-        else
-        {
-            _effectiveCraScores[node.PackageId] = effectiveScore;
-            _craLimitingDependency[node.PackageId] = limitingPackage;
-        }
-
-        return (effectiveScore, limitingPackage);
-    }
-
-    /// <summary>
-    /// Build a detailed tooltip explaining the CRA score.
-    /// </summary>
-    private string BuildCraScoreTooltip(PackageHealth healthData, int effectiveScore, string? limitingDep)
-    {
-        var parts = new List<string>();
-
-        // Explain own score breakdown
-        var vulnCount = healthData.Vulnerabilities.Count;
-        var license = healthData.License;
-
-        if (vulnCount > 0)
-        {
-            parts.Add($"Vulnerabilities: {vulnCount} found (-points)");
-        }
-        else
-        {
-            parts.Add("Vulnerabilities: None ✓");
-        }
-
-        if (string.IsNullOrWhiteSpace(license) ||
-            license.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase) ||
-            license.Equals("NOASSERTION", StringComparison.OrdinalIgnoreCase))
-        {
-            parts.Add("License: Unknown (-25 points)");
-        }
-        else if (!IsKnownSpdxLicense(license))
-        {
-            parts.Add($"License: Non-standard (-10 points)");
-        }
-        else
-        {
-            parts.Add($"License: {license} ✓");
-        }
-
-        parts.Add($"Own CRA score: {healthData.CraScore}");
-
-        // Explain if limited by dependency
-        if (limitingDep is not null && effectiveScore < healthData.CraScore)
-        {
-            parts.Add($"Limited by: {limitingDep} (CRA {effectiveScore})");
-        }
-
-        return string.Join("&#10;", parts); // &#10; is newline in HTML title
-    }
-
     private static string GetScoreClass(int score) => score switch
     {
         >= 80 => "healthy",
         >= 60 => "watch",
         >= 40 => "warning",
-        _ => "critical"
-    };
-
-    private static string GetCraScoreClass(int score) => score switch
-    {
-        >= 90 => "healthy",
-        >= 70 => "watch",
-        >= 50 => "warning",
         _ => "critical"
     };
 
@@ -5736,71 +5575,6 @@ function filterTreeByEcosystem(ecosystem) {{
         "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
         _ => false
     };
-
-    /// <summary>
-    /// Calculate aggregate CRA compliance score for the project.
-    /// Based on vulnerabilities and license coverage - not freshness/activity.
-    /// </summary>
-    private static int CalculateProjectCraScore(
-        IEnumerable<PackageHealth> directPackages,
-        IEnumerable<PackageHealth> transitivePackages,
-        int activeVulnerabilityCount = 0)
-    {
-        var allPackages = directPackages.Concat(transitivePackages).ToList();
-        if (allPackages.Count == 0) return 100;
-
-        // Calculate base score from individual package CRA scores
-        var totalCraScore = 0;
-        foreach (var pkg in allPackages)
-        {
-            totalCraScore += pkg.CraScore;
-        }
-        var baseScore = (double)totalCraScore / allPackages.Count;
-
-        // Count packages with unknown/missing licenses (CRA Article 10(9) requirement)
-        var unknownLicenseCount = allPackages.Count(p =>
-            string.IsNullOrWhiteSpace(p.License) ||
-            p.License.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase) ||
-            p.License.Equals("NOASSERTION", StringComparison.OrdinalIgnoreCase));
-
-        // Use VEX-counted vulnerabilities if provided, otherwise count from package data
-        var vulnerableCount = activeVulnerabilityCount > 0
-            ? activeVulnerabilityCount
-            : allPackages.Count(p => p.Vulnerabilities.Count > 0);
-
-        // Apply penalties based on compliance gaps
-        var penalty = 0.0;
-
-        // Unknown licenses penalty - CRA requires license identification
-        if (unknownLicenseCount > 0)
-        {
-            var unknownPercent = (double)unknownLicenseCount / allPackages.Count * 100;
-            // Scale penalty: 1-5 packages = 5 points, 5%+ = 10 points, 10%+ = 15 points
-            penalty += unknownPercent switch
-            {
-                >= 10 => 15,
-                >= 5 => 10,
-                _ => Math.Min(unknownLicenseCount, 5)  // 1 point per package, max 5
-            };
-        }
-
-        // Vulnerable packages penalty - critical for CRA compliance
-        if (vulnerableCount > 0)
-        {
-            // More aggressive penalty for vulnerabilities
-            penalty += vulnerableCount switch
-            {
-                >= 10 => 30,
-                >= 5 => 25,
-                >= 3 => 20,
-                >= 1 => 15,
-                _ => 10
-            };
-        }
-
-        var finalScore = Math.Max(0, baseScore - penalty);
-        return (int)Math.Round(finalScore);
-    }
 
     private static string FormatNumber(long number) => number switch
     {

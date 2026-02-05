@@ -330,6 +330,14 @@ public static class CraReportCommand
             }
         }
 
+        // Parse lock file for integrity hashes
+        var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
+        var lockDeps = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var integrityLookup = lockDeps
+            .Where(d => !string.IsNullOrEmpty(d.Integrity))
+            .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Integrity!, StringComparer.OrdinalIgnoreCase);
+
         foreach (var (packageName, versionRange) in allDeps)
         {
             if (!npmInfoMap.TryGetValue(packageName, out var npmInfo))
@@ -347,6 +355,10 @@ public static class CraReportCommand
                 npmInfo,
                 repoInfo,
                 vulnerabilities);
+
+            // Wire integrity hash from lock file
+            if (integrityLookup.TryGetValue(packageName, out var integrity))
+                health.ContentIntegrity = integrity;
 
             packages.Add(health);
 
@@ -1656,6 +1668,14 @@ public static class CraReportCommand
                         }
                     }
 
+                    // Parse lock file for integrity hashes
+                    var npmLockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
+                    var npmLockDeps = await NpmApiClient.ParsePackageLockAsync(npmLockPath);
+                    var npmIntegrityLookup = npmLockDeps
+                        .Where(d => !string.IsNullOrEmpty(d.Integrity))
+                        .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.First().Integrity!, StringComparer.OrdinalIgnoreCase);
+
                     // Calculate health for npm packages
                     foreach (var (packageName, _) in allDeps)
                     {
@@ -1667,6 +1687,11 @@ public static class CraReportCommand
                         var installedVersion = npmInstalledVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
 
                         var health = calculator.Calculate(packageName, installedVersion, npmInfo, repoInfo, vulnerabilities);
+
+                        // Wire integrity hash from lock file
+                        if (npmIntegrityLookup.TryGetValue(packageName, out var npmIntegrity))
+                            health.ContentIntegrity = npmIntegrity;
+
                         allPackages.Add(health);
 
                         UpdateTreeNodeHealth(npmTree, packageName, health.Score, health.Status);

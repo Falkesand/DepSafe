@@ -49,6 +49,9 @@ public sealed class PackageHealth
     /// <summary>Number of vulnerabilities where a patch is available but not applied.</summary>
     public int PatchAvailableNotAppliedCount { get; set; }
 
+    /// <summary>Package content integrity hash for SBOM checksum field (e.g., sha512-...).</summary>
+    public string? ContentIntegrity { get; set; }
+
     /// <summary>Package authors/publishers for SBOM supplier field.</summary>
     public List<string> Authors { get; init; } = [];
 

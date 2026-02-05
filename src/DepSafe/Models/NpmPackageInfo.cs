@@ -16,6 +16,7 @@ public sealed class NpmPackageInfo
     public List<string> Keywords { get; init; } = [];
     public bool IsDeprecated { get; init; }
     public string? DeprecationMessage { get; init; }
+    public string? Author { get; init; }
     public Dictionary<string, string> Dependencies { get; init; } = [];
     public Dictionary<string, string> DevDependencies { get; init; } = [];
     public Dictionary<string, string> PeerDependencies { get; init; } = [];
@@ -41,6 +42,7 @@ public sealed class NpmLockDependency
     public required string ResolvedUrl { get; init; }
     public bool IsDev { get; init; }
     public bool IsOptional { get; init; }
+    public string? Integrity { get; init; }
     public Dictionary<string, string> Dependencies { get; init; } = [];
 }
 

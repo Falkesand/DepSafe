@@ -20,9 +20,12 @@ public sealed class HealthScoreCalculator
         _weights = weights ?? ScoreWeights.Default;
     }
 
-    private static List<string> GetNpmAuthors(string packageName)
+    private static List<string> GetNpmAuthors(string packageName, string? author)
     {
-        // Extract scope owner as publisher (e.g., @tanstack/router → tanstack)
+        if (!string.IsNullOrWhiteSpace(author))
+            return [author];
+
+        // Fallback: extract scope owner as publisher (e.g., @tanstack/router → tanstack)
         if (packageName.StartsWith('@') && packageName.Contains('/'))
         {
             var scope = packageName[1..packageName.IndexOf('/')];
@@ -133,7 +136,7 @@ public sealed class HealthScoreCalculator
             Vulnerabilities = activeVulnerabilities.Count > 0
                 ? activeVulnerabilities.Select(v => v.Id).ToList()
                 : [],
-            Authors = GetNpmAuthors(packageName),
+            Authors = GetNpmAuthors(packageName, npmInfo.Author),
             Recommendations = recommendations,
             Dependencies = dependencies,
             DependencyType = dependencyType,
