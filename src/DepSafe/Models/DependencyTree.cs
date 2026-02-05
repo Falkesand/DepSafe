@@ -47,6 +47,9 @@ public sealed class DependencyTreeNode
     /// <summary>True if this package has known vulnerabilities.</summary>
     public bool HasVulnerabilities { get; set; }
 
+    /// <summary>True if this package has a CISA KEV vulnerability (actively exploited).</summary>
+    public bool HasKevVulnerability { get; set; }
+
     /// <summary>URL to primary vulnerability details (e.g., OSV).</summary>
     public string? VulnerabilityUrl { get; set; }
 

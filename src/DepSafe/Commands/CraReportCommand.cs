@@ -1638,15 +1638,31 @@ public static class CraReportCommand
         reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
         reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
 
-        // CISA KEV check (collect all CVEs from vulnerabilities)
-        var allCves = allVulnerabilities.Values
-            .SelectMany(vl => vl.SelectMany(v => v.Cves))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // CISA KEV check (map CVEs to packages)
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
-        var knownExploitedCves = kevService.GetKnownExploitedCves(allCves);
-        reportGenerator.SetKnownExploitedVulnerabilities(knownExploitedCves);
+        var kevCvePackages = allVulnerabilities
+            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key))))
+            .Where(x => kevService.IsKnownExploited(x.Cve))
+            .DistinctBy(x => x.Cve)
+            .ToList();
+        reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
+
+        // Update CRA scores for packages with KEV vulnerabilities (critical penalty)
+        var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
+        var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
+        foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
+        {
+            pkg.HasKevVulnerability = true;
+            pkg.CraScore = Math.Min(pkg.CraScore, 10); // KEV = maximum 10 CRA score
+            pkg.CraStatus = CraComplianceStatus.NonCompliant;
+
+            // Add KEV recommendation with CVE details
+            var cves = kevCvesByPackage[pkg.PackageId].ToList();
+            pkg.KevCves = cves;
+            var cveList = string.Join(", ", cves);
+            pkg.Recommendations.Insert(0, $"CRITICAL: This package has an actively exploited vulnerability ({cveList}) listed in CISA KEV. Update immediately or find an alternative.");
+        }
 
         // Crypto compliance check
         var allPackageTuples = packages.Concat(transitivePackages)
@@ -2179,15 +2195,31 @@ public static class CraReportCommand
         reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
         reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
 
-        // CISA KEV check (collect all CVEs from vulnerabilities)
-        var allCves = allVulnerabilities.Values
-            .SelectMany(vl => vl.SelectMany(v => v.Cves))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // CISA KEV check (map CVEs to packages)
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
-        var knownExploitedCves = kevService.GetKnownExploitedCves(allCves);
-        reportGenerator.SetKnownExploitedVulnerabilities(knownExploitedCves);
+        var kevCvePackages = allVulnerabilities
+            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key))))
+            .Where(x => kevService.IsKnownExploited(x.Cve))
+            .DistinctBy(x => x.Cve)
+            .ToList();
+        reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
+
+        // Update CRA scores for packages with KEV vulnerabilities (critical penalty)
+        var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
+        var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
+        foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
+        {
+            pkg.HasKevVulnerability = true;
+            pkg.CraScore = Math.Min(pkg.CraScore, 10); // KEV = maximum 10 CRA score
+            pkg.CraStatus = CraComplianceStatus.NonCompliant;
+
+            // Add KEV recommendation with CVE details
+            var cves = kevCvesByPackage[pkg.PackageId].ToList();
+            pkg.KevCves = cves;
+            var cveList = string.Join(", ", cves);
+            pkg.Recommendations.Insert(0, $"CRITICAL: This package has an actively exploited vulnerability ({cveList}) listed in CISA KEV. Update immediately or find an alternative.");
+        }
 
         // 4. Crypto compliance check
         var allPackageTuples = packages.Concat(transitivePackages)

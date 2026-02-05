@@ -68,7 +68,10 @@ public sealed class CraReportGenerator
         });
 
         // Art. 10(4) - No known exploitable vulnerabilities (CISA KEV)
-        var kevCount = _kevCves.Count;
+        var kevCount = _kevCvePackages.Count;
+        var kevEvidence = kevCount == 0
+            ? "No CVEs found in CISA Known Exploited Vulnerabilities catalog"
+            : string.Join("; ", _kevCvePackages.Take(5).Select(k => $"{k.Cve} in {k.PackageId}")) + (kevCount > 5 ? "; ..." : "");
         complianceItems.Add(new CraComplianceItem
         {
             Requirement = "CRA Art. 10(4) - Exploited Vulnerabilities (CISA KEV)",
@@ -76,9 +79,7 @@ public sealed class CraReportGenerator
                 ? "No known actively exploited vulnerabilities"
                 : $"{kevCount} actively exploited vulnerability(ies) detected",
             Status = kevCount == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.NonCompliant,
-            Evidence = kevCount == 0
-                ? "No CVEs found in CISA Known Exploited Vulnerabilities catalog"
-                : $"CVE(s) in CISA KEV: {string.Join(", ", _kevCves.Take(5))}{(kevCount > 5 ? "..." : "")}",
+            Evidence = kevEvidence,
             Recommendation = kevCount > 0
                 ? "CRITICAL: Update packages with actively exploited vulnerabilities immediately"
                 : null
@@ -540,6 +541,12 @@ public sealed class CraReportGenerator
         sb.AppendLine("    <button class=\"filter-btn ecosystem-btn nuget\" onclick=\"filterByEcosystem('nuget')\">NuGet</button>");
         sb.AppendLine("    <button class=\"filter-btn ecosystem-btn npm\" onclick=\"filterByEcosystem('npm')\">npm</button>");
         sb.AppendLine("  </span>");
+        sb.AppendLine("  <span class=\"filter-group\">");
+        sb.AppendLine("    <span class=\"filter-label\">Sort:</span>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn active\" onclick=\"sortPackages('name')\">Name</button>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('cra')\">CRA Score</button>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('health')\">Health</button>");
+        sb.AppendLine("  </span>");
         sb.AppendLine("</div>");
 
         // Check for unresolved MSBuild variables
@@ -582,7 +589,7 @@ public sealed class CraReportGenerator
             StringComparer.OrdinalIgnoreCase);
 
         // Only render direct packages here (transitives are shown in separate section)
-        foreach (var pkg in report.Sbom.Packages.Skip(1).Where(p => directPackageIds.Contains(p.Name)))
+        foreach (var pkg in report.Sbom.Packages.Skip(1).Where(p => directPackageIds.Contains(p.Name)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
         {
             var pkgName = pkg.Name;
             var version = pkg.VersionInfo;
@@ -600,10 +607,23 @@ public sealed class CraReportGenerator
             }
 
             var craScore = healthData?.CraScore ?? 100;
-            sb.AppendLine($"  <div class=\"package-card\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\">");
+            var hasKev = _kevPackageIds.Contains(pkgName);
+            var kevClass = hasKev ? " has-kev" : "";
+            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-cra=\"{craScore}\" data-health=\"{score}\">");
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
+            if (hasKev && healthData?.KevCves.Count > 0)
+            {
+                var kevCve = healthData.KevCves[0];
+                var kevUrl = $"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={Uri.EscapeDataString(kevCve)}";
+                var kevTooltip = $"{kevCve} - CISA Known Exploited Vulnerability (click for details)";
+                sb.AppendLine($"        <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"kev-badge\" title=\"{EscapeHtml(kevTooltip)}\" onclick=\"event.stopPropagation()\">{EscapeHtml(kevCve)}</a>");
+            }
+            else if (hasKev)
+            {
+                sb.AppendLine($"        <span class=\"kev-badge\" title=\"CISA Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
+            }
             sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
             sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
             sb.AppendLine($"      </div>");
@@ -708,7 +728,7 @@ public sealed class CraReportGenerator
             sb.AppendLine("  </div>");
             sb.AppendLine("  <div id=\"transitive-list\" class=\"packages-list transitive-list\" style=\"display: none;\">");
 
-            foreach (var healthData in actualTransitives.OrderBy(h => h.Score))
+            foreach (var healthData in actualTransitives.OrderBy(h => h.PackageId, StringComparer.OrdinalIgnoreCase))
             {
                 var pkgName = healthData.PackageId;
                 var version = healthData.Version;
@@ -726,10 +746,23 @@ public sealed class CraReportGenerator
                                         healthData.Metrics.DaysSinceLastRelease.HasValue ||
                                         healthData.Metrics.ReleasesPerYear > 0;
 
-                sb.AppendLine($"  <div class=\"package-card transitive\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\">");
+                var hasKevTrans = _kevPackageIds.Contains(pkgName);
+                var kevClassTrans = hasKevTrans ? " has-kev" : "";
+                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-cra=\"{craScore}\" data-health=\"{score}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
+                if (hasKevTrans && healthData.KevCves.Count > 0)
+                {
+                    var kevCve = healthData.KevCves[0];
+                    var kevUrl = $"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={Uri.EscapeDataString(kevCve)}";
+                    var kevTooltip = $"{kevCve} - CISA Known Exploited Vulnerability (click for details)";
+                    sb.AppendLine($"        <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"kev-badge\" title=\"{EscapeHtml(kevTooltip)}\" onclick=\"event.stopPropagation()\">{EscapeHtml(kevCve)}</a>");
+                }
+                else if (hasKevTrans)
+                {
+                    sb.AppendLine($"        <span class=\"kev-badge\" title=\"CISA Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
+                }
                 sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
                 sb.AppendLine($"        {depTypeBadge}");
                 sb.AppendLine($"      </div>");
@@ -1326,6 +1359,8 @@ public sealed class CraReportGenerator
         if (node.IsDuplicate) nodeClasses.Add("duplicate");
         if (node.HasVulnerabilities) nodeClasses.Add("has-vuln");
         if (node.HasVulnerableDescendant) nodeClasses.Add("has-vuln-descendant");
+        var hasKev = _kevPackageIds.Contains(node.PackageId);
+        if (hasKev) nodeClasses.Add("has-kev");
 
         var scoreClass = node.HealthScore.HasValue ? GetScoreClass(node.HealthScore.Value) : "";
 
@@ -1390,7 +1425,20 @@ public sealed class CraReportGenerator
         {
             var vulnUrl = node.VulnerabilityUrl ?? $"https://osv.dev/list?ecosystem={(node.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet")}&q={Uri.EscapeDataString(node.PackageId)}";
             var vulnTooltip = EscapeHtml(node.VulnerabilitySummary ?? "Click for vulnerability details");
-            sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(vulnUrl)}\" target=\"_blank\" class=\"node-badge vuln\" title=\"{vulnTooltip}\">VULN</a>");
+            if (hasKev && healthData?.KevCves.Count > 0)
+            {
+                var kevCve = healthData.KevCves[0];
+                var kevUrl = $"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={Uri.EscapeDataString(kevCve)}";
+                sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"node-badge kev\" title=\"{EscapeHtml(kevCve)} - CISA KEV (click for details)\">{EscapeHtml(kevCve)}</a>");
+            }
+            else if (hasKev)
+            {
+                sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(vulnUrl)}\" target=\"_blank\" class=\"node-badge kev\" title=\"CISA KEV: {vulnTooltip}\">KEV</a>");
+            }
+            else
+            {
+                sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(vulnUrl)}\" target=\"_blank\" class=\"node-badge vuln\" title=\"{vulnTooltip}\">VULN</a>");
+            }
         }
         else if (node.HasVulnerableDescendant)
         {
@@ -2643,6 +2691,28 @@ public sealed class CraReportGenerator
       display: inline-block;
     }
 
+    .kev-badge {
+      background: #dc3545;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      margin-left: 8px;
+      animation: kev-pulse 2s infinite;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    @keyframes kev-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .package-card.has-kev {
+      border-left: 4px solid #dc3545;
+    }
+
     .required-by {
       margin-top: 12px;
       padding: 10px 12px;
@@ -3364,6 +3434,18 @@ public sealed class CraReportGenerator
       border-radius: 4px;
     }
 
+    .tree-node.has-kev {
+      background: rgba(220, 53, 69, 0.25);
+      border-left: 3px solid #dc3545;
+    }
+
+    .node-badge.kev {
+      background: #dc3545;
+      color: white;
+      font-weight: 700;
+      animation: kev-pulse 2s infinite;
+    }
+
     .tree-node.has-vuln-descendant:not(.has-vuln) {
       /* Subtle indicator - the warning badge is enough */
     }
@@ -3645,6 +3727,43 @@ function filterByEcosystem(ecosystem) {{
   applyPackageFilters();
 }}
 
+function sortPackages(sortBy) {{
+  document.querySelectorAll('.filter-btn.sort-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+
+  // Sort direct packages
+  const directList = document.getElementById('packages-list');
+  const directCards = Array.from(directList.querySelectorAll('.package-card:not(.transitive)'));
+  directCards.sort((a, b) => {{
+    if (sortBy === 'name') {{
+      return a.dataset.name.localeCompare(b.dataset.name);
+    }} else if (sortBy === 'cra') {{
+      return parseInt(a.dataset.cra || 100) - parseInt(b.dataset.cra || 100);
+    }} else if (sortBy === 'health') {{
+      return parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
+    }}
+    return 0;
+  }});
+  directCards.forEach(card => directList.appendChild(card));
+
+  // Sort transitive packages
+  const transitiveList = document.getElementById('transitive-list');
+  if (transitiveList) {{
+    const transitiveCards = Array.from(transitiveList.querySelectorAll('.package-card.transitive'));
+    transitiveCards.sort((a, b) => {{
+      if (sortBy === 'name') {{
+        return a.dataset.name.localeCompare(b.dataset.name);
+      }} else if (sortBy === 'cra') {{
+        return parseInt(a.dataset.cra || 100) - parseInt(b.dataset.cra || 100);
+      }} else if (sortBy === 'health') {{
+        return parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
+      }}
+      return 0;
+    }});
+    transitiveCards.forEach(card => transitiveList.appendChild(card));
+  }}
+}}
+
 function applyPackageFilters() {{
   document.querySelectorAll('.package-card').forEach(card => {{
     const statusMatch = currentStatusFilter === 'all' || card.dataset.status === currentStatusFilter;
@@ -3871,7 +3990,8 @@ function filterTreeByEcosystem(ecosystem) {{
     private List<string> _deprecatedPackages = [];
     private int _packagesWithSecurityPolicy;
     private int _totalPackagesWithRepo;
-    private List<string> _kevCves = [];
+    private List<(string Cve, string PackageId)> _kevCvePackages = [];
+    private HashSet<string> _kevPackageIds = new(StringComparer.OrdinalIgnoreCase);
     private CryptoComplianceResult? _cryptoCompliance;
 
     /// <summary>
@@ -3920,9 +4040,10 @@ function filterTreeByEcosystem(ecosystem) {{
     /// <summary>
     /// Set CISA KEV (Known Exploited Vulnerabilities) data (CRA Article 10(4)).
     /// </summary>
-    public void SetKnownExploitedVulnerabilities(IEnumerable<string> kevCves)
+    public void SetKnownExploitedVulnerabilities(IEnumerable<(string Cve, string PackageId)> kevCvePackages)
     {
-        _kevCves = kevCves.ToList();
+        _kevCvePackages = kevCvePackages.ToList();
+        _kevPackageIds = new HashSet<string>(_kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

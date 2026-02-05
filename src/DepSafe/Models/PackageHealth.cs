@@ -15,15 +15,22 @@ public sealed class PackageHealth
     public required HealthStatus Status { get; init; }
 
     /// <summary>CRA compliance score (0-100) based on vulnerabilities, license, identifiability.</summary>
-    public int CraScore { get; init; }
+    public int CraScore { get; set; }
 
     /// <summary>CRA compliance status derived from CraScore.</summary>
-    public CraComplianceStatus CraStatus { get; init; }
+    public CraComplianceStatus CraStatus { get; set; }
 
     public required PackageMetrics Metrics { get; init; }
     public string? RepositoryUrl { get; init; }
     public string? License { get; init; }
     public List<string> Vulnerabilities { get; init; } = [];
+
+    /// <summary>True if this package has a vulnerability in the CISA KEV catalog (actively exploited).</summary>
+    public bool HasKevVulnerability { get; set; }
+
+    /// <summary>CVE IDs from CISA KEV catalog affecting this package.</summary>
+    public List<string> KevCves { get; set; } = [];
+
     public List<string> Recommendations { get; init; } = [];
     public List<PackageDependency> Dependencies { get; init; } = [];
 
