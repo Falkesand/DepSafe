@@ -17,7 +17,10 @@ public sealed class NpmApiClient : IDisposable
 
     public NpmApiClient(ResponseCache? cache = null)
     {
-        _httpClient = new HttpClient();
+        _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
         _cache = cache ?? new ResponseCache();
     }

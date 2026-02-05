@@ -118,6 +118,18 @@ public static class CraReportCommand
             return 1;
         }
 
+        // Validate output path to prevent directory traversal (security)
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            var fullOutputPath = Path.GetFullPath(outputPath);
+            var workingDir = Path.GetFullPath(Directory.GetCurrentDirectory());
+            if (!fullOutputPath.StartsWith(workingDir, StringComparison.OrdinalIgnoreCase))
+            {
+                AnsiConsole.MarkupLine("[red]Error: Output path must be within the current working directory.[/]");
+                return 1;
+            }
+        }
+
         // Detect project type
         ProjectType projectType;
         try
@@ -223,16 +235,29 @@ public static class CraReportCommand
             {
                 var task = ctx.AddTask($"Fetching npm info for {packagesToFetch.Count} packages", maxValue: packagesToFetch.Count);
 
-                foreach (var packageName in packagesToFetch)
+                // Fetch in parallel with concurrency limit for 3-5x speedup
+                var semaphore = new SemaphoreSlim(10);
+                var tasks = packagesToFetch.Select(async packageName =>
                 {
-                    task.Description = $"npm: {packageName}";
-                    var info = await npmClient.GetPackageInfoAsync(packageName);
-                    if (info is not null)
+                    await semaphore.WaitAsync();
+                    try
                     {
-                        npmInfoMap[packageName] = info;
+                        var info = await npmClient.GetPackageInfoAsync(packageName);
+                        if (info is not null)
+                        {
+                            lock (npmInfoMap)
+                            {
+                                npmInfoMap[packageName] = info;
+                            }
+                        }
                     }
-                    task.Increment(1);
-                }
+                    finally
+                    {
+                        semaphore.Release();
+                        task.Increment(1);
+                    }
+                });
+                await Task.WhenAll(tasks);
             });
 
         // Phase 2: Fetch vulnerabilities from OSV (free, no auth required) and GitHub repo info
@@ -330,10 +355,21 @@ public static class CraReportCommand
             }
         }
 
-        // Collect CRA compliance data from npm packages
-        var deprecatedPackages = npmInfoMap.Values.Where(n => n.IsDeprecated).Select(n => n.Name).ToList();
-        var pkgsWithSecurityPolicy = repoInfoMap.Values.Count(r => r?.HasSecurityPolicy == true);
-        var pkgsWithRepo = repoInfoMap.Values.Count(r => r is not null);
+        // Collect CRA compliance data from npm packages (single pass for efficiency)
+        var deprecatedPackages = new List<string>();
+        foreach (var pkg in npmInfoMap.Values)
+        {
+            if (pkg.IsDeprecated) deprecatedPackages.Add(pkg.Name);
+        }
+        int pkgsWithSecurityPolicy = 0, pkgsWithRepo = 0;
+        foreach (var info in repoInfoMap.Values)
+        {
+            if (info is not null)
+            {
+                pkgsWithRepo++;
+                if (info.HasSecurityPolicy) pkgsWithSecurityPolicy++;
+            }
+        }
 
         return await GenerateReportAsync(
             path,
@@ -638,50 +674,7 @@ public static class CraReportCommand
     /// Returns true only if the version is in a vulnerable range and NOT patched.
     /// </summary>
     private static bool IsVersionActuallyVulnerable(string version, List<VulnerabilityInfo> vulnerabilities)
-    {
-        foreach (var vuln in vulnerabilities)
-        {
-            // FIRST check if version is in vulnerable range
-            bool inVulnerableRange;
-            if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-            {
-                inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
-            }
-            else
-            {
-                // No range specified, conservatively assume vulnerable
-                inVulnerableRange = true;
-            }
-
-            if (!inVulnerableRange)
-            {
-                continue; // Not in vulnerable range, check next vulnerability
-            }
-
-            // THEN check if version is patched (only matters if we're in the vulnerable range)
-            if (!string.IsNullOrEmpty(vuln.PatchedVersion))
-            {
-                try
-                {
-                    var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                    var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                    if (current >= patched)
-                    {
-                        continue; // Patched, check next vulnerability
-                    }
-                }
-                catch
-                {
-                    // Version parsing failed, assume still vulnerable
-                }
-            }
-
-            // Version is in vulnerable range and not patched
-            return true;
-        }
-
-        return false; // All vulnerabilities are patched or don't affect this version
-    }
+        => GetFirstActiveVulnerability(version, vulnerabilities) is not null;
 
     private static bool IsVersionInVulnerableRange(string version, string range)
     {
@@ -993,16 +986,29 @@ public static class CraReportCommand
             {
                 var task = ctx.AddTask($"Fetching NuGet info for {allPackageIds.Count} packages", maxValue: allPackageIds.Count);
 
-                foreach (var packageId in allPackageIds)
+                // Fetch in parallel with concurrency limit for 3-5x speedup
+                var semaphore = new SemaphoreSlim(10);
+                var tasks = allPackageIds.Select(async packageId =>
                 {
-                    task.Description = $"NuGet: {packageId}";
-                    var info = await nugetClient.GetPackageInfoAsync(packageId);
-                    if (info is not null)
+                    await semaphore.WaitAsync();
+                    try
                     {
-                        nugetInfoMap[packageId] = info;
+                        var info = await nugetClient.GetPackageInfoAsync(packageId);
+                        if (info is not null)
+                        {
+                            lock (nugetInfoMap)
+                            {
+                                nugetInfoMap[packageId] = info;
+                            }
+                        }
                     }
-                    task.Increment(1);
-                }
+                    finally
+                    {
+                        semaphore.Release();
+                        task.Increment(1);
+                    }
+                });
+                await Task.WhenAll(tasks);
             });
 
         // Phase 1b: Collect and fetch dependencies of packages (for drill-down navigation)
@@ -1026,19 +1032,37 @@ public static class CraReportCommand
                 {
                     var task = ctx.AddTask($"Fetching NuGet info for {dependencyPackageIds.Count} package dependencies", maxValue: dependencyPackageIds.Count);
 
-                    foreach (var packageId in dependencyPackageIds)
+                    // Fetch in parallel with concurrency limit for 3-5x speedup
+                    var semaphore = new SemaphoreSlim(10);
+                    var tasks = dependencyPackageIds.Select(async packageId =>
                     {
-                        task.Description = $"Dependency: {packageId}";
-                        if (!nugetInfoMap.ContainsKey(packageId))
+                        await semaphore.WaitAsync();
+                        try
                         {
-                            var info = await nugetClient.GetPackageInfoAsync(packageId);
-                            if (info is not null)
+                            bool alreadyExists;
+                            lock (nugetInfoMap)
                             {
-                                nugetInfoMap[packageId] = info;
+                                alreadyExists = nugetInfoMap.ContainsKey(packageId);
+                            }
+                            if (!alreadyExists)
+                            {
+                                var info = await nugetClient.GetPackageInfoAsync(packageId);
+                                if (info is not null)
+                                {
+                                    lock (nugetInfoMap)
+                                    {
+                                        nugetInfoMap[packageId] = info;
+                                    }
+                                }
                             }
                         }
-                        task.Increment(1);
-                    }
+                        finally
+                        {
+                            semaphore.Release();
+                            task.Increment(1);
+                        }
+                    });
+                    await Task.WhenAll(tasks);
                 });
         }
 
@@ -1170,10 +1194,21 @@ public static class CraReportCommand
             transitivePackages,
             allVulnerabilities);
 
-        // Collect CRA compliance data from .NET packages
-        var deprecatedPackages = nugetInfoMap.Values.Where(n => n.IsDeprecated).Select(n => n.PackageId).ToList();
-        var pkgsWithSecurityPolicy = repoInfoMap.Values.Count(r => r?.HasSecurityPolicy == true);
-        var pkgsWithRepo = repoInfoMap.Values.Count(r => r is not null);
+        // Collect CRA compliance data from .NET packages (single pass for efficiency)
+        var deprecatedPackages = new List<string>();
+        foreach (var pkg in nugetInfoMap.Values)
+        {
+            if (pkg.IsDeprecated) deprecatedPackages.Add(pkg.PackageId);
+        }
+        int pkgsWithSecurityPolicy = 0, pkgsWithRepo = 0;
+        foreach (var info in repoInfoMap.Values)
+        {
+            if (info is not null)
+            {
+                pkgsWithRepo++;
+                if (info.HasSecurityPolicy) pkgsWithSecurityPolicy++;
+            }
+        }
 
         return await GenerateReportAsync(
             path,
@@ -1285,13 +1320,30 @@ public static class CraReportCommand
                     .StartAsync(async ctx =>
                     {
                         var task = ctx.AddTask($"Fetching NuGet info", maxValue: allPackageIds.Count);
-                        foreach (var packageId in allPackageIds)
+
+                        // Fetch in parallel with concurrency limit for 3-5x speedup
+                        var semaphore = new SemaphoreSlim(10);
+                        var tasks = allPackageIds.Select(async packageId =>
                         {
-                            task.Description = $"NuGet: {packageId}";
-                            var info = await nugetClient.GetPackageInfoAsync(packageId);
-                            if (info is not null) nugetInfoMap[packageId] = info;
-                            task.Increment(1);
-                        }
+                            await semaphore.WaitAsync();
+                            try
+                            {
+                                var info = await nugetClient.GetPackageInfoAsync(packageId);
+                                if (info is not null)
+                                {
+                                    lock (nugetInfoMap)
+                                    {
+                                        nugetInfoMap[packageId] = info;
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                semaphore.Release();
+                                task.Increment(1);
+                            }
+                        });
+                        await Task.WhenAll(tasks);
                     });
 
                 // Fetch dependencies for drill-down
@@ -1311,15 +1363,38 @@ public static class CraReportCommand
                         .StartAsync(async ctx =>
                         {
                             var task = ctx.AddTask($"Fetching NuGet dependencies", maxValue: dependencyPackageIds.Count);
-                            foreach (var packageId in dependencyPackageIds)
+
+                            // Fetch in parallel with concurrency limit for 3-5x speedup
+                            var semaphore = new SemaphoreSlim(10);
+                            var tasks = dependencyPackageIds.Select(async packageId =>
                             {
-                                if (!nugetInfoMap.ContainsKey(packageId))
+                                await semaphore.WaitAsync();
+                                try
                                 {
-                                    var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                    if (info is not null) nugetInfoMap[packageId] = info;
+                                    bool alreadyExists;
+                                    lock (nugetInfoMap)
+                                    {
+                                        alreadyExists = nugetInfoMap.ContainsKey(packageId);
+                                    }
+                                    if (!alreadyExists)
+                                    {
+                                        var info = await nugetClient.GetPackageInfoAsync(packageId);
+                                        if (info is not null)
+                                        {
+                                            lock (nugetInfoMap)
+                                            {
+                                                nugetInfoMap[packageId] = info;
+                                            }
+                                        }
+                                    }
                                 }
-                                task.Increment(1);
-                            }
+                                finally
+                                {
+                                    semaphore.Release();
+                                    task.Increment(1);
+                                }
+                            });
+                            await Task.WhenAll(tasks);
                         });
                 }
 

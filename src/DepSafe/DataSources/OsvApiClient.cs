@@ -18,7 +18,10 @@ public sealed class OsvApiClient : IDisposable
 
     public OsvApiClient()
     {
-        _httpClient = new HttpClient();
+        _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
     }
 
@@ -200,9 +203,10 @@ public sealed class OsvApiClient : IDisposable
                     }
                 }
             }
-            catch
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Ignore individual failures
+                // Log but continue - individual vulnerability fetch failures shouldn't stop the batch
+                Console.Error.WriteLine($"[WARN] Failed to fetch vulnerability details for {vulnId}: {ex.Message}");
             }
             finally
             {

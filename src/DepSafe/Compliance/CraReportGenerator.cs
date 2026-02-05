@@ -635,11 +635,11 @@ public sealed class CraReportGenerator
             sb.AppendLine($"      <div class=\"package-scores\">");
             sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
             sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
-            sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(craScore)}\">{craScore}</span>");
+            sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
             sb.AppendLine($"        </div>");
             sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
             sb.AppendLine($"          <span class=\"score-label\">Health</span>");
-            sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(score)}\">{score}</span>");
+            sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
             sb.AppendLine($"        </div>");
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
@@ -776,19 +776,19 @@ public sealed class CraReportGenerator
                 {
                     sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
                     sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
-                    sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(score)}\">{score}</span>");
+                    sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
                     sb.AppendLine($"        </div>");
                 }
                 else
                 {
                     sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score not available - use --deep for full analysis\">");
                     sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
-                    sb.AppendLine($"          <span class=\"score-circle na\">—</span>");
+                    sb.AppendLine($"          <span class=\"score-value na\">—</span>");
                     sb.AppendLine($"        </div>");
                 }
                 sb.AppendLine($"        <div class=\"package-score-item\" title=\"CRA Compliance Score - vulnerabilities &amp; licenses\">");
                 sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
-                sb.AppendLine($"          <span class=\"score-circle\" style=\"{GetScoreStyle(craScore)}\">{craScore}</span>");
+                sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
                 sb.AppendLine($"        </div>");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
@@ -2179,6 +2179,7 @@ public sealed class CraReportGenerator
     .package-score-item .score-value.watch { background-color: #17a2b8 !important; }
     .package-score-item .score-value.warning { background-color: #ffc107 !important; color: #000; }
     .package-score-item .score-value.critical { background-color: #dc3545 !important; }
+    .package-score-item .score-value.na { background-color: #6c757d !important; color: #aaa; }
 
     .expand-icon {
       font-size: 1.25rem;
@@ -3629,8 +3630,9 @@ public sealed class CraReportGenerator
 
     private string GetHtmlScripts(CraReport report, bool darkMode)
     {
-        var sbomJson = JsonSerializer.Serialize(report.Sbom, new JsonSerializerOptions { WriteIndented = true });
-        var vexJson = JsonSerializer.Serialize(report.Vex, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        // Serialize without indentation to minimize HTML report size (saves 1-3MB for large projects)
+        var sbomJson = JsonSerializer.Serialize(report.Sbom);
+        var vexJson = JsonSerializer.Serialize(report.Vex, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
         return $@"
 <script>
@@ -3658,36 +3660,55 @@ function togglePackage(header) {{
   header.parentElement.classList.toggle('expanded');
 }}
 
-function navigateToPackage(packageName) {{
-  // First try to find in direct packages
-  const directPkg = document.querySelector(`.package-card:not(.transitive)[data-name='${{packageName}}']`);
-  if (directPkg) {{
-    showSection('packages');
-    directPkg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-    directPkg.classList.add('expanded');
-    directPkg.classList.add('highlight-flash');
-    setTimeout(() => directPkg.classList.remove('highlight-flash'), 2000);
-    return;
-  }}
+function navigateToPackage(packageIdOrName) {{
+  // Normalize to lowercase for data-name lookup
+  const nameLower = packageIdOrName.toLowerCase();
 
-  // Try transitive packages
-  const transitivePkg = document.querySelector(`.package-card.transitive[data-name='${{packageName}}']`);
-  if (transitivePkg) {{
+  // Try to find by ID first (case-preserved), then by data-name (lowercase)
+  let target = document.getElementById('pkg-' + packageIdOrName) ||
+               document.querySelector(`.package-card[data-name='${{nameLower}}']`);
+
+  if (target) {{
     showSection('packages');
-    // Expand transitive section if collapsed
-    const transitiveList = document.getElementById('transitive-list');
-    if (transitiveList && transitiveList.style.display === 'none') {{
-      toggleTransitive();
+
+    // If it's transitive, expand the transitive section
+    if (target.classList.contains('transitive')) {{
+      const list = document.getElementById('transitive-list');
+      const toggle = document.getElementById('transitive-toggle');
+      if (list && list.style.display === 'none') {{
+        list.style.display = '';
+        if (toggle) toggle.textContent = 'Hide';
+      }}
     }}
-    transitivePkg.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-    transitivePkg.classList.add('expanded');
-    transitivePkg.classList.add('highlight-flash');
-    setTimeout(() => transitivePkg.classList.remove('highlight-flash'), 2000);
+
+    // Clear search/filter that might be hiding the package
+    const searchInput = document.getElementById('package-search');
+    if (searchInput && searchInput.value) {{
+      searchInput.value = '';
+      filterPackages();
+    }}
+
+    // Reset filters to show all packages
+    currentStatusFilter = 'all';
+    currentEcosystemFilter = 'all';
+    document.querySelectorAll('.filter-btn').forEach(btn => {{
+      btn.classList.remove('active');
+      if (btn.textContent.toLowerCase() === 'all') btn.classList.add('active');
+    }});
+    document.querySelectorAll('.package-card').forEach(card => card.style.display = '');
+
+    // Expand and highlight the package
+    target.classList.add('expanded');
+    setTimeout(() => {{
+      target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      target.classList.add('highlight-flash');
+      setTimeout(() => target.classList.remove('highlight-flash'), 2000);
+    }}, 100);
     return;
   }}
 
   // Try dependency tree
-  const treeNode = document.querySelector(`.tree-node[data-name='${{packageName}}']`);
+  const treeNode = document.querySelector(`.tree-node[data-name='${{nameLower}}']`);
   if (treeNode) {{
     showSection('tree');
     // Expand parent nodes to make this node visible
@@ -3705,6 +3726,15 @@ function navigateToPackage(packageName) {{
     treeNode.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
     treeNode.classList.add('highlight-flash');
     setTimeout(() => treeNode.classList.remove('highlight-flash'), 2000);
+    return;
+  }}
+
+  // Package not found - open external link (NuGet for .NET, npm for JS)
+  const ecosystem = document.querySelector('.package-card')?.dataset.ecosystem || 'nuget';
+  if (ecosystem === 'npm') {{
+    window.open('https://www.npmjs.com/package/' + encodeURIComponent(packageIdOrName), '_blank');
+  }} else {{
+    window.open('https://www.nuget.org/packages/' + encodeURIComponent(packageIdOrName), '_blank');
   }}
 }}
 
@@ -3810,56 +3840,6 @@ function toggleReviewedVulns() {{
     list.style.display = 'none';
     toggle.textContent = '+';
   }}
-}}
-
-function navigateToPackage(packageId) {{
-  const targetId = 'pkg-' + packageId;
-  const target = document.getElementById(targetId);
-  if (!target) {{
-    // Package not found on page, open NuGet instead
-    window.open('https://www.nuget.org/packages/' + encodeURIComponent(packageId), '_blank');
-    return;
-  }}
-
-  // Show the packages section first
-  showSection('packages');
-
-  // If it's a transitive dependency, expand the transitive section
-  if (target.classList.contains('transitive')) {{
-    const list = document.getElementById('transitive-list');
-    const toggle = document.getElementById('transitive-toggle');
-    if (list.style.display === 'none') {{
-      list.style.display = '';
-      toggle.textContent = 'Hide';
-    }}
-  }}
-
-  // Clear any search/filter that might be hiding the package
-  const searchInput = document.getElementById('package-search');
-  if (searchInput) {{
-    searchInput.value = '';
-    filterPackages();
-  }}
-
-  // Reset filters to 'all'
-  currentStatusFilter = 'all';
-  currentEcosystemFilter = 'all';
-  document.querySelectorAll('.filter-btn').forEach(btn => {{
-    btn.classList.remove('active');
-    if (btn.textContent.toLowerCase() === 'all') btn.classList.add('active');
-  }});
-  document.querySelectorAll('.package-card').forEach(card => card.style.display = '');
-
-  // Expand the package card
-  target.classList.add('expanded');
-
-  // Scroll to the element with a small offset for the header
-  setTimeout(() => {{
-    target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-    // Add a highlight effect
-    target.classList.add('highlight');
-    setTimeout(() => target.classList.remove('highlight'), 2000);
-  }}, 100);
 }}
 
 function exportSbom(format) {{
@@ -4294,21 +4274,6 @@ function filterTreeByEcosystem(ecosystem) {{
         "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
         _ => false
     };
-
-    /// <summary>
-    /// Get inline style for score circle with explicit colors.
-    /// </summary>
-    private static string GetScoreStyle(int score)
-    {
-        var (bg, fg) = score switch
-        {
-            >= 80 => ("#28a745", "#fff"),  // green
-            >= 60 => ("#17a2b8", "#fff"),  // teal
-            >= 40 => ("#ffc107", "#000"),  // yellow
-            _ => ("#dc3545", "#fff")       // red
-        };
-        return $"background-color:{bg};color:{fg};width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;";
-    }
 
     /// <summary>
     /// Calculate aggregate CRA compliance score for the project.
