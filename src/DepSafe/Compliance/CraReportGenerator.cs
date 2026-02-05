@@ -616,13 +616,13 @@ public sealed class CraReportGenerator
             if (hasKev && healthData?.KevCves.Count > 0)
             {
                 var kevCve = healthData.KevCves[0];
-                var kevUrl = $"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={Uri.EscapeDataString(kevCve)}";
-                var kevTooltip = $"{kevCve} - CISA Known Exploited Vulnerability (click for details)";
+                var kevUrl = $"https://osv.dev/vulnerability/{Uri.EscapeDataString(kevCve)}";
+                var kevTooltip = $"{kevCve} - Known Exploited Vulnerability (click for details)";
                 sb.AppendLine($"        <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"kev-badge\" title=\"{EscapeHtml(kevTooltip)}\" onclick=\"event.stopPropagation()\">{EscapeHtml(kevCve)}</a>");
             }
             else if (hasKev)
             {
-                sb.AppendLine($"        <span class=\"kev-badge\" title=\"CISA Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
+                sb.AppendLine($"        <span class=\"kev-badge\" title=\"Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
             }
             sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
             sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
@@ -755,13 +755,13 @@ public sealed class CraReportGenerator
                 if (hasKevTrans && healthData.KevCves.Count > 0)
                 {
                     var kevCve = healthData.KevCves[0];
-                    var kevUrl = $"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={Uri.EscapeDataString(kevCve)}";
-                    var kevTooltip = $"{kevCve} - CISA Known Exploited Vulnerability (click for details)";
+                    var kevUrl = $"https://osv.dev/vulnerability/{Uri.EscapeDataString(kevCve)}";
+                    var kevTooltip = $"{kevCve} - Known Exploited Vulnerability (click for details)";
                     sb.AppendLine($"        <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"kev-badge\" title=\"{EscapeHtml(kevTooltip)}\" onclick=\"event.stopPropagation()\">{EscapeHtml(kevCve)}</a>");
                 }
                 else if (hasKevTrans)
                 {
-                    sb.AppendLine($"        <span class=\"kev-badge\" title=\"CISA Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
+                    sb.AppendLine($"        <span class=\"kev-badge\" title=\"Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
                 }
                 sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
                 sb.AppendLine($"        {depTypeBadge}");
@@ -1428,7 +1428,7 @@ public sealed class CraReportGenerator
             if (hasKev && healthData?.KevCves.Count > 0)
             {
                 var kevCve = healthData.KevCves[0];
-                var kevUrl = $"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={Uri.EscapeDataString(kevCve)}";
+                var kevUrl = $"https://osv.dev/vulnerability/{Uri.EscapeDataString(kevCve)}";
                 sb.AppendLine($"{indentStr}  <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"node-badge kev\" title=\"{EscapeHtml(kevCve)} - CISA KEV (click for details)\">{EscapeHtml(kevCve)}</a>");
             }
             else if (hasKev)
