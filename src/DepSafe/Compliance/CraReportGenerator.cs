@@ -543,8 +543,8 @@ public sealed class CraReportGenerator
         sb.AppendLine("  </span>");
         sb.AppendLine("  <span class=\"filter-group\">");
         sb.AppendLine("    <span class=\"filter-label\">Sort:</span>");
-        sb.AppendLine("    <button class=\"filter-btn sort-btn active\" onclick=\"sortPackages('name')\">Name</button>");
-        sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('cra')\">CRA Score</button>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('name')\">Name</button>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn active\" onclick=\"sortPackages('cra')\">CRA Score</button>");
         sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('health')\">Health</button>");
         sb.AppendLine("  </span>");
         sb.AppendLine("</div>");
@@ -3727,42 +3727,44 @@ function filterByEcosystem(ecosystem) {{
   applyPackageFilters();
 }}
 
-function sortPackages(sortBy) {{
-  document.querySelectorAll('.filter-btn.sort-btn').forEach(btn => btn.classList.remove('active'));
-  event.target.classList.add('active');
+function sortPackages(sortBy, isInitial) {{
+  if (!isInitial) {{
+    document.querySelectorAll('.filter-btn.sort-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+  }}
+
+  // Sort comparator with name as tiebreaker
+  const compare = (a, b) => {{
+    let result = 0;
+    if (sortBy === 'name') {{
+      result = a.dataset.name.localeCompare(b.dataset.name);
+    }} else if (sortBy === 'cra') {{
+      result = parseInt(a.dataset.cra || 100) - parseInt(b.dataset.cra || 100);
+      if (result === 0) result = a.dataset.name.localeCompare(b.dataset.name);
+    }} else if (sortBy === 'health') {{
+      result = parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
+      if (result === 0) result = a.dataset.name.localeCompare(b.dataset.name);
+    }}
+    return result;
+  }};
 
   // Sort direct packages
   const directList = document.getElementById('packages-list');
   const directCards = Array.from(directList.querySelectorAll('.package-card:not(.transitive)'));
-  directCards.sort((a, b) => {{
-    if (sortBy === 'name') {{
-      return a.dataset.name.localeCompare(b.dataset.name);
-    }} else if (sortBy === 'cra') {{
-      return parseInt(a.dataset.cra || 100) - parseInt(b.dataset.cra || 100);
-    }} else if (sortBy === 'health') {{
-      return parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
-    }}
-    return 0;
-  }});
+  directCards.sort(compare);
   directCards.forEach(card => directList.appendChild(card));
 
   // Sort transitive packages
   const transitiveList = document.getElementById('transitive-list');
   if (transitiveList) {{
     const transitiveCards = Array.from(transitiveList.querySelectorAll('.package-card.transitive'));
-    transitiveCards.sort((a, b) => {{
-      if (sortBy === 'name') {{
-        return a.dataset.name.localeCompare(b.dataset.name);
-      }} else if (sortBy === 'cra') {{
-        return parseInt(a.dataset.cra || 100) - parseInt(b.dataset.cra || 100);
-      }} else if (sortBy === 'health') {{
-        return parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
-      }}
-      return 0;
-    }});
+    transitiveCards.sort(compare);
     transitiveCards.forEach(card => transitiveList.appendChild(card));
   }}
 }}
+
+// Apply default sort on page load
+document.addEventListener('DOMContentLoaded', () => sortPackages('cra', true));
 
 function applyPackageFilters() {{
   document.querySelectorAll('.package-card').forEach(card => {{
