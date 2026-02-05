@@ -20,6 +20,17 @@ public sealed class HealthScoreCalculator
         _weights = weights ?? ScoreWeights.Default;
     }
 
+    private static List<string> GetNpmAuthors(string packageName)
+    {
+        // Extract scope owner as publisher (e.g., @tanstack/router → tanstack)
+        if (packageName.StartsWith('@') && packageName.Contains('/'))
+        {
+            var scope = packageName[1..packageName.IndexOf('/')];
+            return [scope];
+        }
+        return [];
+    }
+
     private string? GetEffectiveLicense(string packageId, string? detectedLicense)
     {
         if (LicenseOverrides is not null &&
@@ -67,6 +78,7 @@ public sealed class HealthScoreCalculator
             Vulnerabilities = activeVulnerabilities.Count > 0
                 ? activeVulnerabilities.Select(v => v.Id).ToList()
                 : [],
+            Authors = nugetInfo.Authors,
             Recommendations = recommendations,
             Dependencies = nugetInfo.Dependencies,
             DependencyType = dependencyType,
@@ -121,6 +133,7 @@ public sealed class HealthScoreCalculator
             Vulnerabilities = activeVulnerabilities.Count > 0
                 ? activeVulnerabilities.Select(v => v.Id).ToList()
                 : [],
+            Authors = GetNpmAuthors(packageName),
             Recommendations = recommendations,
             Dependencies = dependencies,
             DependencyType = dependencyType,

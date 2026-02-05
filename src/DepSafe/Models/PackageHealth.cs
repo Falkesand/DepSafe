@@ -43,6 +43,15 @@ public sealed class PackageHealth
     /// <summary>Highest EPSS percentile across all vulnerabilities (0.0-1.0).</summary>
     public double? MaxEpssPercentile { get; set; }
 
+    /// <summary>Days since the oldest unpatched vulnerability was published.</summary>
+    public int? OldestUnpatchedVulnDays { get; set; }
+
+    /// <summary>Number of vulnerabilities where a patch is available but not applied.</summary>
+    public int PatchAvailableNotAppliedCount { get; set; }
+
+    /// <summary>Package authors/publishers for SBOM supplier field.</summary>
+    public List<string> Authors { get; init; } = [];
+
     public List<string> Recommendations { get; init; } = [];
     public List<PackageDependency> Dependencies { get; init; } = [];
 

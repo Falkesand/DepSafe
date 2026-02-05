@@ -30,7 +30,7 @@ public sealed class SbomGenerator
             SpdxId = $"SPDXRef-Package-{SanitizeId(pkg.PackageId)}",
             Name = pkg.PackageId,
             VersionInfo = pkg.Version,
-            Supplier = "NOASSERTION",
+            Supplier = FormatSupplier(pkg.Authors),
             DownloadLocation = GetDownloadLocation(pkg),
             FilesAnalyzed = false,
             LicenseConcluded = MapLicenseToSpdx(pkg.License),
@@ -172,6 +172,14 @@ public sealed class SbomGenerator
         return pkg.Ecosystem == PackageEcosystem.Npm
             ? $"pkg:npm/{Uri.EscapeDataString(pkg.PackageId)}@{pkg.Version}"
             : $"pkg:nuget/{pkg.PackageId}@{pkg.Version}";
+    }
+
+    private static string FormatSupplier(List<string> authors)
+    {
+        if (authors.Count == 0) return "NOASSERTION";
+        var joined = string.Join(", ", authors);
+        if (string.IsNullOrWhiteSpace(joined)) return "NOASSERTION";
+        return $"Organization: {joined}";
     }
 
     private static string MapLicenseToSpdx(string? license)

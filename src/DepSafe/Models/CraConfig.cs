@@ -33,4 +33,40 @@ public sealed class CraConfig
     /// Value: Note explaining the decision
     /// </summary>
     public Dictionary<string, string> ComplianceNotes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Declared end of support period (e.g., "2028-12").
+    /// Used for CRA Annex II documentation compliance.
+    /// </summary>
+    public string? SupportPeriodEnd { get; set; }
+
+    /// <summary>
+    /// Security contact information (e.g., email or URL).
+    /// Used for CRA Annex II documentation compliance.
+    /// </summary>
+    public string? SecurityContact { get; set; }
+
+    /// <summary>
+    /// Fail the report if any CISA KEV vulnerability is present.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public bool FailOnKev { get; set; }
+
+    /// <summary>
+    /// Fail if any package has EPSS probability above this threshold (0.0-1.0).
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public double? FailOnEpssThreshold { get; set; }
+
+    /// <summary>
+    /// Fail if total active vulnerability count exceeds this number.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public int? FailOnVulnerabilityCount { get; set; }
+
+    /// <summary>
+    /// Fail if CRA readiness score is below this value (0-100).
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public int? FailOnCraReadinessBelow { get; set; }
 }

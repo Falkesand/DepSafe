@@ -55,6 +55,30 @@ public sealed partial class CraReportGenerator
         }
 
         var sbom = _sbomGenerator.Generate(healthReport.ProjectPath, allPackagesForSbom);
+
+        // Apply package checksums from provenance data (extracted from NuGet registration API)
+        if (_provenanceResults.Count > 0)
+        {
+            var hashLookup = _provenanceResults
+                .Where(r => r.ContentHash is not null)
+                .ToDictionary(r => r.PackageId, r => r, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pkg in sbom.Packages)
+            {
+                if (hashLookup.TryGetValue(pkg.Name, out var prov))
+                {
+                    pkg.Checksums =
+                    [
+                        new SbomChecksum
+                        {
+                            Algorithm = prov.ContentHashAlgorithm ?? "SHA512",
+                            ChecksumValue = prov.ContentHash!
+                        }
+                    ];
+                }
+            }
+        }
+
         // VEX should include both direct and transitive packages for proper vulnerability counting
         var vex = _vexGenerator.Generate(allPackagesForSbom, vulnerabilities);
 
@@ -118,15 +142,32 @@ public sealed partial class CraReportGenerator
                 : null
         });
 
-        // Art. 10(6) - Security Updates
-        complianceItems.Add(new CraComplianceItem
+        // Art. 10(6) - Security Updates (data-driven using repo maintenance data)
         {
-            Requirement = "CRA Art. 10(6) - Security Updates",
-            Description = "Mechanism to ensure timely security updates",
-            Status = CraComplianceStatus.Compliant,
-            Evidence = $"SBOM tracks {sbom.Packages.Count} components. VEX documents {totalVulnStatements} vulnerability assessments.",
-            Recommendation = null
-        });
+            var archivedCount = _archivedPackageNames.Count;
+            var staleCount = _stalePackageNames.Count;
+            var stalePercent = _totalWithRepoData > 0 ? (int)Math.Round(100.0 * staleCount / _totalWithRepoData) : 0;
+            var updateStatus = archivedCount == 0 && stalePercent <= 10
+                ? CraComplianceStatus.Compliant
+                : CraComplianceStatus.ActionRequired;
+
+            var evidence = _totalWithRepoData > 0
+                ? $"{_totalWithRepoData} packages with repo data analyzed. " +
+                  (archivedCount > 0 ? $"{archivedCount} archived: {string.Join(", ", _archivedPackageNames.Take(3))}{(archivedCount > 3 ? "..." : "")}. " : "") +
+                  (staleCount > 0 ? $"{staleCount} stale (no commits >365 days, {stalePercent}%): {string.Join(", ", _stalePackageNames.Take(3))}{(staleCount > 3 ? "..." : "")}" : "All packages actively maintained.")
+                : $"SBOM tracks {sbom.Packages.Count} components. VEX documents {totalVulnStatements} vulnerability assessments.";
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 10(6) - Security Updates",
+                Description = "Mechanism to ensure timely security updates",
+                Status = updateStatus,
+                Evidence = evidence,
+                Recommendation = updateStatus != CraComplianceStatus.Compliant
+                    ? "Replace archived packages and evaluate alternatives for stale dependencies"
+                    : null
+            });
+        }
 
         // Art. 10(9) - License Information
         var noLicensePackages = healthReport.Packages.Count(p =>
@@ -235,6 +276,192 @@ public sealed partial class CraReportGenerator
                 : null
         });
 
+        // ============================================
+        // CRA ARTICLE 13 - Obligations of Manufacturers
+        // ============================================
+
+        // Art. 13(8) - Support Period / Active Maintenance
+        {
+            var unmaintainedCount = _unmaintainedPackageNames.Count;
+            var supportStatus = unmaintainedCount == 0 ? CraComplianceStatus.Compliant :
+                unmaintainedCount <= 2 ? CraComplianceStatus.Review : CraComplianceStatus.ActionRequired;
+            var supportEvidence = unmaintainedCount == 0
+                ? "All packages with repository data show active maintenance"
+                : $"{unmaintainedCount} package(s) may lack ongoing support: {string.Join(", ", _unmaintainedPackageNames.Take(5))}{(unmaintainedCount > 5 ? "..." : "")}";
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 13(8) - Support Period",
+                Description = "Components must have ongoing support (active maintenance)",
+                Status = supportStatus,
+                Evidence = supportEvidence,
+                Recommendation = unmaintainedCount > 0
+                    ? "Evaluate unmaintained dependencies and plan migration to actively supported alternatives"
+                    : null
+            });
+        }
+
+        // Art. 13(5) - Package Provenance
+        if (_provenanceResults.Count > 0)
+        {
+            var verifiedCount = _provenanceResults.Count(r => r.IsVerified);
+            var totalCount = _provenanceResults.Count;
+            var verifiedPercent = totalCount > 0 ? (int)Math.Round(100.0 * verifiedCount / totalCount) : 0;
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 13(5) - Package Provenance",
+                Description = "Due diligence when integrating third-party components (signature verification)",
+                Status = verifiedPercent >= 90 ? CraComplianceStatus.Compliant :
+                    verifiedPercent >= 50 ? CraComplianceStatus.Review : CraComplianceStatus.ActionRequired,
+                Evidence = $"{verifiedCount} of {totalCount} packages ({verifiedPercent}%) have verified provenance (repository signature)",
+                Recommendation = verifiedPercent < 90
+                    ? "Investigate unsigned packages and verify their provenance through alternative means"
+                    : null
+            });
+        }
+
+        // ============================================
+        // CRA ANNEX I - Essential Cybersecurity Requirements
+        // ============================================
+
+        // Annex I Part I(1) - Release Readiness (no known exploitable vulnerabilities)
+        {
+            var kevReady = kevCount == 0;
+            var vulnReady = activeVulnCount == 0;
+            var readinessStatus = kevReady && vulnReady ? CraComplianceStatus.Compliant :
+                !kevReady ? CraComplianceStatus.NonCompliant : CraComplianceStatus.ActionRequired;
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Annex I Part I(1) - Release Readiness",
+                Description = "Products must ship without known exploitable vulnerabilities",
+                Status = readinessStatus,
+                Evidence = kevReady && vulnReady
+                    ? "No known exploitable vulnerabilities in dependencies"
+                    : $"{kevCount} CISA KEV vulnerabilities, {activeVulnCount} active advisories",
+                Recommendation = readinessStatus != CraComplianceStatus.Compliant
+                    ? "Resolve all known vulnerabilities before release, prioritizing CISA KEV entries"
+                    : null
+            });
+        }
+
+        // Annex I Part I(10) - Attack Surface Minimization
+        if (_attackSurface is not null)
+        {
+            var ratio = _attackSurface.TransitiveToDirectRatio;
+            var depth = _attackSurface.MaxDepth;
+            var heavyCount = _attackSurface.HeavyPackages.Count;
+            var surfaceStatus = ratio < 5.0 && depth < 8
+                ? CraComplianceStatus.Compliant
+                : ratio >= 10.0 || depth >= 12
+                    ? CraComplianceStatus.ActionRequired
+                    : CraComplianceStatus.Review;
+
+            var evidence = $"Transitive-to-direct ratio: {ratio}:1, max depth: {depth}";
+            if (heavyCount > 0)
+            {
+                evidence += $", {heavyCount} heavy package(s): {string.Join(", ", _attackSurface.HeavyPackages.Take(3).Select(h => $"{h.PackageId} ({h.TransitiveCount} deps)"))}";
+            }
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Annex I Part I(10) - Attack Surface",
+                Description = "Minimize attack surface including external interfaces and dependencies",
+                Status = surfaceStatus,
+                Evidence = evidence,
+                Recommendation = surfaceStatus != CraComplianceStatus.Compliant
+                    ? "Review dependency tree depth and consider replacing heavy packages with lighter alternatives"
+                    : null
+            });
+        }
+
+        // Annex I Part II(1) - SBOM Completeness (BSI TR-03183-2)
+        if (_sbomValidation is not null)
+        {
+            var completeness = _sbomValidation.CompletenessPercent;
+            var sbomStatus = completeness >= 90 ? CraComplianceStatus.Compliant :
+                completeness >= 70 ? CraComplianceStatus.Review : CraComplianceStatus.ActionRequired;
+
+            var missing = new List<string>();
+            if (!_sbomValidation.HasTimestamp) missing.Add("timestamp");
+            if (!_sbomValidation.HasCreator) missing.Add("creator");
+            if (_sbomValidation.TotalPackages > 0)
+            {
+                if (_sbomValidation.WithSupplier < _sbomValidation.TotalPackages) missing.Add($"supplier ({_sbomValidation.WithSupplier}/{_sbomValidation.TotalPackages})");
+                if (_sbomValidation.WithPurl < _sbomValidation.TotalPackages) missing.Add($"PURL ({_sbomValidation.WithPurl}/{_sbomValidation.TotalPackages})");
+                if (_sbomValidation.WithChecksum < _sbomValidation.TotalPackages) missing.Add($"checksum ({_sbomValidation.WithChecksum}/{_sbomValidation.TotalPackages})");
+            }
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Annex I Part II(1) - SBOM Completeness",
+                Description = "SBOM must contain required fields per BSI TR-03183-2",
+                Status = sbomStatus,
+                Evidence = $"Field completeness: {completeness}%" + (missing.Count > 0 ? $". Missing: {string.Join(", ", missing)}" : ""),
+                Recommendation = sbomStatus != CraComplianceStatus.Compliant
+                    ? "Improve SBOM data quality by ensuring supplier, PURL, and checksum fields are populated"
+                    : null
+            });
+        }
+
+        // ============================================
+        // CRA ANNEX II - Documentation Requirements
+        // ============================================
+
+        // Annex II - Documentation
+        {
+            var docChecks = new List<string>();
+            if (_hasReadme) docChecks.Add("README");
+            if (_hasSecurityContact) docChecks.Add("Security contact");
+            if (_hasSupportPeriod) docChecks.Add("Support period");
+            if (_hasChangelog) docChecks.Add("Changelog");
+
+            var docCount = docChecks.Count;
+            var docStatus = _hasReadme && _hasSecurityContact && _hasSupportPeriod
+                ? CraComplianceStatus.Compliant
+                : docCount >= 2 ? CraComplianceStatus.Review : CraComplianceStatus.ActionRequired;
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Annex II - Documentation",
+                Description = "Required project documentation (README, security contact, support period, changelog)",
+                Status = docStatus,
+                Evidence = docCount > 0
+                    ? $"Found: {string.Join(", ", docChecks)}. Missing: {string.Join(", ", new[] { "README", "Security contact", "Support period", "Changelog" }.Except(docChecks))}"
+                    : "No required documentation found",
+                Recommendation = docStatus != CraComplianceStatus.Compliant
+                    ? "Add missing documentation: README.md, SECURITY.md or security contact in .cra-config.json, and declare support period"
+                    : null
+            });
+        }
+
+        // Art. 11(4) - Vulnerability Remediation Timeliness
+        {
+            var patchableCount = _remediationData.Count;
+            var oldestDays = patchableCount > 0 ? _remediationData.Max(r => r.DaysSince) : 0;
+            var remediationStatus = patchableCount == 0 ? CraComplianceStatus.Compliant :
+                oldestDays >= 30 ? CraComplianceStatus.NonCompliant : CraComplianceStatus.ActionRequired;
+
+            var evidence = patchableCount == 0
+                ? "No vulnerabilities with available patches pending application"
+                : $"{patchableCount} vulnerability(ies) with patches available but not applied. Oldest: {oldestDays} days. " +
+                  string.Join("; ", _remediationData.OrderByDescending(r => r.DaysSince).Take(3)
+                      .Select(r => $"{r.PackageId} ({r.VulnId}, {r.DaysSince}d, patch: {r.PatchVersion})"));
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 11(4) - Remediation Timeliness",
+                Description = "Remediate vulnerabilities without delay when patches are available",
+                Status = remediationStatus,
+                Evidence = evidence,
+                Recommendation = patchableCount > 0
+                    ? "Apply available security patches immediately to meet CRA remediation requirements"
+                    : null
+            });
+        }
+
+        // Calculate CRA Readiness Score
+        var craReadinessScore = CalculateCraReadinessScore(complianceItems);
+
         // Collect dependency issues from all trees
         var versionConflictCount = _dependencyTrees.Sum(t => t.VersionConflictCount);
         var allDependencyIssues = _dependencyTrees.SelectMany(t => t.Issues).ToList();
@@ -255,8 +482,57 @@ public sealed partial class CraReportGenerator
             VulnerabilityCount = activeVulnCount,
             CriticalPackageCount = healthReport.Summary.CriticalCount,
             VersionConflictCount = versionConflictCount,
-            DependencyIssues = allDependencyIssues
+            DependencyIssues = allDependencyIssues,
+            CraReadinessScore = craReadinessScore
         };
+    }
+
+    /// <summary>
+    /// Calculate weighted CRA readiness score (0-100) across all compliance items.
+    /// </summary>
+    public static int CalculateCraReadinessScore(List<CraComplianceItem> items)
+    {
+        // Weights by CRA importance (should sum to 100)
+        var weights = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CRA Art. 10(4) - Exploited Vulnerabilities (CISA KEV)"] = 15,
+            ["CRA Art. 11 - Vulnerability Handling"] = 15,
+            ["CRA Art. 10 - Software Bill of Materials"] = 10,
+            ["CRA Annex I Part I(1) - Release Readiness"] = 10,
+            ["CRA Art. 11(4) - Remediation Timeliness"] = 8,
+            ["CRA Art. 10(4) - Exploit Probability (EPSS)"] = 7,
+            ["CRA Art. 10(6) - Security Updates"] = 6,
+            ["CRA Art. 13(8) - Support Period"] = 5,
+            ["CRA Annex I Part I(10) - Attack Surface"] = 5,
+            ["CRA Annex I Part II(1) - SBOM Completeness"] = 5,
+            ["CRA Art. 13(5) - Package Provenance"] = 4,
+            ["CRA Annex II - Documentation"] = 3,
+            ["CRA Art. 10(9) - License Information"] = 2,
+            ["CRA Art. 11(5) - Security Policy"] = 2,
+            ["CRA Art. 10 - No Deprecated Components"] = 1,
+            ["CRA Art. 10 - Cryptographic Compliance"] = 1,
+            ["CRA Art. 10 - Supply Chain Integrity"] = 1,
+        };
+
+        double totalWeight = 0;
+        double earnedWeight = 0;
+
+        foreach (var item in items)
+        {
+            var weight = weights.GetValueOrDefault(item.Requirement, 2); // default weight for unknown items
+            totalWeight += weight;
+            var multiplier = item.Status switch
+            {
+                CraComplianceStatus.Compliant => 1.0,
+                CraComplianceStatus.Review => 0.5,
+                CraComplianceStatus.ActionRequired => 0.25,
+                CraComplianceStatus.NonCompliant => 0.0,
+                _ => 0.0
+            };
+            earnedWeight += weight * multiplier;
+        }
+
+        return totalWeight > 0 ? (int)Math.Round(100.0 * earnedWeight / totalWeight) : 0;
     }
 
     private static CraComplianceStatus DetermineOverallStatus(List<CraComplianceItem> items)
@@ -358,6 +634,42 @@ public sealed partial class CraReportGenerator
         }
         sb.AppendLine("      </ul>");
         sb.AppendLine("    </div>");
+        // CRA Details nav group
+        sb.AppendLine("    <div class=\"nav-section\">");
+        sb.AppendLine("      <div class=\"nav-label\">CRA Details</div>");
+        sb.AppendLine("      <ul class=\"nav-links\">");
+        if (_remediationData.Count > 0)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z\"/><path d=\"M12 6v6l4 2\"/></svg>");
+            sb.AppendLine($"          Remediation<span class=\"nav-badge warning\">{_remediationData.Count}</span></a></li>");
+        }
+        if (_attackSurface is not null)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('attack-surface')\" data-section=\"attack-surface\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/></svg>");
+            sb.AppendLine("          Attack Surface</a></li>");
+        }
+        if (_sbomValidation is not null)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('sbom-quality')\" data-section=\"sbom-quality\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 11l3 3L22 4\"/><path d=\"M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11\"/></svg>");
+            sb.AppendLine("          SBOM Quality</a></li>");
+        }
+        if (_provenanceResults.Count > 0)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('provenance')\" data-section=\"provenance\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0110 0v4\"/></svg>");
+            sb.AppendLine("          Provenance</a></li>");
+        }
+        if (_archivedPackageNames.Count > 0 || _stalePackageNames.Count > 0 || _unmaintainedPackageNames.Count > 0)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('maintenance')\" data-section=\"maintenance\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z\"/></svg>");
+            sb.AppendLine("          Maintenance</a></li>");
+        }
+        sb.AppendLine("      </ul>");
+        sb.AppendLine("    </div>");
         sb.AppendLine("  </div>");
         sb.AppendLine("  <div class=\"theme-section\">");
         sb.AppendLine("    <div class=\"theme-toggle\">");
@@ -436,6 +748,42 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</section>");
         }
 
+        // CRA Detail Sections (v1.2)
+        if (_remediationData.Count > 0)
+        {
+            sb.AppendLine("<section id=\"remediation\" class=\"section\">");
+            GenerateRemediationSection(sb);
+            sb.AppendLine("</section>");
+        }
+
+        if (_attackSurface is not null)
+        {
+            sb.AppendLine("<section id=\"attack-surface\" class=\"section\">");
+            GenerateAttackSurfaceSection(sb);
+            sb.AppendLine("</section>");
+        }
+
+        if (_sbomValidation is not null)
+        {
+            sb.AppendLine("<section id=\"sbom-quality\" class=\"section\">");
+            GenerateSbomQualitySection(sb);
+            sb.AppendLine("</section>");
+        }
+
+        if (_provenanceResults.Count > 0)
+        {
+            sb.AppendLine("<section id=\"provenance\" class=\"section\">");
+            GenerateProvenanceSection(sb);
+            sb.AppendLine("</section>");
+        }
+
+        if (_archivedPackageNames.Count > 0 || _stalePackageNames.Count > 0 || _unmaintainedPackageNames.Count > 0)
+        {
+            sb.AppendLine("<section id=\"maintenance\" class=\"section\">");
+            GenerateMaintenanceSection(sb);
+            sb.AppendLine("</section>");
+        }
+
         // Compliance Section
         sb.AppendLine("<section id=\"compliance\" class=\"section\">");
         GenerateComplianceSection(sb, report);
@@ -489,24 +837,8 @@ public sealed partial class CraReportGenerator
 
         sb.AppendLine("<div class=\"overview-grid\">");
 
-        // CRA Compliance Score Card - based purely on regulatory requirements
-        var craScore = CalculateProjectCraScore(_healthDataCache ?? [], _transitiveDataCache ?? [], report.VulnerabilityCount);
-        var craScoreClass = GetCraScoreClass(craScore);
-        sb.AppendLine("  <div class=\"card score-card\">");
-        sb.AppendLine("    <h3>CRA Score</h3>");
-        sb.AppendLine($"    <div class=\"score-gauge {craScoreClass}\">");
-        sb.AppendLine($"      <svg viewBox=\"0 0 100 50\">");
-        sb.AppendLine($"        <path class=\"gauge-bg\" d=\"M 10 50 A 40 40 0 0 1 90 50\" />");
-        var craAngle = 180 * (craScore / 100.0);
-        sb.AppendLine($"        <path class=\"gauge-fill\" d=\"M 10 50 A 40 40 0 0 1 90 50\" style=\"stroke-dasharray: {craAngle * 1.26}, 226\" />");
-        sb.AppendLine($"      </svg>");
-        sb.AppendLine($"      <div class=\"score-value\">{craScore}</div>");
-        sb.AppendLine("    </div>");
-        sb.AppendLine($"    <div class=\"score-label {craScoreClass}\">Vulnerabilities + Licenses</div>");
-        sb.AppendLine("  </div>");
-
         // Health Score Card - based on freshness, activity, popularity
-        sb.AppendLine("  <div class=\"card score-card\">");
+        sb.AppendLine("  <div class=\"card score-card\" title=\"Average health of your dependencies based on repository freshness, commit activity, community engagement, and maintenance status.\">");
         sb.AppendLine("    <h3>Health Score</h3>");
         sb.AppendLine($"    <div class=\"score-gauge {GetScoreClass(report.HealthScore)}\">");
         sb.AppendLine($"      <svg viewBox=\"0 0 100 50\">");
@@ -519,8 +851,22 @@ public sealed partial class CraReportGenerator
         sb.AppendLine($"    <div class=\"score-label {GetScoreClass(report.HealthScore)}\">Freshness + Activity</div>");
         sb.AppendLine("  </div>");
 
+        // CRA Readiness Score Card
+        sb.AppendLine($"  <div class=\"card score-card\" title=\"Weighted compliance score across all EU Cyber Resilience Act requirements. Critical items like known exploited vulnerabilities carry more weight than documentation checks.\">");
+        sb.AppendLine("    <h3>CRA Readiness</h3>");
+        sb.AppendLine($"    <div class=\"score-gauge {GetScoreClass(report.CraReadinessScore)}\">");
+        sb.AppendLine($"      <svg viewBox=\"0 0 100 50\">");
+        sb.AppendLine($"        <path class=\"gauge-bg\" d=\"M 10 50 A 40 40 0 0 1 90 50\" />");
+        var readinessAngle = 180 * (report.CraReadinessScore / 100.0);
+        sb.AppendLine($"        <path class=\"gauge-fill\" d=\"M 10 50 A 40 40 0 0 1 90 50\" style=\"stroke-dasharray: {readinessAngle * 1.26}, 226\" />");
+        sb.AppendLine($"      </svg>");
+        sb.AppendLine($"      <div class=\"score-value\">{report.CraReadinessScore}</div>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine($"    <div class=\"score-label {GetScoreClass(report.CraReadinessScore)}\">Weighted Compliance</div>");
+        sb.AppendLine("  </div>");
+
         // Compliance Status Card
-        sb.AppendLine($"  <div class=\"card status-card {statusClass}\">");
+        sb.AppendLine($"  <div class=\"card status-card {statusClass}\" title=\"Overall compliance status based on EU Cyber Resilience Act Articles 10, 11, 13 and Annexes I, II. ActionRequired means one or more items need attention before the product can be considered CRA-compliant.\">");
         sb.AppendLine("    <h3>CRA Compliance</h3>");
         sb.AppendLine($"    <div class=\"big-status\">{report.OverallComplianceStatus}</div>");
         var compliantCount = report.ComplianceItems.Count(i => i.Status == CraComplianceStatus.Compliant);
@@ -529,23 +875,23 @@ public sealed partial class CraReportGenerator
 
         // Summary Cards
         var totalPackages = report.PackageCount + report.TransitivePackageCount;
-        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine("  <div class=\"card metric-card\" title=\"Total number of direct and transitive (indirect) dependencies in your project. Each package increases your supply chain attack surface.\">");
         sb.AppendLine($"    <div class=\"metric-value\">{totalPackages}</div>");
         sb.AppendLine($"    <div class=\"metric-label\">Total Packages</div>");
         sb.AppendLine($"    <div class=\"metric-detail\">{report.PackageCount} direct + {report.TransitivePackageCount} transitive</div>");
         sb.AppendLine("  </div>");
 
-        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine("  <div class=\"card metric-card\" title=\"Known security vulnerabilities found in your dependencies by scanning the OSV (Open Source Vulnerabilities) database.\">");
         sb.AppendLine($"    <div class=\"metric-value {(report.VulnerabilityCount > 0 ? "critical" : "")}\">{report.VulnerabilityCount}</div>");
         sb.AppendLine("    <div class=\"metric-label\">Vulnerabilities</div>");
         sb.AppendLine("  </div>");
 
-        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine("  <div class=\"card metric-card\" title=\"Packages with severe issues: known exploited vulnerabilities (CISA KEV), critical CVSS scores, or high EPSS exploit probability.\">");
         sb.AppendLine($"    <div class=\"metric-value {(report.CriticalPackageCount > 0 ? "critical" : "")}\">{report.CriticalPackageCount}</div>");
         sb.AppendLine("    <div class=\"metric-label\">Critical Packages</div>");
         sb.AppendLine("  </div>");
 
-        sb.AppendLine("  <div class=\"card metric-card\">");
+        sb.AppendLine("  <div class=\"card metric-card\" title=\"Cases where different packages require different versions of the same dependency, which can cause runtime issues.\">");
         sb.AppendLine($"    <div class=\"metric-value {(report.VersionConflictCount > 0 ? "warning" : "")}\">{report.VersionConflictCount}</div>");
         sb.AppendLine("    <div class=\"metric-label\">Version Conflicts</div>");
         sb.AppendLine("  </div>");
@@ -560,7 +906,7 @@ public sealed partial class CraReportGenerator
         };
         var unknownCount = licenseReport.CategoryDistribution.GetValueOrDefault(LicenseCompatibility.LicenseCategory.Unknown, 0);
 
-        sb.AppendLine($"  <div class=\"card metric-card license-card\" onclick=\"showSection('licenses')\" style=\"cursor: pointer;\">");
+        sb.AppendLine($"  <div class=\"card metric-card license-card\" onclick=\"showSection('licenses')\" style=\"cursor: pointer;\" title=\"License compatibility analysis across all dependencies. Checks for copyleft conflicts, unknown licenses, and compliance risks. Click to view details.\">");
         sb.AppendLine($"    <div class=\"metric-value {licenseStatusClass}\">{(licenseReport.ErrorCount == 0 ? "✓" : licenseReport.ErrorCount.ToString())}</div>");
         sb.AppendLine($"    <div class=\"metric-label\">License Status</div>");
         sb.AppendLine($"    <div class=\"metric-detail\">{licenseReport.OverallStatus}{(unknownCount > 0 ? $" ({unknownCount} unknown)" : "")}</div>");
@@ -1167,6 +1513,356 @@ public sealed partial class CraReportGenerator
             }
         }
         sb.AppendLine("  </div>");
+    }
+
+    // =============================================
+    // v1.2 CRA Detail Sections
+    // =============================================
+
+    private void GenerateRemediationSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Remediation Actions</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">What is this?</div>");
+        sb.AppendLine("  <p>These are known security vulnerabilities in your dependencies that already have a fix available &mdash; you just need to update the package version. The <strong>Days Overdue</strong> column shows how long the fix has been available but not applied.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>What to do:</strong> Run <code>dotnet add package [name] --version [patch version]</code> or update your <code>package.json</code> to the patched version shown below. Prioritize packages marked in red first.</p>");
+        sb.AppendLine("</div>");
+
+        var sorted = _remediationData.OrderByDescending(r => r.DaysSince).ToList();
+
+        sb.AppendLine("<table class=\"detail-table\">");
+        sb.AppendLine("  <thead><tr>");
+        sb.AppendLine("    <th title=\"The package that contains the vulnerability\">Package</th>");
+        sb.AppendLine("    <th title=\"The vulnerability identifier &mdash; search this on osv.dev for full details\">Vulnerability</th>");
+        sb.AppendLine("    <th title=\"Update to this version to fix the vulnerability\">Update To</th>");
+        sb.AppendLine("    <th title=\"How many days this fix has been available. Red = 30+ days, Yellow = 7-29 days\">Days Overdue</th>");
+        sb.AppendLine("  </tr></thead>");
+        sb.AppendLine("  <tbody>");
+
+        foreach (var item in sorted)
+        {
+            var urgencyClass = item.DaysSince >= 30 ? "critical" : item.DaysSince >= 7 ? "warning" : "ok";
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td><strong>{EscapeHtml(item.PackageId)}</strong></td>");
+            sb.AppendLine($"      <td><a href=\"https://osv.dev/vulnerability/{EscapeHtml(item.VulnId)}\" target=\"_blank\" style=\"color:var(--accent);text-decoration:none;\"><code>{EscapeHtml(item.VulnId)}</code></a></td>");
+            sb.AppendLine($"      <td><code>{EscapeHtml(item.PatchVersion)}</code></td>");
+            sb.AppendLine($"      <td><span class=\"days-overdue {urgencyClass}\">{item.DaysSince} days</span></td>");
+            sb.AppendLine("    </tr>");
+        }
+
+        sb.AppendLine("  </tbody>");
+        sb.AppendLine("</table>");
+    }
+
+    private void GenerateAttackSurfaceSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Attack Surface Analysis</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">What is this?</div>");
+        sb.AppendLine("  <p>Every dependency you add also pulls in its own dependencies (called <strong>transitive</strong> dependencies). These are packages you didn't choose, but any vulnerability in them affects your project. This section measures how wide and deep your dependency tree is.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Why it matters:</strong> A high ratio means each package you add brings many hidden dependencies. A deep tree means vulnerabilities can hide several layers down, making them hard to track and update.</p>");
+        sb.AppendLine("</div>");
+
+        var surface = _attackSurface!;
+
+        // Metric cards
+        var ratioClass = surface.TransitiveToDirectRatio < 5.0 ? "ok" : surface.TransitiveToDirectRatio >= 10.0 ? "critical" : "warning";
+        var depthClass = surface.MaxDepth < 8 ? "ok" : surface.MaxDepth >= 12 ? "critical" : "warning";
+
+        sb.AppendLine("<div class=\"surface-metrics\">");
+        sb.AppendLine("  <div class=\"surface-metric\" title=\"Packages you explicitly added to your project (in .csproj or package.json).\">");
+        sb.AppendLine($"    <div class=\"metric-big\">{surface.DirectCount}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Direct Dependencies</div>");
+        sb.AppendLine("    <div class=\"metric-hint\">Packages you chose</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"surface-metric\" title=\"Packages pulled in automatically by your direct dependencies. You didn't choose these, but they run in your project.\">");
+        sb.AppendLine($"    <div class=\"metric-big\">{surface.TransitiveCount}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Transitive Dependencies</div>");
+        sb.AppendLine("    <div class=\"metric-hint\">Pulled in automatically</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"surface-metric\" title=\"For every 1 package you add, this many come along as transitive dependencies. Lower is better. Under 5:1 is healthy, over 10:1 means your tree is very wide.\">");
+        sb.AppendLine($"    <div class=\"metric-big days-overdue {ratioClass}\">{surface.TransitiveToDirectRatio}:1</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Hidden Dependency Ratio</div>");
+        sb.AppendLine($"    <div class=\"metric-hint\">{(surface.TransitiveToDirectRatio < 5.0 ? "Healthy" : surface.TransitiveToDirectRatio >= 10.0 ? "Very wide &mdash; consider alternatives" : "Wider than ideal")}</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"surface-metric\" title=\"The deepest chain of dependencies. A depth of 8+ means updates to a deep package need to propagate through many layers before reaching you.\">");
+        sb.AppendLine($"    <div class=\"metric-big days-overdue {depthClass}\">{surface.MaxDepth}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Deepest Chain</div>");
+        sb.AppendLine($"    <div class=\"metric-hint\">{(surface.MaxDepth < 8 ? "Manageable depth" : surface.MaxDepth >= 12 ? "Very deep &mdash; slow to patch" : "Deeper than ideal")}</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // Thresholds reference - make it a table for clarity
+        sb.AppendLine("<div class=\"card\" style=\"margin-top:12px; padding:14px;\">");
+        sb.AppendLine("  <strong>How to read these numbers</strong>");
+        sb.AppendLine("  <table style=\"margin-top:8px;width:100%;font-size:0.9rem;\">");
+        sb.AppendLine("    <tr><td style=\"color:var(--healthy);padding:4px 8px;\">&#9679; Good</td><td>Ratio under 5:1, depth under 8 &mdash; manageable supply chain</td></tr>");
+        sb.AppendLine("    <tr><td style=\"color:var(--warning);padding:4px 8px;\">&#9679; Review</td><td>Ratio 5:1&ndash;10:1 or depth 8&ndash;11 &mdash; consider if all dependencies are needed</td></tr>");
+        sb.AppendLine("    <tr><td style=\"color:var(--critical);padding:4px 8px;\">&#9679; Action</td><td>Ratio over 10:1 or depth 12+ &mdash; evaluate lighter alternatives for heavy packages</td></tr>");
+        sb.AppendLine("  </table>");
+        sb.AppendLine("</div>");
+
+        // Heavy packages table
+        if (surface.HeavyPackages.Count > 0)
+        {
+            sb.AppendLine("<h3 style=\"margin-top:20px;\">Heavy Packages</h3>");
+            sb.AppendLine("<p style=\"color:var(--text-secondary);margin-bottom:12px;\">These packages each bring in over 20 transitive dependencies. They are the biggest contributors to your attack surface. Consider whether lighter alternatives exist.</p>");
+            sb.AppendLine("<table class=\"detail-table\">");
+            sb.AppendLine("  <thead><tr>");
+            sb.AppendLine("    <th title=\"The direct dependency that pulls in many transitive packages\">Package</th>");
+            sb.AppendLine("    <th title=\"How many additional packages this one brings into your project\">Hidden Packages Brought In</th>");
+            sb.AppendLine("  </tr></thead>");
+            sb.AppendLine("  <tbody>");
+
+            foreach (var (packageId, count) in surface.HeavyPackages)
+            {
+                var weight = count >= 100 ? "critical" : count >= 50 ? "warning" : "";
+                sb.AppendLine("    <tr>");
+                sb.AppendLine($"      <td><strong>{EscapeHtml(packageId)}</strong></td>");
+                sb.AppendLine($"      <td><span class=\"{weight}\">{count} packages</span></td>");
+                sb.AppendLine("    </tr>");
+            }
+
+            sb.AppendLine("  </tbody>");
+            sb.AppendLine("</table>");
+        }
+    }
+
+    private void GenerateSbomQualitySection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>SBOM Quality</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">What is this?</div>");
+        sb.AppendLine("  <p>A <strong>Software Bill of Materials (SBOM)</strong> is a list of every component in your project &mdash; like a nutrition label for software. The EU Cyber Resilience Act requires SBOMs to include specific fields for each package so that vulnerabilities can be traced and managed.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\">This section checks how complete your SBOM data is. A score of <strong>90% or higher</strong> means your SBOM meets the quality bar for CRA compliance. Missing fields don't block your build, but they weaken your ability to respond to security incidents.</p>");
+        sb.AppendLine("</div>");
+
+        var v = _sbomValidation!;
+        var completeness = v.CompletenessPercent;
+        var barClass = completeness >= 90 ? "high" : completeness >= 70 ? "medium" : "low";
+
+        // Overall completeness bar
+        sb.AppendLine("<div style=\"margin: 20px 0;\">");
+        sb.AppendLine("  <div style=\"display: flex; justify-content: space-between; margin-bottom: 6px;\">");
+        sb.AppendLine("    <strong>Overall Data Completeness</strong>");
+        sb.AppendLine($"    <strong class=\"{barClass}\">{completeness}%</strong>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"progress-bar-container\">");
+        sb.AppendLine($"    <div class=\"progress-bar-fill {barClass}\" style=\"width: {completeness}%\">{completeness}%</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine($"  <div style=\"color:var(--text-secondary);font-size:0.85rem;margin-top:6px;\">{(completeness >= 90 ? "Meets CRA quality requirements." : completeness >= 70 ? "Close to target &mdash; address the gaps below to reach 90%." : "Significant gaps &mdash; review which fields are missing below.")}</div>");
+        sb.AppendLine("</div>");
+
+        // Per-field breakdown
+        sb.AppendLine("<h3>Field-by-Field Breakdown</h3>");
+        sb.AppendLine("<p style=\"color:var(--text-secondary);margin-bottom:16px;\">Each card shows how many of your packages have that field populated. Hover for details on what each field means.</p>");
+        sb.AppendLine("<div class=\"field-grid\">");
+
+        // Document-level fields
+        AppendFieldCard(sb, "Timestamp", v.HasTimestamp ? "Present" : "Missing", v.HasTimestamp,
+            "When the SBOM was generated. Needed to know if your inventory is current.");
+        AppendFieldCard(sb, "Creator Tool", v.HasCreator ? "Present" : "Missing", v.HasCreator,
+            "Which tool generated the SBOM. Helps verify the data source is trustworthy.");
+
+        // Package-level fields
+        if (v.TotalPackages > 0)
+        {
+            AppendFieldCardWithBar(sb, "Supplier", v.WithSupplier, v.TotalPackages,
+                "Who published the package. Needed to contact maintainers about vulnerabilities.");
+            AppendFieldCardWithBar(sb, "License", v.WithLicense, v.TotalPackages,
+                "The license under which the package is distributed. Required for legal compliance.");
+            AppendFieldCardWithBar(sb, "Package URL (PURL)", v.WithPurl, v.TotalPackages,
+                "A universal identifier (like pkg:nuget/Newtonsoft.Json@13.0.1) that uniquely identifies the exact package version across all registries.");
+            AppendFieldCardWithBar(sb, "Checksum", v.WithChecksum, v.TotalPackages,
+                "A cryptographic hash verifying the package hasn't been tampered with since download.");
+        }
+
+        sb.AppendLine("</div>");
+    }
+
+    private static void AppendFieldCard(StringBuilder sb, string label, string value, bool ok, string tooltip)
+    {
+        sb.AppendLine($"  <div class=\"field-card\" title=\"{EscapeHtml(tooltip)}\">");
+        sb.AppendLine($"    <div class=\"field-label\">{EscapeHtml(label)}</div>");
+        sb.AppendLine($"    <div class=\"field-value\"><span class=\"status-pill {(ok ? "signed" : "unsigned")}\">{EscapeHtml(value)}</span></div>");
+        sb.AppendLine("  </div>");
+    }
+
+    private static void AppendFieldCardWithBar(StringBuilder sb, string label, int count, int total, string tooltip)
+    {
+        var pct = total > 0 ? (int)Math.Round(100.0 * count / total) : 0;
+        var barClass = pct >= 90 ? "high" : pct >= 70 ? "medium" : "low";
+        sb.AppendLine($"  <div class=\"field-card\" title=\"{EscapeHtml(tooltip)}\">");
+        sb.AppendLine($"    <div class=\"field-label\">{EscapeHtml(label)}</div>");
+        sb.AppendLine($"    <div style=\"display:flex;justify-content:space-between;margin-bottom:4px;\"><span>{count}/{total} packages</span><span>{pct}%</span></div>");
+        sb.AppendLine($"    <div class=\"progress-bar-container\"><div class=\"progress-bar-fill {barClass}\" style=\"width:{pct}%\"></div></div>");
+        sb.AppendLine("  </div>");
+    }
+
+    private void GenerateProvenanceSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Package Provenance</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">What is this?</div>");
+        sb.AppendLine("  <p><strong>Provenance</strong> means verifying that a package actually came from its claimed source. When NuGet signs a package, it creates a cryptographic proof that the package was published through the official registry and hasn't been tampered with.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Why it matters:</strong> Supply chain attacks work by injecting malicious code into packages. Signed packages are harder to tamper with. Unsigned packages aren't necessarily dangerous, but they lack this verification layer.</p>");
+        sb.AppendLine("</div>");
+
+        var verified = _provenanceResults.Count(r => r.IsVerified);
+        var total = _provenanceResults.Count;
+        var pct = total > 0 ? (int)Math.Round(100.0 * verified / total) : 0;
+
+        // Summary bar
+        var barClass = pct >= 90 ? "high" : pct >= 50 ? "medium" : "low";
+        sb.AppendLine("<div style=\"margin: 15px 0;\">");
+        sb.AppendLine("  <div style=\"display: flex; justify-content: space-between; margin-bottom: 6px;\">");
+        sb.AppendLine($"    <strong>{verified} of {total} packages verified</strong>");
+        sb.AppendLine($"    <strong class=\"{barClass}\">{pct}%</strong>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"progress-bar-container\">");
+        sb.AppendLine($"    <div class=\"progress-bar-fill {barClass}\" style=\"width: {pct}%\">{pct}% signed</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // Show unsigned packages first (they need attention)
+        var unsigned = _provenanceResults.Where(r => !r.IsVerified).OrderBy(r => r.PackageId).ToList();
+        var signed = _provenanceResults.Where(r => r.IsVerified).OrderBy(r => r.PackageId).ToList();
+
+        if (unsigned.Count > 0)
+        {
+            sb.AppendLine("<h3>Unsigned Packages</h3>");
+            sb.AppendLine("<p style=\"color:var(--text-secondary);margin-bottom:12px;\">These packages could not be verified through NuGet repository signatures. This is common for npm packages (signing support is newer) and some smaller NuGet packages. It doesn't mean they're malicious &mdash; but extra review may be warranted.</p>");
+            sb.AppendLine("<table class=\"detail-table\">");
+            sb.AppendLine("  <thead><tr>");
+            sb.AppendLine("    <th title=\"The package that couldn't be verified\">Package</th>");
+            sb.AppendLine("    <th>Version</th>");
+            sb.AppendLine("    <th title=\"NuGet or npm\">Ecosystem</th>");
+            sb.AppendLine("    <th>Status</th>");
+            sb.AppendLine("  </tr></thead>");
+            sb.AppendLine("  <tbody>");
+            foreach (var p in unsigned)
+            {
+                sb.AppendLine("    <tr>");
+                sb.AppendLine($"      <td><strong>{EscapeHtml(p.PackageId)}</strong></td>");
+                sb.AppendLine($"      <td>{EscapeHtml(p.Version)}</td>");
+                sb.AppendLine($"      <td>{p.Ecosystem}</td>");
+                sb.AppendLine("      <td><span class=\"status-pill unsigned\">Unsigned</span></td>");
+                sb.AppendLine("    </tr>");
+            }
+            sb.AppendLine("  </tbody></table>");
+        }
+
+        if (signed.Count > 0)
+        {
+            sb.AppendLine($"<details style=\"margin-top:16px;\"><summary><strong>Signed Packages ({signed.Count})</strong> &mdash; click to expand</summary>");
+            sb.AppendLine("<p style=\"color:var(--text-secondary);margin:8px 0;\">These packages have verified signatures, meaning they were published through official channels and haven't been modified in transit.</p>");
+            sb.AppendLine("<table class=\"detail-table\">");
+            sb.AppendLine("  <thead><tr><th>Package</th><th>Version</th><th>Ecosystem</th><th>Signature Type</th></tr></thead>");
+            sb.AppendLine("  <tbody>");
+            foreach (var p in signed)
+            {
+                var signType = p.HasAuthorSignature ? "Author + Repository" : "Repository";
+                var signHint = p.HasAuthorSignature ? "Signed by both the author and the registry" : "Signed by the package registry";
+                sb.AppendLine("    <tr>");
+                sb.AppendLine($"      <td><strong>{EscapeHtml(p.PackageId)}</strong></td>");
+                sb.AppendLine($"      <td>{EscapeHtml(p.Version)}</td>");
+                sb.AppendLine($"      <td>{p.Ecosystem}</td>");
+                sb.AppendLine($"      <td><span class=\"status-pill signed\" title=\"{signHint}\">{signType}</span></td>");
+                sb.AppendLine("    </tr>");
+            }
+            sb.AppendLine("  </tbody></table>");
+            sb.AppendLine("</details>");
+        }
+    }
+
+    private void GenerateMaintenanceSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Maintenance Status</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">What is this?</div>");
+        sb.AppendLine("  <p>This checks whether the open-source projects behind your dependencies are still being actively developed. If a project's GitHub repository is <strong>archived</strong> (read-only) or has had <strong>no commits for a long time</strong>, security patches won't be available when vulnerabilities are discovered.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>What to do:</strong> Archived and unmaintained packages should be replaced with actively maintained alternatives. Stale packages may still be fine (some libraries are \"done\"), but keep an eye on them.</p>");
+        sb.AppendLine("</div>");
+
+        // Summary metrics
+        var activeCount = _totalWithRepoData - _archivedPackageNames.Count - _stalePackageNames.Count;
+        sb.AppendLine("<div class=\"surface-metrics\">");
+        sb.AppendLine($"  <div class=\"surface-metric\" title=\"How many of your packages we could find GitHub repository data for. Packages without repo data are not shown here.\">");
+        sb.AppendLine($"    <div class=\"metric-big\">{_totalWithRepoData}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Packages Checked</div>");
+        sb.AppendLine("    <div class=\"metric-hint\">With GitHub repo data</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine($"  <div class=\"surface-metric\" title=\"Repositories marked as archived (read-only) by their owner. No further updates, bug fixes, or security patches will be released.\">");
+        sb.AppendLine($"    <div class=\"metric-big days-overdue {(_archivedPackageNames.Count > 0 ? "critical" : "ok")}\">{_archivedPackageNames.Count}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Archived</div>");
+        sb.AppendLine("    <div class=\"metric-hint\">No future updates possible</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine($"  <div class=\"surface-metric\" title=\"Packages whose GitHub repository has had no commits in over 1 year. May still be fine for stable libraries, but monitor closely.\">");
+        sb.AppendLine($"    <div class=\"metric-big days-overdue {(_stalePackageNames.Count > 0 ? "warning" : "ok")}\">{_stalePackageNames.Count}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Stale</div>");
+        sb.AppendLine("    <div class=\"metric-hint\">No commits in 1+ year</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine($"  <div class=\"surface-metric\" title=\"Packages with no commits in over 2 years. High risk of not receiving security patches. Strongly consider replacing.\">");
+        sb.AppendLine($"    <div class=\"metric-big days-overdue {(_unmaintainedPackageNames.Count > 0 ? "critical" : "ok")}\">{_unmaintainedPackageNames.Count}</div>");
+        sb.AppendLine("    <div class=\"metric-label\">Unmaintained</div>");
+        sb.AppendLine("    <div class=\"metric-hint\">No commits in 2+ years</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        if (_archivedPackageNames.Count > 0)
+        {
+            sb.AppendLine("<div class=\"maintenance-group\">");
+            sb.AppendLine("  <h4>Archived Repositories</h4>");
+            sb.AppendLine("  <p style=\"margin:0 0 8px;color:var(--text-secondary);font-size:0.9rem;\">The owner has made these repositories read-only. No bug fixes or security patches will be released. You should find replacement packages.</p>");
+            sb.AppendLine("  <div class=\"maintenance-list\">");
+            foreach (var pkg in _archivedPackageNames)
+            {
+                sb.AppendLine($"    <span class=\"maintenance-pkg\"><span class=\"status-pill archived\">Archived</span> {EscapeHtml(pkg)}</span>");
+            }
+            sb.AppendLine("  </div>");
+            sb.AppendLine("</div>");
+        }
+
+        if (_stalePackageNames.Count > 0)
+        {
+            sb.AppendLine("<div class=\"maintenance-group\">");
+            sb.AppendLine("  <h4>Stale Packages</h4>");
+            sb.AppendLine("  <p style=\"margin:0 0 8px;color:var(--text-secondary);font-size:0.9rem;\">No commits in over a year. Some libraries are stable and \"done\" (e.g., math utilities), but others may simply be abandoned. Check if alternatives exist.</p>");
+            sb.AppendLine("  <div class=\"maintenance-list\">");
+            foreach (var pkg in _stalePackageNames)
+            {
+                var alsoUnmaintained = _unmaintainedPackageNames.Contains(pkg);
+                var pillClass = alsoUnmaintained ? "unmaintained" : "stale";
+                var pillLabel = alsoUnmaintained ? "2+ years" : "1+ year";
+                sb.AppendLine($"    <span class=\"maintenance-pkg\"><span class=\"status-pill {pillClass}\">{pillLabel}</span> {EscapeHtml(pkg)}</span>");
+            }
+            sb.AppendLine("  </div>");
+            sb.AppendLine("</div>");
+        }
+
+        // Show healthy count
+        if (activeCount > 0)
+        {
+            sb.AppendLine("<div class=\"maintenance-group\">");
+            sb.AppendLine($"  <h4>Actively Maintained ({activeCount} packages)</h4>");
+            sb.AppendLine("  <p style=\"margin:0;color:var(--text-secondary);font-size:0.9rem;\">These packages have commits within the last year &mdash; they're likely to receive security patches when needed.</p>");
+            sb.AppendLine("</div>");
+        }
     }
 
     private void GenerateComplianceSection(StringBuilder sb, CraReport report)
@@ -3827,6 +4523,183 @@ public sealed partial class CraReportGenerator
         grid-template-columns: 1fr;
       }
     }
+
+    /* ===== v1.2 Detail Sections ===== */
+
+    .detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    .detail-table th, .detail-table td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .detail-table th {
+      background: var(--bg-secondary);
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-secondary);
+    }
+    .detail-table tr:hover {
+      background: var(--bg-secondary);
+    }
+
+    .days-overdue {
+      font-weight: 600;
+    }
+    .days-overdue.critical { color: var(--danger); }
+    .days-overdue.warning { color: var(--warning-text, #856404); }
+    .days-overdue.ok { color: var(--success); }
+
+    .status-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .status-pill.signed { background: var(--success-light, #d4edda); color: var(--success); }
+    .status-pill.unsigned { background: var(--bg-secondary); color: var(--text-secondary); }
+    .status-pill.archived { background: var(--danger-light); color: var(--danger); }
+    .status-pill.stale { background: var(--warning-light); color: var(--warning-text, #856404); }
+    .status-pill.unmaintained { background: #fce4ec; color: #c0392b; }
+    .status-pill.active { background: var(--success-light, #d4edda); color: var(--success); }
+
+    .progress-bar-container {
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      height: 22px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      transition: width 0.3s;
+      display: flex;
+      align-items: center;
+      padding-left: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #fff;
+      min-width: fit-content;
+    }
+    .progress-bar-fill.high { background: var(--success); }
+    .progress-bar-fill.medium { background: var(--warning); }
+    .progress-bar-fill.low { background: var(--danger); }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 15px;
+    }
+    .field-card {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .field-card .field-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .field-card .field-value {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .surface-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 15px 0;
+    }
+    .surface-metric {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .surface-metric .metric-big {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .surface-metric .metric-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+    .surface-metric .metric-hint {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      opacity: 0.8;
+      font-style: italic;
+    }
+
+    .info-box {
+      background: rgba(76, 175, 255, 0.06);
+      border: 1px solid rgba(76, 175, 255, 0.2);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 16px 18px;
+      margin: 16px 0;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+    .info-box .info-box-title {
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 6px;
+      font-size: 0.88rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .info-box p {
+      margin: 0;
+      color: var(--text-secondary);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-secondary);
+    }
+    .empty-state .empty-icon {
+      font-size: 2rem;
+      margin-bottom: 10px;
+    }
+
+    .maintenance-group {
+      margin-bottom: 20px;
+    }
+    .maintenance-group h4 {
+      margin: 0 0 8px 0;
+      font-size: 0.95rem;
+    }
+    .maintenance-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .maintenance-pkg {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      border: 1px solid var(--border);
+      background: var(--bg-primary);
+    }
   </style>";
     }
 
@@ -4377,6 +5250,28 @@ function filterTreeByEcosystem(ecosystem) {{
     private bool _typosquatChecked;
     private CryptoComplianceResult? _cryptoCompliance;
 
+    // Phase 1: Maintenance data (F1/F2)
+    private List<string> _archivedPackageNames = [];
+    private List<string> _stalePackageNames = [];
+    private List<string> _unmaintainedPackageNames = [];
+    private int _totalWithRepoData;
+
+    // Phase 1: Documentation (F3)
+    private bool _hasReadme;
+    private bool _hasSecurityContact;
+    private bool _hasSupportPeriod;
+    private bool _hasChangelog;
+
+    // Phase 2: Remediation (F5)
+    private List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)> _remediationData = [];
+
+    // Phase 3: Attack surface (F7) and SBOM validation (F8)
+    private AttackSurfaceResult? _attackSurface;
+    private SbomValidationResult? _sbomValidation;
+
+    // Phase 4: Provenance (F9)
+    private List<ProvenanceResult> _provenanceResults = [];
+
     /// <summary>
     /// Get cached list of package licenses (computed once from health and transitive data).
     /// </summary>
@@ -4474,6 +5369,60 @@ function filterTreeByEcosystem(ecosystem) {{
     public void SetCryptoCompliance(CryptoComplianceResult result)
     {
         _cryptoCompliance = result;
+    }
+
+    /// <summary>
+    /// Set maintenance data for CRA Art. 10(6) and Art. 13(8).
+    /// </summary>
+    public void SetMaintenanceData(List<string> archived, List<string> stale, List<string> unmaintained, int totalWithRepoData)
+    {
+        _archivedPackageNames = archived;
+        _stalePackageNames = stale;
+        _unmaintainedPackageNames = unmaintained;
+        _totalWithRepoData = totalWithRepoData;
+    }
+
+    /// <summary>
+    /// Set project documentation status for CRA Annex II.
+    /// </summary>
+    public void SetProjectDocumentation(bool hasReadme, bool hasSecurityContact, bool hasSupportPeriod, bool hasChangelog)
+    {
+        _hasReadme = hasReadme;
+        _hasSecurityContact = hasSecurityContact;
+        _hasSupportPeriod = hasSupportPeriod;
+        _hasChangelog = hasChangelog;
+    }
+
+    /// <summary>
+    /// Set vulnerability remediation data for CRA Art. 11(4).
+    /// </summary>
+    public void SetRemediationData(List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)> data)
+    {
+        _remediationData = data;
+    }
+
+    /// <summary>
+    /// Set attack surface analysis data for CRA Annex I Part I(10).
+    /// </summary>
+    public void SetAttackSurfaceData(AttackSurfaceResult result)
+    {
+        _attackSurface = result;
+    }
+
+    /// <summary>
+    /// Set SBOM validation data for CRA Annex I Part II(1).
+    /// </summary>
+    public void SetSbomValidation(SbomValidationResult result)
+    {
+        _sbomValidation = result;
+    }
+
+    /// <summary>
+    /// Set package provenance results for CRA Art. 13(5).
+    /// </summary>
+    public void SetProvenanceResults(List<ProvenanceResult> results)
+    {
+        _provenanceResults = results;
     }
 
     /// <summary>
@@ -5154,6 +6103,7 @@ public sealed class CraReport
     public required int CriticalPackageCount { get; init; }
     public int VersionConflictCount { get; init; }
     public List<DependencyIssue> DependencyIssues { get; init; } = [];
+    public int CraReadinessScore { get; init; }
 }
 
 public sealed class CraComplianceItem

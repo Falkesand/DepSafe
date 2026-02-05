@@ -77,7 +77,7 @@ public sealed class SbomPackage
     public List<SbomExternalRef>? ExternalRefs { get; init; }
 
     [JsonPropertyName("checksums")]
-    public List<SbomChecksum>? Checksums { get; init; }
+    public List<SbomChecksum>? Checksums { get; set; }
 
     /// <summary>Package ecosystem for internal use (not serialized to SBOM).</summary>
     [JsonIgnore]
