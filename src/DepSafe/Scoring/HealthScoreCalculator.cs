@@ -69,7 +69,9 @@ public sealed class HealthScoreCalculator
                 : [],
             Recommendations = recommendations,
             Dependencies = nugetInfo.Dependencies,
-            DependencyType = dependencyType
+            DependencyType = dependencyType,
+            LatestVersion = nugetInfo.LatestVersion,
+            PeerDependencies = [] // NuGet doesn't have peer dependencies concept
         };
     }
 
@@ -122,7 +124,9 @@ public sealed class HealthScoreCalculator
             Recommendations = recommendations,
             Dependencies = dependencies,
             DependencyType = dependencyType,
-            Ecosystem = PackageEcosystem.Npm
+            Ecosystem = PackageEcosystem.Npm,
+            LatestVersion = npmInfo.LatestVersion,
+            PeerDependencies = npmInfo.PeerDependencies
         };
     }
 

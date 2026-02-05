@@ -2515,6 +2515,61 @@ public sealed class CraReportGenerator
       opacity: 0.4;
     }
 
+    .dep-peer {
+      background: #fff3e0;
+      border-color: #ff9800;
+      color: #e65100;
+    }
+
+    [data-theme=""dark""] .dep-peer {
+      background: #3d2a0f;
+      border-color: #ff9800;
+      color: #ffb74d;
+    }
+
+    .dep-peer:hover {
+      background: #ff9800;
+      color: white;
+      border-color: #ff9800;
+    }
+
+    .peer-range {
+      font-size: 0.7rem;
+      opacity: 0.8;
+      margin-left: 4px;
+    }
+
+    .peer-deps h4 {
+      color: var(--warning);
+    }
+
+    /* Version status indicators */
+    .version-current {
+      color: var(--success);
+      font-weight: 600;
+    }
+
+    .version-upgrade {
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .version-upgrade.upgrade-patch {
+      background: var(--success-light);
+      color: var(--success);
+    }
+
+    .version-upgrade.upgrade-minor {
+      background: var(--warning-light);
+      color: var(--warning);
+    }
+
+    .version-upgrade.upgrade-major {
+      background: var(--danger-light);
+      color: var(--danger);
+    }
+
     .package-card.highlight {
       animation: highlightPulse 2s ease-out;
     }
@@ -3552,6 +3607,16 @@ function renderPackageDetails(pkg) {{
     if (pkg.daysSinceLastRelease !== null) {{
       html += '<div class=""detail-item""><span class=""label"">Last Release</span><span class=""value"">' + formatDaysSince(pkg.daysSinceLastRelease) + '</span></div>';
     }}
+    // Version status - show if newer version available
+    if (pkg.latestVersion) {{
+      var versionStatus = compareVersions(pkg.version, pkg.latestVersion);
+      if (versionStatus.isLatest) {{
+        html += '<div class=""detail-item""><span class=""label"">Version Status</span><span class=""value""><span class=""version-current"">&#10003; Latest</span></span></div>';
+      }} else {{
+        var urgencyClass = versionStatus.urgency;
+        html += '<div class=""detail-item""><span class=""label"">Latest Available</span><span class=""value""><span class=""version-upgrade ' + urgencyClass + '"">&#8593; ' + escapeHtml(pkg.latestVersion) + '</span></span></div>';
+      }}
+    }}
     if (pkg.releasesPerYear > 0) {{
       html += '<div class=""detail-item""><span class=""label"">Releases/Year</span><span class=""value"">' + pkg.releasesPerYear.toFixed(1) + '</span></div>';
     }}
@@ -3577,6 +3642,16 @@ function renderPackageDetails(pkg) {{
   // Vulnerabilities
   if (pkg.vulnCount > 0) {{
     html += '<div class=""vulnerabilities-badge""><span class=""vuln-count"">' + pkg.vulnCount + ' vulnerabilities</span></div>';
+  }}
+
+  // Peer dependencies (npm only)
+  if (pkg.peerDependencies && pkg.peerDependencies.length > 0) {{
+    html += '<div class=""package-dependencies peer-deps""><h4>Peer Dependencies (' + pkg.peerDependencies.length + ')</h4><div class=""dep-list"">';
+    pkg.peerDependencies.forEach(function(dep) {{
+      var url = 'https://www.npmjs.com/package/' + encodeURIComponent(dep.id);
+      html += '<a href=""' + url + '"" target=""_blank"" class=""dep-item dep-peer"" title=""Required: ' + escapeHtml(dep.range || 'any') + '"">' + escapeHtml(dep.id) + ' <span class=""peer-range"">' + escapeHtml(dep.range || '') + '</span></a>';
+    }});
+    html += '</div></div>';
   }}
 
   // Dependencies
@@ -3656,13 +3731,49 @@ function escapeJs(str) {{
   return str.replace(/\\/g, '\\\\').replace(/'/g, ""\\'"");
 }}
 
+function compareVersions(current, latest) {{
+  if (!current || !latest) return {{ isLatest: true, urgency: """" }};
+
+  // Normalize versions - remove leading v, handle pre-release
+  var normCurrent = current.replace(/^v/, """").split(""-"")[0];
+  var normLatest = latest.replace(/^v/, """").split(""-"")[0];
+
+  if (normCurrent === normLatest) return {{ isLatest: true, urgency: """" }};
+
+  // Parse semver parts
+  var currParts = normCurrent.split(""."").map(function(p) {{ return parseInt(p, 10) || 0; }});
+  var lateParts = normLatest.split(""."").map(function(p) {{ return parseInt(p, 10) || 0; }});
+
+  // Pad arrays to same length
+  while (currParts.length < 3) currParts.push(0);
+  while (lateParts.length < 3) lateParts.push(0);
+
+  // Compare major.minor.patch
+  var majorDiff = lateParts[0] - currParts[0];
+  var minorDiff = lateParts[1] - currParts[1];
+  var patchDiff = lateParts[2] - currParts[2];
+
+  // Determine urgency based on version difference
+  var urgency = ""upgrade-patch"";
+  if (majorDiff > 0) {{
+    urgency = ""upgrade-major"";
+  }} else if (majorDiff === 0 && minorDiff > 0) {{
+    urgency = ""upgrade-minor"";
+  }} else if (majorDiff < 0 || (majorDiff === 0 && minorDiff < 0)) {{
+    // Current is actually newer than latest
+    return {{ isLatest: true, urgency: """" }};
+  }}
+
+  return {{ isLatest: false, urgency: urgency }};
+}}
+
 function navigateToPackage(packageIdOrName) {{
   // Normalize to lowercase for data-name lookup
-  const nameLower = packageIdOrName.toLowerCase();
+  var nameLower = packageIdOrName.toLowerCase();
 
   // Try to find by ID first (case-preserved), then by data-name (lowercase)
-  let target = document.getElementById('pkg-' + packageIdOrName) ||
-               document.querySelector(`.package-card[data-name='${{nameLower}}']`);
+  var target = document.getElementById('pkg-' + packageIdOrName) ||
+               document.querySelector("".package-card[data-name='"" + nameLower + ""']"");
 
   if (target) {{
     showSection('packages');
@@ -4165,7 +4276,9 @@ function filterTreeByEcosystem(ecosystem) {{
             recommendations = pkg.Recommendations,
             vulnCount = pkg.Vulnerabilities.Count,
             dependencies = pkg.Dependencies.Select(d => new { id = d.PackageId, range = d.VersionRange }).ToList(),
-            parents = parents ?? []
+            parents = parents ?? [],
+            latestVersion = pkg.LatestVersion,
+            peerDependencies = pkg.PeerDependencies.Select(p => new { id = p.Key, range = p.Value }).ToList()
         };
     }
 

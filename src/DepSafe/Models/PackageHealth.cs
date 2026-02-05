@@ -25,6 +25,12 @@ public sealed class PackageHealth
     public string? License { get; init; }
     public List<string> Vulnerabilities { get; init; } = [];
 
+    /// <summary>Latest available version of the package.</summary>
+    public string? LatestVersion { get; init; }
+
+    /// <summary>Peer dependencies (npm only) - packages that must be installed alongside.</summary>
+    public Dictionary<string, string> PeerDependencies { get; init; } = [];
+
     /// <summary>True if this package has a vulnerability in the CISA KEV catalog (actively exploited).</summary>
     public bool HasKevVulnerability { get; set; }
 
