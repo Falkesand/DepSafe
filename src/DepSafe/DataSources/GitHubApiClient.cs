@@ -601,9 +601,9 @@ public sealed partial class GitHubApiClient
             _rateLimitReset = rateLimit.Resources.Core.Reset.UtcDateTime;
             _isRateLimited = _remainingRequests <= 0;
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore rate limit check errors
+            Console.Error.WriteLine($"[WARN] Failed to check GitHub rate limit: {ex.Message}");
         }
     }
 

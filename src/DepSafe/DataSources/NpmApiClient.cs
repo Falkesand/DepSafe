@@ -141,8 +141,9 @@ public sealed class NpmApiClient : IDisposable
 
             return doc?["downloads"]?.GetValue<long>() ?? 0;
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"[WARN] Failed to fetch download count for {packageName}: {ex.Message}");
             return 0;
         }
     }

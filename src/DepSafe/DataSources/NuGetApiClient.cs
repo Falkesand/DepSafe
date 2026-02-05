@@ -177,9 +177,9 @@ public sealed class NuGetApiClient : IDisposable
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Silently ignore dependency fetching failures - dependencies are optional
+            Console.Error.WriteLine($"[WARN] Failed to fetch dependencies for {packageIdentity.Id}: {ex.Message}");
         }
 
         return dependencies;
@@ -281,9 +281,9 @@ public sealed class NuGetApiClient : IDisposable
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore errors parsing props file
+            Console.Error.WriteLine($"[WARN] Failed to parse {propsPath}: {ex.Message}");
         }
 
         return versions;

@@ -63,8 +63,9 @@ public sealed class CisaKevService : IDisposable
 
             await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
             _kevCves = [];
         }
     }
