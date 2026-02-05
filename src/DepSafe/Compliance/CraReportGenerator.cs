@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DepSafe.Models;
 
 namespace DepSafe.Compliance;
@@ -7,10 +8,20 @@ namespace DepSafe.Compliance;
 /// <summary>
 /// Generates comprehensive CRA compliance reports combining SBOM, VEX, and health data.
 /// </summary>
-public sealed class CraReportGenerator
+public sealed partial class CraReportGenerator
 {
     private readonly SbomGenerator _sbomGenerator;
     private readonly VexGenerator _vexGenerator;
+
+    // Compiled regex for parsing PURLs (used repeatedly in FormatPurlForSbom)
+    [GeneratedRegex(@"pkg:nuget/([^@]+)", RegexOptions.Compiled)]
+    private static partial Regex PurlRegex();
+
+    // Static JsonSerializerOptions to avoid per-call allocations
+    private static readonly JsonSerializerOptions CamelCaseOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     public CraReportGenerator(SbomGenerator? sbomGenerator = null, VexGenerator? vexGenerator = null)
     {
@@ -480,19 +491,8 @@ public sealed class CraReportGenerator
         sb.AppendLine("    <div class=\"metric-label\">Version Conflicts</div>");
         sb.AppendLine("  </div>");
 
-        // License Summary Card
-        var packageLicenses = new List<(string PackageId, string? License)>();
-        if (_healthDataCache != null)
-        {
-            foreach (var pkg in _healthDataCache)
-                packageLicenses.Add((pkg.PackageId, pkg.License));
-        }
-        if (_transitiveDataCache != null)
-        {
-            foreach (var pkg in _transitiveDataCache)
-                packageLicenses.Add((pkg.PackageId, pkg.License));
-        }
-        var licenseReport = LicenseCompatibility.AnalyzeLicenses(packageLicenses);
+        // License Summary Card (using cached license data)
+        var licenseReport = LicenseCompatibility.AnalyzeLicenses(GetPackageLicenses());
         var licenseStatusClass = licenseReport.OverallStatus switch
         {
             "Compatible" => "healthy",
@@ -791,24 +791,8 @@ public sealed class CraReportGenerator
         sb.AppendLine("  <p>Analysis of license types and potential compatibility issues</p>");
         sb.AppendLine("</div>");
 
-        // Gather licenses from packages
-        var packageLicenses = new List<(string PackageId, string? License)>();
-        if (_healthDataCache != null)
-        {
-            foreach (var pkg in _healthDataCache)
-            {
-                packageLicenses.Add((pkg.PackageId, pkg.License));
-            }
-        }
-        if (_transitiveDataCache != null)
-        {
-            foreach (var pkg in _transitiveDataCache)
-            {
-                packageLicenses.Add((pkg.PackageId, pkg.License));
-            }
-        }
-
-        var licenseReport = LicenseCompatibility.AnalyzeLicenses(packageLicenses);
+        // Use cached license data
+        var licenseReport = LicenseCompatibility.AnalyzeLicenses(GetPackageLicenses());
 
         // Status banner
         var statusClass = licenseReport.OverallStatus switch
@@ -955,8 +939,13 @@ public sealed class CraReportGenerator
         sb.AppendLine("</div>");
 
         var statements = report.Vex.Statements;
-        var affectedStatements = statements.Where(s => s.Status == VexStatus.Affected).ToList();
-        var safeStatements = statements.Where(s => s.Status != VexStatus.Affected).ToList();
+        // Single pass partition instead of dual Where() filters
+        var affectedStatements = new List<VexStatement>();
+        var safeStatements = new List<VexStatement>();
+        foreach (var s in statements)
+        {
+            (s.Status == VexStatus.Affected ? affectedStatements : safeStatements).Add(s);
+        }
 
         // Summary: focus on what needs action
         if (affectedStatements.Count == 0)
@@ -3552,7 +3541,7 @@ public sealed class CraReportGenerator
     {
         // Serialize without indentation to minimize HTML report size (saves 1-3MB for large projects)
         var sbomJson = JsonSerializer.Serialize(report.Sbom);
-        var vexJson = JsonSerializer.Serialize(report.Vex, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var vexJson = JsonSerializer.Serialize(report.Vex, CamelCaseOptions);
 
         // Generate centralized package data for lazy loading (reduces DOM size by 80%+)
         var packageDataJson = GeneratePackageDataJson();
@@ -4080,6 +4069,9 @@ function filterTreeByEcosystem(ecosystem) {{
     private bool _hasIncompleteTransitive;
     private bool _hasUnresolvedVersions;
 
+    // Cached license data (computed once on first access)
+    private List<(string PackageId, string? License)>? _packageLicensesCache;
+
     // Additional CRA compliance data
     private int _deprecatedPackageCount;
     private List<string> _deprecatedPackages = [];
@@ -4088,6 +4080,28 @@ function filterTreeByEcosystem(ecosystem) {{
     private List<(string Cve, string PackageId)> _kevCvePackages = [];
     private HashSet<string> _kevPackageIds = new(StringComparer.OrdinalIgnoreCase);
     private CryptoComplianceResult? _cryptoCompliance;
+
+    /// <summary>
+    /// Get cached list of package licenses (computed once from health and transitive data).
+    /// </summary>
+    private List<(string PackageId, string? License)> GetPackageLicenses()
+    {
+        if (_packageLicensesCache is not null)
+            return _packageLicensesCache;
+
+        _packageLicensesCache = new List<(string PackageId, string? License)>();
+        if (_healthDataCache is not null)
+        {
+            foreach (var pkg in _healthDataCache)
+                _packageLicensesCache.Add((pkg.PackageId, pkg.License));
+        }
+        if (_transitiveDataCache is not null)
+        {
+            foreach (var pkg in _transitiveDataCache)
+                _packageLicensesCache.Add((pkg.PackageId, pkg.License));
+        }
+        return _packageLicensesCache;
+    }
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -4622,8 +4636,8 @@ function filterTreeByEcosystem(ecosystem) {{
 
         if (purl.Contains("$("))
         {
-            // Extract the package name from the purl and show a cleaner version
-            var match = System.Text.RegularExpressions.Regex.Match(purl, @"pkg:nuget/([^@]+)");
+            // Extract the package name from the purl using compiled regex
+            var match = PurlRegex().Match(purl);
             if (match.Success)
             {
                 return $"<span class=\"unresolved-version\" title=\"Full PURL: {EscapeHtml(purl)}\">pkg:nuget/{EscapeHtml(match.Groups[1].Value)}@? ⓘ</span>";
@@ -4761,22 +4775,44 @@ function filterTreeByEcosystem(ecosystem) {{
 
     private static string EscapeHtml(string input)
     {
-        return input
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;")
-            .Replace("\"", "&quot;")
-            .Replace("'", "&#39;");
+        if (string.IsNullOrEmpty(input)) return input;
+
+        // Single pass with StringBuilder to avoid 5 intermediate string allocations
+        var sb = new StringBuilder(input.Length + 16);
+        foreach (var c in input)
+        {
+            sb.Append(c switch
+            {
+                '&' => "&amp;",
+                '<' => "&lt;",
+                '>' => "&gt;",
+                '"' => "&quot;",
+                '\'' => "&#39;",
+                _ => c.ToString()
+            });
+        }
+        return sb.ToString();
     }
 
     private static string EscapeJs(string input)
     {
-        return input
-            .Replace("\\", "\\\\")
-            .Replace("'", "\\'")
-            .Replace("\"", "\\\"")
-            .Replace("\n", "\\n")
-            .Replace("\r", "\\r");
+        if (string.IsNullOrEmpty(input)) return input;
+
+        // Single pass with StringBuilder to avoid 5 intermediate string allocations
+        var sb = new StringBuilder(input.Length + 16);
+        foreach (var c in input)
+        {
+            sb.Append(c switch
+            {
+                '\\' => "\\\\",
+                '\'' => "\\'",
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\r' => "\\r",
+                _ => c.ToString()
+            });
+        }
+        return sb.ToString();
     }
 }
 

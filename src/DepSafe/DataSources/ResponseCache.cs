@@ -82,6 +82,45 @@ public sealed class ResponseCache
         }
     }
 
+    /// <summary>
+    /// Remove expired cache files from disk.
+    /// </summary>
+    public void CleanupExpired()
+    {
+        if (!Directory.Exists(_cacheDir))
+            return;
+
+        foreach (var file in Directory.GetFiles(_cacheDir))
+        {
+            // Skip meta files - we check them with their parent
+            if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                var metaPath = file + ".meta";
+                if (File.Exists(metaPath))
+                {
+                    var meta = File.ReadAllText(metaPath);
+                    if (DateTime.TryParse(meta, out var expiry) && DateTime.UtcNow > expiry)
+                    {
+                        File.Delete(file);
+                        File.Delete(metaPath);
+                    }
+                }
+                else
+                {
+                    // Cache file without meta - delete orphan
+                    File.Delete(file);
+                }
+            }
+            catch
+            {
+                // Ignore cleanup failures
+            }
+        }
+    }
+
     private string GetCachePath(string key)
     {
         // Use stackalloc to avoid heap allocation for small keys

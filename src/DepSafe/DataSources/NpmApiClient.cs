@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -46,8 +47,9 @@ public sealed class NpmApiClient : IDisposable
             }
 
             response.EnsureSuccessStatusCode();
-            var json = await response.Content.ReadAsStringAsync(ct);
-            var doc = JsonNode.Parse(json);
+            // Parse directly from stream to avoid large string allocation
+            using var stream = await response.Content.ReadAsStreamAsync(ct);
+            var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct);
 
             if (doc is null) return null;
 
@@ -132,14 +134,13 @@ public sealed class NpmApiClient : IDisposable
         int maxConcurrency = 10,
         CancellationToken ct = default)
     {
-        var results = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var results = new ConcurrentDictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
         var packageList = packageNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         if (packageList.Count == 0)
-            return results;
+            return new Dictionary<string, NpmPackageInfo>(results);
 
         var semaphore = new SemaphoreSlim(maxConcurrency);
-        var lockObj = new object();
 
         var tasks = packageList.Select(async packageName =>
         {
@@ -149,10 +150,7 @@ public sealed class NpmApiClient : IDisposable
                 var info = await GetPackageInfoAsync(packageName, ct);
                 if (info is not null)
                 {
-                    lock (lockObj)
-                    {
-                        results[packageName] = info;
-                    }
+                    results[packageName] = info;
                 }
             }
             finally
@@ -162,7 +160,7 @@ public sealed class NpmApiClient : IDisposable
         });
 
         await Task.WhenAll(tasks);
-        return results;
+        return new Dictionary<string, NpmPackageInfo>(results);
     }
 
     /// <summary>
@@ -177,8 +175,9 @@ public sealed class NpmApiClient : IDisposable
 
             if (!response.IsSuccessStatusCode) return 0;
 
-            var json = await response.Content.ReadAsStringAsync(ct);
-            var doc = JsonNode.Parse(json);
+            // Parse directly from stream to avoid string allocation
+            using var stream = await response.Content.ReadAsStreamAsync(ct);
+            var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct);
 
             return doc?["downloads"]?.GetValue<long>() ?? 0;
         }
