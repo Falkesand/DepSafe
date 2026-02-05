@@ -419,7 +419,7 @@ public static class CraReportCommand
                 // Also check the vulnerabilities dict for additional context
                 var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
                 var activeVulns = hasVulns
-                    ? pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList()
+                    ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
 
                 // If tree says vulnerable but we found no vulns in dict, create a placeholder
@@ -496,7 +496,7 @@ public static class CraReportCommand
 
                 var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
                 var activeVulns = hasVulns
-                    ? pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList()
+                    ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
 
                 // If tree says vulnerable but we found no vulns in dict, create a placeholder
@@ -675,6 +675,40 @@ public static class CraReportCommand
     /// </summary>
     private static bool IsVersionActuallyVulnerable(string version, List<VulnerabilityInfo> vulnerabilities)
         => GetFirstActiveVulnerability(version, vulnerabilities) is not null;
+
+    /// <summary>
+    /// Check if a specific version is affected by a single vulnerability.
+    /// More efficient than creating a single-element list.
+    /// </summary>
+    private static bool IsVulnerabilityActiveForVersion(string version, VulnerabilityInfo vuln)
+    {
+        // Check if version is in vulnerable range
+        bool inVulnerableRange;
+        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+        {
+            inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+        }
+        else
+        {
+            inVulnerableRange = true; // No range specified, conservatively assume vulnerable
+        }
+
+        if (!inVulnerableRange) return false;
+
+        // Check if version is patched
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        {
+            try
+            {
+                var current = NuGet.Versioning.NuGetVersion.Parse(version);
+                var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
+                if (current >= patched) return false; // Patched
+            }
+            catch { /* Version parsing failed, assume still vulnerable */ }
+        }
+
+        return true;
+    }
 
     private static bool IsVersionInVulnerableRange(string version, string range)
     {
