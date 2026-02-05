@@ -24,6 +24,7 @@ public sealed class OsvApiClient : IDisposable
             Timeout = TimeSpan.FromSeconds(30)
         };
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "DepSafe");
         _cache = cache ?? new ResponseCache();
     }
 

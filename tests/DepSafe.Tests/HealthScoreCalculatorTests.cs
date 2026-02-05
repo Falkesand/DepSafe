@@ -131,31 +131,72 @@ public class HealthScoreCalculatorTests
         Assert.Contains(result.Recommendations, r => r.Contains("archived"));
     }
 
-    [Theory]
-    [InlineData(95, HealthStatus.Healthy)]
-    [InlineData(80, HealthStatus.Healthy)]
-    [InlineData(79, HealthStatus.Watch)]
-    [InlineData(60, HealthStatus.Watch)]
-    [InlineData(59, HealthStatus.Warning)]
-    [InlineData(40, HealthStatus.Warning)]
-    [InlineData(39, HealthStatus.Critical)]
-    [InlineData(0, HealthStatus.Critical)]
-    public void GetStatus_ReturnsCorrectStatus(int score, HealthStatus expectedStatus)
+    [Fact]
+    public void Calculate_HighScore_ReturnsHealthyStatus()
     {
-        // The status thresholds are: 80-100 = Healthy, 60-79 = Watch, 40-59 = Warning, 0-39 = Critical
-        var nugetInfo = CreateNuGetInfo(daysSinceLastRelease: 30);
-
-        // We'll test via the actual calculation method
-        // by creating inputs that should produce approximately the desired score
-        var status = score switch
+        // All metrics maxed out → score ≥ 80 → Healthy
+        var calc = new HealthScoreCalculator(new ScoreWeights
         {
-            >= 80 => HealthStatus.Healthy,
-            >= 60 => HealthStatus.Watch,
-            >= 40 => HealthStatus.Warning,
-            _ => HealthStatus.Critical
-        };
+            Freshness = 1.0, ReleaseCadence = 0, DownloadTrend = 0,
+            RepositoryActivity = 0, Vulnerabilities = 0
+        });
+        var nugetInfo = CreateNuGetInfo(daysSinceLastRelease: 10); // freshness = 100
 
-        Assert.Equal(expectedStatus, status);
+        var result = calc.Calculate("Pkg", "1.0.0", nugetInfo, null, []);
+
+        Assert.True(result.Score >= 80);
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public void Calculate_MediumScore_ReturnsWatchStatus()
+    {
+        // Freshness only, 365 days → freshness score = 70 → Watch
+        var calc = new HealthScoreCalculator(new ScoreWeights
+        {
+            Freshness = 1.0, ReleaseCadence = 0, DownloadTrend = 0,
+            RepositoryActivity = 0, Vulnerabilities = 0
+        });
+        var nugetInfo = CreateNuGetInfo(daysSinceLastRelease: 365);
+
+        var result = calc.Calculate("Pkg", "1.0.0", nugetInfo, null, []);
+
+        Assert.InRange(result.Score, 60, 79);
+        Assert.Equal(HealthStatus.Watch, result.Status);
+    }
+
+    [Fact]
+    public void Calculate_LowScore_ReturnsWarningStatus()
+    {
+        // Freshness only, 730 days → freshness score = 50 → Warning
+        var calc = new HealthScoreCalculator(new ScoreWeights
+        {
+            Freshness = 1.0, ReleaseCadence = 0, DownloadTrend = 0,
+            RepositoryActivity = 0, Vulnerabilities = 0
+        });
+        var nugetInfo = CreateNuGetInfo(daysSinceLastRelease: 730);
+
+        var result = calc.Calculate("Pkg", "1.0.0", nugetInfo, null, []);
+
+        Assert.InRange(result.Score, 40, 59);
+        Assert.Equal(HealthStatus.Warning, result.Status);
+    }
+
+    [Fact]
+    public void Calculate_VeryLowScore_ReturnsCriticalStatus()
+    {
+        // Freshness only, 1500 days → freshness score = 10 → Critical
+        var calc = new HealthScoreCalculator(new ScoreWeights
+        {
+            Freshness = 1.0, ReleaseCadence = 0, DownloadTrend = 0,
+            RepositoryActivity = 0, Vulnerabilities = 0
+        });
+        var nugetInfo = CreateNuGetInfo(daysSinceLastRelease: 1500);
+
+        var result = calc.Calculate("Pkg", "1.0.0", nugetInfo, null, []);
+
+        Assert.True(result.Score < 40);
+        Assert.Equal(HealthStatus.Critical, result.Status);
     }
 
     [Fact]

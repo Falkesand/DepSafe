@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -34,7 +35,7 @@ public sealed class ResponseCache
             if (File.Exists(metaPath))
             {
                 var meta = await File.ReadAllTextAsync(metaPath, ct);
-                var expiry = DateTime.Parse(meta);
+                var expiry = DateTime.Parse(meta, CultureInfo.InvariantCulture);
                 if (DateTime.UtcNow > expiry)
                 {
                     // Cache expired
@@ -102,7 +103,7 @@ public sealed class ResponseCache
                 if (File.Exists(metaPath))
                 {
                     var meta = File.ReadAllText(metaPath);
-                    if (DateTime.TryParse(meta, out var expiry) && DateTime.UtcNow > expiry)
+                    if (DateTime.TryParse(meta, CultureInfo.InvariantCulture, DateTimeStyles.None, out var expiry) && DateTime.UtcNow > expiry)
                     {
                         File.Delete(file);
                         File.Delete(metaPath);
