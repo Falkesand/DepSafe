@@ -224,11 +224,12 @@ public static class CraReportCommand
             CollectTransitivePackageIds(dependencyTree.Roots, directPackageIds, transitiveNpmPackageIds);
         }
 
+        // Compute all package IDs once (direct + transitive)
+        var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var packagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
+
         // Phase 1: Fetch npm info for direct packages (and transitive if deep scan)
         var npmInfoMap = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
-        var packagesToFetch = deepScan
-            ? allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-            : allDeps.Keys.ToList();
 
         await AnsiConsole.Progress()
             .StartAsync(async ctx =>
@@ -263,7 +264,6 @@ public static class CraReportCommand
         // Phase 2: Fetch vulnerabilities from OSV (free, no auth required) and GitHub repo info
         var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
         var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-        var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         // Fetch vulnerabilities from OSV (always available, no auth)
         using var osvClient = new OsvApiClient();
@@ -1510,11 +1510,12 @@ public static class CraReportCommand
                         CollectTransitivePackageIds(npmTree.Roots, directNpmPackageIds, transitiveNpmPackageIds);
                     }
 
+                    // Compute all npm package IDs once (direct + transitive)
+                    var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    var npmPackagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
+
                     // Fetch npm info (include transitive if deep scan)
                     var npmInfoMap = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
-                    var npmPackagesToFetch = deepScan
-                        ? allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-                        : allDeps.Keys.ToList();
 
                     await AnsiConsole.Progress()
                         .StartAsync(async ctx =>
@@ -1530,7 +1531,6 @@ public static class CraReportCommand
                         });
 
                     // Check npm vulnerabilities via OSV (free, no auth required)
-                    var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     using var osvNpmClient = new OsvApiClient();
                     await AnsiConsole.Status()
                         .StartAsync($"Checking npm vulnerabilities via OSV ({allNpmPackageIds.Count} packages)...", async _ =>
