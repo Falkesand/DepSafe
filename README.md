@@ -4,9 +4,8 @@
 
 DepSafe is a comprehensive dependency analysis tool that helps development teams assess package health, ensure EU Cyber Resilience Act (CRA) compliance, and manage supply chain security for both .NET (NuGet) and JavaScript (npm) projects.
 
-![Health Score](https://img.shields.io/badge/health_score-76%2F100-blue?style=flat)
-![CRA Compliance](https://img.shields.io/badge/CRA-ActionRequired-yellow?style=flat)
-![Vulnerabilities](https://img.shields.io/badge/vulnerabilities-0-brightgreen?style=flat)
+[![NuGet](https://img.shields.io/nuget/v/DepSafe.svg)](https://www.nuget.org/packages/DepSafe)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/DepSafe.svg)](https://www.nuget.org/packages/DepSafe)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat)
 
 ---
