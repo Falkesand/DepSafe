@@ -16,7 +16,7 @@
     <PackageTags>dependencies;security;sbom;vex;cra;compliance;nuget;npm;vulnerabilities;supply-chain</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/falk/depsafe</RepositoryUrl>
+    <RepositoryUrl>https://github.com/Falkesand/DepSafe</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
