@@ -225,11 +225,12 @@ public static class CraReportCommand
             CollectTransitivePackageIds(dependencyTree.Roots, directPackageIds, transitiveNpmPackageIds);
         }
 
+        // Compute all package IDs once (direct + transitive)
+        var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var packagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
+
         // Phase 1: Fetch npm info for direct packages (and transitive if deep scan)
         var npmInfoMap = new ConcurrentDictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
-        var packagesToFetch = deepScan
-            ? allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-            : allDeps.Keys.ToList();
 
         await AnsiConsole.Progress()
             .StartAsync(async ctx =>
@@ -261,7 +262,6 @@ public static class CraReportCommand
         // Phase 2: Fetch vulnerabilities from OSV (free, no auth required) and GitHub repo info
         var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
         var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-        var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         // Fetch vulnerabilities from OSV (always available, no auth)
         using var osvClient = new OsvApiClient();
@@ -417,7 +417,7 @@ public static class CraReportCommand
                 // Also check the vulnerabilities dict for additional context
                 var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
                 var activeVulns = hasVulns
-                    ? pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList()
+                    ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
 
                 // If tree says vulnerable but we found no vulns in dict, create a placeholder
@@ -494,7 +494,7 @@ public static class CraReportCommand
 
                 var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
                 var activeVulns = hasVulns
-                    ? pkgVulns.Where(v => IsVersionActuallyVulnerable(node.Version, [v])).ToList()
+                    ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
 
                 // If tree says vulnerable but we found no vulns in dict, create a placeholder
@@ -673,6 +673,40 @@ public static class CraReportCommand
     /// </summary>
     private static bool IsVersionActuallyVulnerable(string version, List<VulnerabilityInfo> vulnerabilities)
         => GetFirstActiveVulnerability(version, vulnerabilities) is not null;
+
+    /// <summary>
+    /// Check if a specific version is affected by a single vulnerability.
+    /// More efficient than creating a single-element list.
+    /// </summary>
+    private static bool IsVulnerabilityActiveForVersion(string version, VulnerabilityInfo vuln)
+    {
+        // Check if version is in vulnerable range
+        bool inVulnerableRange;
+        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+        {
+            inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+        }
+        else
+        {
+            inVulnerableRange = true; // No range specified, conservatively assume vulnerable
+        }
+
+        if (!inVulnerableRange) return false;
+
+        // Check if version is patched
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        {
+            try
+            {
+                var current = NuGet.Versioning.NuGetVersion.Parse(version);
+                var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
+                if (current >= patched) return false; // Patched
+            }
+            catch { /* Version parsing failed, assume still vulnerable */ }
+        }
+
+        return true;
+    }
 
     private static bool IsVersionInVulnerableRange(string version, string range)
     {
@@ -1508,11 +1542,12 @@ public static class CraReportCommand
                         CollectTransitivePackageIds(npmTree.Roots, directNpmPackageIds, transitiveNpmPackageIds);
                     }
 
+                    // Compute all npm package IDs once (direct + transitive)
+                    var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    var npmPackagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
+
                     // Fetch npm info (include transitive if deep scan)
                     var npmInfoMap = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
-                    var npmPackagesToFetch = deepScan
-                        ? allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-                        : allDeps.Keys.ToList();
 
                     await AnsiConsole.Progress()
                         .StartAsync(async ctx =>
@@ -1528,7 +1563,6 @@ public static class CraReportCommand
                         });
 
                     // Check npm vulnerabilities via OSV (free, no auth required)
-                    var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     using var osvNpmClient = new OsvApiClient();
                     await AnsiConsole.Status()
                         .StartAsync($"Checking npm vulnerabilities via OSV ({allNpmPackageIds.Count} packages)...", async _ =>
