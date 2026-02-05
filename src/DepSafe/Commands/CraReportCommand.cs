@@ -742,6 +742,45 @@ public static class CraReportCommand
     }
 
     /// <summary>
+    /// Extract a parseable version from a NuGet version range string.
+    /// E.g., "[10.0.2, )" -> "10.0.2", "[1.0.0]" -> "1.0.0"
+    /// </summary>
+    private static string? ExtractVersionFromRange(string? versionRange)
+    {
+        if (string.IsNullOrWhiteSpace(versionRange))
+            return null;
+
+        var range = versionRange.Trim();
+
+        // Remove brackets: [ ] ( )
+        range = range.TrimStart('[', '(').TrimEnd(']', ')');
+
+        // Handle comma-separated ranges like "10.0.2, " or ", 10.0.2"
+        var parts = range.Split(',');
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                // Try to parse as a version
+                if (NuGet.Versioning.NuGetVersion.TryParse(trimmed, out _))
+                {
+                    return trimmed;
+                }
+            }
+        }
+
+        // If range itself is a version, return it
+        if (NuGet.Versioning.NuGetVersion.TryParse(range, out _))
+        {
+            return range;
+        }
+
+        // Couldn't extract a version
+        return versionRange;
+    }
+
+    /// <summary>
     /// Calculate CRA compliance score for transitive packages.
     /// Same logic as HealthScoreCalculator but simplified for packages without full metadata.
     /// </summary>
@@ -1704,7 +1743,7 @@ public static class CraReportCommand
         {
             foreach (var dep in health.Dependencies)
             {
-                var childVersion = dep.VersionRange ?? "latest";
+                var childVersion = ExtractVersionFromRange(dep.VersionRange) ?? "latest";
                 var child = BuildDotNetTreeNode(dep.PackageId, childVersion, depth + 1, maxDepth, healthLookup, vulnerabilities, seen);
                 if (child is not null)
                 {

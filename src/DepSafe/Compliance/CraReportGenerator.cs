@@ -138,45 +138,98 @@ public sealed class CraReportGenerator
     /// <summary>
     /// Generate interactive HTML report with drill-down capabilities.
     /// </summary>
-    public string GenerateHtml(CraReport report, string? licenseFilePath = null)
+    public string GenerateHtml(CraReport report, string? licenseFilePath = null, bool darkMode = true)
     {
         var sb = new StringBuilder();
         var packages = report.Sbom.Packages.Skip(1).ToList(); // Skip root package
         var licenseFileName = licenseFilePath is not null ? Path.GetFileName(licenseFilePath) : null;
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var versionString = version is not null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
+        var totalPackages = report.PackageCount + report.TransitivePackageCount;
 
         sb.AppendLine("<!DOCTYPE html>");
-        sb.AppendLine("<html lang=\"en\">");
+        sb.AppendLine(darkMode ? "<html lang=\"en\" data-theme=\"dark\">" : "<html lang=\"en\">");
         sb.AppendLine("<head>");
         sb.AppendLine("  <meta charset=\"UTF-8\">");
         sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
         sb.AppendLine($"  <title>CRA Compliance Report - {EscapeHtml(Path.GetFileName(report.ProjectPath))}</title>");
+        sb.AppendLine("  <link href=\"https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap\" rel=\"stylesheet\">");
         sb.Append(GetHtmlStyles());
         sb.AppendLine("</head>");
         sb.AppendLine("<body>");
+        sb.AppendLine("<div class=\"app-container\">");
 
         // Sidebar Navigation
         sb.AppendLine("<nav class=\"sidebar\">");
         sb.AppendLine("  <div class=\"sidebar-header\">");
-        sb.AppendLine("    <h2>DepSafe</h2>");
+        sb.AppendLine("    <div class=\"logo\">");
+        sb.AppendLine("      <svg class=\"logo-icon\" width=\"36\" height=\"36\" viewBox=\"0 0 36 36\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">");
+        sb.AppendLine("        <path d=\"M18 6L6 12l12 6 12-6L18 6z\" fill=\"var(--accent)\" fill-opacity=\"0.3\"/>");
+        sb.AppendLine("        <path d=\"M6 16l12 6 12-6\" stroke=\"var(--accent)\" stroke-width=\"1.5\" fill=\"none\"/>");
+        sb.AppendLine("        <path d=\"M6 22l12 6 12-6\" stroke=\"var(--accent)\" stroke-width=\"1.5\" stroke-opacity=\"0.6\" fill=\"none\"/>");
+        sb.AppendLine("        <rect x=\"14\" y=\"14\" width=\"8\" height=\"7\" rx=\"1\" fill=\"var(--success)\"/>");
+        sb.AppendLine("        <path d=\"M16 14v-2a2 2 0 114 0v2\" stroke=\"var(--success)\" stroke-width=\"1.5\" fill=\"none\"/>");
+        sb.AppendLine("        <circle cx=\"18\" cy=\"17.5\" r=\"1\" fill=\"var(--bg-primary)\"/>");
+        sb.AppendLine("      </svg>");
+        sb.AppendLine("      <span class=\"logo-text\">DepSafe</span>");
+        sb.AppendLine($"      <span class=\"logo-badge\">v{versionString}</span>");
+        sb.AppendLine("    </div>");
         sb.AppendLine("  </div>");
-        sb.AppendLine("  <ul class=\"nav-links\">");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('overview')\" class=\"active\" data-section=\"overview\">Overview</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('packages')\" data-section=\"packages\">Packages</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('licenses')\" data-section=\"licenses\">Licenses</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('sbom')\" data-section=\"sbom\">SBOM</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('vulnerabilities')\" data-section=\"vulnerabilities\">Vulnerabilities</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('tree')\" data-section=\"tree\">Dependency Tree</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('issues')\" data-section=\"issues\">Dependency Issues</a></li>");
-        sb.AppendLine("    <li><a href=\"#\" onclick=\"showSection('compliance')\" data-section=\"compliance\">Compliance</a></li>");
+        sb.AppendLine("  <div class=\"sidebar-content\">");
+        sb.AppendLine("    <div class=\"nav-section\">");
+        sb.AppendLine("      <div class=\"nav-label\">Analysis</div>");
+        sb.AppendLine("      <ul class=\"nav-links\">");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('overview')\" class=\"active\" data-section=\"overview\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\"/></svg>");
+        sb.AppendLine("          Overview</a></li>");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('packages')\" data-section=\"packages\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z\"/></svg>");
+        sb.AppendLine($"          Packages<span class=\"nav-badge\">{totalPackages}</span></a></li>");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('vulnerabilities')\" data-section=\"vulnerabilities\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/></svg>");
+        sb.AppendLine($"          Vulnerabilities<span class=\"nav-badge\">{report.VulnerabilityCount}</span></a></li>");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('licenses')\" data-section=\"licenses\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z\"/><path d=\"M14 2v6h6\"/></svg>");
+        sb.AppendLine("          Licenses</a></li>");
+        sb.AppendLine("      </ul>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine("    <div class=\"nav-section\">");
+        sb.AppendLine("      <div class=\"nav-label\">Compliance</div>");
+        sb.AppendLine("      <ul class=\"nav-links\">");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('compliance')\" data-section=\"compliance\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M22 11.08V12a10 10 0 11-5.93-9.14\"/><path d=\"M22 4L12 14.01l-3-3\"/></svg>");
+        sb.AppendLine("          CRA Status</a></li>");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('sbom')\" data-section=\"sbom\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z\"/><path d=\"M14 2v6h6\"/><path d=\"M16 13H8\"/><path d=\"M16 17H8\"/><path d=\"M10 9H8\"/></svg>");
+        sb.AppendLine("          SBOM</a></li>");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('tree')\" data-section=\"tree\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/></svg>");
+        sb.AppendLine("          Dependency Tree</a></li>");
+        sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('issues')\" data-section=\"issues\">");
+        sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"16\" x2=\"12.01\" y2=\"16\"/></svg>");
+        sb.AppendLine("          Dependency Issues</a></li>");
         if (licenseFileName is not null)
         {
-            sb.AppendLine($"    <li class=\"external-link-item\"><a href=\"{licenseFileName}\" target=\"_blank\" class=\"external\">📄 License Attribution</a></li>");
+            sb.AppendLine("        <li class=\"external-link-item\"><a href=\"" + licenseFileName + "\" target=\"_blank\" class=\"external\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6\"/><polyline points=\"15 3 21 3 21 9\"/><line x1=\"10\" y1=\"14\" x2=\"21\" y2=\"3\"/></svg>");
+            sb.AppendLine("          License File</a></li>");
         }
-        sb.AppendLine("  </ul>");
+        sb.AppendLine("      </ul>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"theme-section\">");
+        sb.AppendLine("    <div class=\"theme-toggle\">");
+        sb.AppendLine("      <div class=\"theme-info\">");
+        sb.AppendLine("        <svg class=\"theme-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z\"/></svg>");
+        sb.AppendLine("        <span class=\"theme-label\">Dark Mode</span>");
+        sb.AppendLine("      </div>");
+        sb.AppendLine(darkMode
+            ? "      <div class=\"toggle-switch active\" id=\"themeToggle\" onclick=\"toggleTheme()\"></div>"
+            : "      <div class=\"toggle-switch\" id=\"themeToggle\" onclick=\"toggleTheme()\"></div>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine("  </div>");
         sb.AppendLine("  <div class=\"sidebar-footer\">");
-        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        var versionString = version is not null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
-        sb.AppendLine($"    <span class=\"version\">DepSafe v{versionString}</span>");
+        sb.AppendLine($"    <span class=\"version-info\">DepSafe v{versionString}</span>");
         sb.AppendLine("  </div>");
         sb.AppendLine("</nav>");
 
@@ -184,12 +237,18 @@ public sealed class CraReportGenerator
         sb.AppendLine("<main class=\"main-content\">");
 
         // Header
-        sb.AppendLine("<header class=\"header\">");
-        sb.AppendLine($"  <h1>{EscapeHtml(Path.GetFileName(report.ProjectPath))}</h1>");
+        sb.AppendLine("<header class=\"main-header\">");
+        sb.AppendLine("  <div class=\"header-left\">");
+        sb.AppendLine($"    <h1>{EscapeHtml(Path.GetFileName(report.ProjectPath))}</h1>");
+        sb.AppendLine("    <div class=\"breadcrumb\">");
+        sb.AppendLine("      <span>CRA Report</span>");
+        sb.AppendLine("      <span class=\"breadcrumb-sep\">/</span>");
         var durationText = report.GenerationDuration.HasValue
             ? $" in {FormatDuration(report.GenerationDuration.Value)}"
             : "";
-        sb.AppendLine($"  <p class=\"subtitle\">Generated {report.GeneratedAt:MMMM dd, yyyy 'at' HH:mm} UTC{durationText}</p>");
+        sb.AppendLine($"      <span>Generated {report.GeneratedAt:MMMM dd, yyyy 'at' HH:mm} UTC{durationText}</span>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine("  </div>");
         sb.AppendLine("</header>");
 
         // Overview Section
@@ -233,6 +292,7 @@ public sealed class CraReportGenerator
         sb.AppendLine("</section>");
 
         sb.AppendLine("</main>");
+        sb.AppendLine("</div>"); // Close app-container
 
         // Footer with disclaimer - visible on all views
         sb.AppendLine("<footer class=\"disclaimer-footer\">");
@@ -240,7 +300,7 @@ public sealed class CraReportGenerator
         sb.AppendLine("</footer>");
 
         // JavaScript
-        sb.Append(GetHtmlScripts(report));
+        sb.Append(GetHtmlScripts(report, darkMode));
 
         sb.AppendLine("</body>");
         sb.AppendLine("</html>");
@@ -1122,7 +1182,7 @@ public sealed class CraReportGenerator
         sb.AppendLine($"  <span class=\"tree-stat\"><strong>Max Depth:</strong> {maxDepth}</span>");
         if (vulnerableCount > 0)
         {
-            sb.AppendLine($"  <span class=\"tree-stat vulnerable\"><strong>Vulnerable:</strong> {vulnerableCount}</span>");
+            sb.AppendLine($"  <span class=\"tree-stat vulnerable\" title=\"Packages with vulnerable sub-dependencies\"><strong>Has Vuln Deps:</strong> {vulnerableCount}</span>");
         }
         if (_dependencyTrees.Count > 1)
         {
@@ -1347,106 +1407,323 @@ public sealed class CraReportGenerator
         return @"
   <style>
     :root {
-      --primary: #0066cc;
-      --primary-dark: #004c99;
-      --success: #28a745;
-      --warning: #ffc107;
-      --danger: #dc3545;
-      --watch: #17a2b8;
-      --bg: #f8f9fa;
-      --card-bg: #ffffff;
-      --text: #212529;
-      --text-muted: #6c757d;
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8f9fa;
+      --bg-tertiary: #e9ecef;
+      --bg-card: #ffffff;
       --border: #dee2e6;
-      --sidebar-width: 240px;
+      --border-light: #e9ecef;
+      --text-primary: #212529;
+      --text-secondary: #495057;
+      --text-muted: #6c757d;
+      --text-light: #adb5bd;
+      --accent: #0d6efd;
+      --accent-light: #e7f1ff;
+      --success: #198754;
+      --success-light: #d1e7dd;
+      --warning: #fd7e14;
+      --warning-light: #fff3cd;
+      --danger: #dc3545;
+      --danger-light: #f8d7da;
+      --watch: #17a2b8;
+      --watch-light: #d1ecf1;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow: 0 4px 6px rgba(0,0,0,0.07);
+      --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
+      --sidebar-width: 260px;
+      /* Legacy compatibility */
+      --primary: var(--accent);
+      --primary-dark: #0b5ed7;
+      --bg: var(--bg-secondary);
+      --card-bg: var(--bg-card);
+      --text: var(--text-primary);
+    }
+
+    [data-theme=""dark""] {
+      --bg-primary: #1a1d21;
+      --bg-secondary: #212529;
+      --bg-tertiary: #2b3035;
+      --bg-card: #212529;
+      --border: #373b3e;
+      --border-light: #2b3035;
+      --text-primary: #f8f9fa;
+      --text-secondary: #ced4da;
+      --text-muted: #adb5bd;
+      --text-light: #6c757d;
+      --accent: #0d6efd;
+      --accent-light: #1a2942;
+      --success: #198754;
+      --success-light: #0f3d25;
+      --warning: #fd7e14;
+      --warning-light: #3d2a0f;
+      --danger: #dc3545;
+      --danger-light: #3d1519;
+      --watch: #17a2b8;
+      --watch-light: #0c343d;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+      --shadow: 0 4px 6px rgba(0,0,0,0.25);
+      --shadow-lg: 0 10px 15px rgba(0,0,0,0.3);
+      /* Legacy compatibility */
+      --bg: var(--bg-secondary);
+      --card-bg: var(--bg-card);
+      --text: var(--text-primary);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      line-height: 1.5;
+      transition: background 0.3s ease, color 0.3s ease;
     }
 
+    .app-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar */
     .sidebar {
-      position: fixed;
-      left: 0;
-      top: 0;
-      bottom: 0;
       width: var(--sidebar-width);
-      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-      color: white;
-      padding: 20px 0;
-      overflow-y: auto;
+      background: var(--bg-primary);
+      border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
+      position: fixed;
+      height: 100vh;
+      z-index: 100;
     }
 
     .sidebar-header {
-      padding: 0 20px 20px;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
-      margin-bottom: 20px;
+      padding: 24px;
+      border-bottom: 1px solid var(--border);
     }
 
-    .sidebar-header h2 {
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+    }
+
+    .logo-text {
       font-size: 1.25rem;
       font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .logo-badge {
+      font-size: 0.65rem;
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: auto;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .sidebar-content {
+      flex: 1;
+      padding: 20px 16px;
+      overflow-y: auto;
+    }
+
+    .nav-section {
+      margin-bottom: 24px;
+    }
+
+    .nav-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      padding: 0 12px;
+      margin-bottom: 8px;
     }
 
     .nav-links {
       list-style: none;
-      flex: 1;
     }
 
     .nav-links a {
-      display: block;
-      padding: 12px 20px;
-      color: rgba(255,255,255,0.7);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      color: var(--text-secondary);
       text-decoration: none;
-      transition: all 0.2s;
-      border-left: 3px solid transparent;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      margin-bottom: 2px;
     }
 
-    .nav-links a:hover, .nav-links a.active {
-      background: rgba(255,255,255,0.1);
-      color: white;
-      border-left-color: var(--primary);
+    .nav-links a:hover {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+    }
+
+    .nav-links a.active {
+      background: var(--accent-light);
+      color: var(--accent);
+    }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      opacity: 0.7;
+      flex-shrink: 0;
+    }
+
+    .nav-links a.active .nav-icon {
+      opacity: 1;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 0.7rem;
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
     }
 
     .nav-links .external-link-item {
       margin-top: 12px;
       padding-top: 12px;
-      border-top: 1px solid rgba(255,255,255,0.1);
+      border-top: 1px solid var(--border);
     }
 
     .nav-links .external-link-item a.external {
-      color: rgba(255,255,255,0.6);
-      font-size: 0.9em;
+      color: var(--text-muted);
+      font-size: 0.85em;
     }
 
     .nav-links .external-link-item a.external:hover {
-      color: white;
-      background: rgba(255,255,255,0.05);
+      color: var(--text-primary);
+      background: var(--bg-secondary);
+    }
+
+    /* Theme Toggle */
+    .theme-section {
+      padding: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      background: var(--bg-secondary);
+      border-radius: 8px;
+    }
+
+    .theme-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .theme-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--text-muted);
+    }
+
+    .theme-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: var(--bg-tertiary);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .toggle-switch::after {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      background: var(--bg-card);
+      border-radius: 50%;
+      top: 2px;
+      left: 2px;
+      transition: all 0.2s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .toggle-switch.active {
+      background: var(--accent);
+    }
+
+    .toggle-switch.active::after {
+      left: 22px;
     }
 
     .sidebar-footer {
-      margin-top: auto;
-      padding: 16px 20px;
-      border-top: 1px solid rgba(255,255,255,0.1);
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
     }
 
-    .sidebar-footer .version {
+    .version-info {
       font-size: 0.75rem;
-      color: rgba(255,255,255,0.5);
+      color: var(--text-light);
+      font-family: 'IBM Plex Mono', monospace;
     }
 
+    /* Main Content */
     .main-content {
+      flex: 1;
       margin-left: var(--sidebar-width);
-      padding: 30px;
-      padding-bottom: 60px;
       min-height: 100vh;
+    }
+
+    .main-header {
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .header-left h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .breadcrumb-sep {
+      color: var(--text-light);
     }
 
     .header {
@@ -1456,7 +1733,7 @@ public sealed class CraReportGenerator
     .header h1 {
       font-size: 1.75rem;
       font-weight: 600;
-      color: var(--text);
+      color: var(--text-primary);
     }
 
     .subtitle {
@@ -1472,6 +1749,10 @@ public sealed class CraReportGenerator
       display: block;
     }
 
+    .section {
+      padding: 32px;
+    }
+
     .section-header {
       display: flex;
       justify-content: space-between;
@@ -1484,14 +1765,16 @@ public sealed class CraReportGenerator
     .section-header h2 {
       font-size: 1.5rem;
       font-weight: 600;
+      color: var(--text-primary);
     }
 
     .card {
-      background: var(--card-bg);
-      border-radius: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
       padding: 24px;
       margin-bottom: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-sm);
     }
 
     .overview-grid {
@@ -1519,14 +1802,14 @@ public sealed class CraReportGenerator
 
     .gauge-bg {
       fill: none;
-      stroke: #e9ecef;
+      stroke: var(--bg-tertiary);
       stroke-width: 8;
       stroke-linecap: round;
     }
 
     .gauge-fill {
       fill: none;
-      stroke: var(--primary);
+      stroke: var(--accent);
       stroke-width: 8;
       stroke-linecap: round;
       transform-origin: center;
@@ -1584,7 +1867,7 @@ public sealed class CraReportGenerator
     .metric-value {
       font-size: 2.5rem;
       font-weight: 700;
-      color: var(--primary);
+      color: var(--accent);
     }
 
     .metric-label {
@@ -1601,9 +1884,16 @@ public sealed class CraReportGenerator
     .search-input {
       padding: 10px 15px;
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 6px;
       font-size: 0.9rem;
       width: 250px;
+      background: var(--bg-card);
+      color: var(--text-primary);
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: var(--accent);
     }
 
     .filter-bar {
@@ -1616,17 +1906,18 @@ public sealed class CraReportGenerator
     .filter-btn {
       padding: 8px 16px;
       border: 1px solid var(--border);
-      background: white;
+      background: var(--bg-card);
+      color: var(--text-secondary);
       border-radius: 20px;
       cursor: pointer;
       font-size: 0.85rem;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
     }
 
     .filter-btn:hover, .filter-btn.active {
-      background: var(--primary);
+      background: var(--accent);
       color: white;
-      border-color: var(--primary);
+      border-color: var(--accent);
     }
 
     .filter-btn.healthy.active { background: var(--success); border-color: var(--success); }
@@ -1660,10 +1951,11 @@ public sealed class CraReportGenerator
     }
 
     .package-card {
-      background: var(--card-bg);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-sm);
     }
 
     .package-card[data-status='healthy'] { border-left: 4px solid var(--success); }
@@ -1680,7 +1972,7 @@ public sealed class CraReportGenerator
     }
 
     .package-header:hover {
-      background: var(--bg);
+      background: var(--bg-secondary);
     }
 
     .package-info {
@@ -1767,7 +2059,7 @@ public sealed class CraReportGenerator
       display: none;
       padding: 20px;
       border-top: 1px solid var(--border);
-      background: var(--bg);
+      background: var(--bg-secondary);
     }
 
     .package-card.expanded .package-details {
@@ -1845,12 +2137,13 @@ public sealed class CraReportGenerator
     }
 
     .license-link {
-      color: var(--primary);
+      color: var(--accent);
       text-decoration: none;
     }
 
     .license-link:hover {
       text-decoration: underline;
+      color: #4da3ff;
     }
 
     .msb-warning {
@@ -1882,22 +2175,22 @@ public sealed class CraReportGenerator
     }
 
     .sbom-warning {
-      background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
-      border: 1px solid #ffc107;
-      border-left: 4px solid #e65100;
+      background: var(--warning-light);
+      border: 1px solid var(--warning);
+      border-left: 4px solid var(--warning);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 24px;
     }
 
     .sbom-warning h4 {
-      color: #e65100;
+      color: var(--warning);
       margin: 0 0 12px 0;
       font-size: 1.1rem;
     }
 
     .sbom-warning p {
-      color: #5d4037;
+      color: var(--text-secondary);
       font-size: 0.9rem;
       margin: 8px 0;
     }
@@ -1905,7 +2198,7 @@ public sealed class CraReportGenerator
     .sbom-warning ul {
       margin: 12px 0;
       padding-left: 24px;
-      color: #5d4037;
+      color: var(--text-secondary);
     }
 
     .sbom-warning li {
@@ -1914,11 +2207,11 @@ public sealed class CraReportGenerator
     }
 
     .sbom-warning code {
-      background: rgba(0,0,0,0.1);
+      background: var(--bg-tertiary);
       padding: 2px 8px;
       border-radius: 4px;
       font-size: 0.9rem;
-      font-family: monospace;
+      font-family: 'IBM Plex Mono', monospace;
     }
 
     /* License Section Styles */
@@ -1932,18 +2225,18 @@ public sealed class CraReportGenerator
     }
 
     .license-status.healthy {
-      background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-      border: 1px solid #28a745;
+      background: var(--success-light);
+      border: 1px solid var(--success);
     }
 
     .license-status.warning {
-      background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
-      border: 1px solid #ffc107;
+      background: var(--warning-light);
+      border: 1px solid var(--warning);
     }
 
     .license-status.critical {
-      background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-      border: 1px solid #dc3545;
+      background: var(--danger-light);
+      border: 1px solid var(--danger);
     }
 
     .license-status .status-icon {
@@ -1961,7 +2254,7 @@ public sealed class CraReportGenerator
     }
 
     .license-distribution {
-      background: white;
+      background: var(--bg-card);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 24px;
@@ -1970,7 +2263,7 @@ public sealed class CraReportGenerator
 
     .license-distribution h3 {
       margin: 0 0 16px 0;
-      color: var(--text);
+      color: var(--text-primary);
     }
 
     .distribution-stacked-bar {
@@ -2038,12 +2331,12 @@ public sealed class CraReportGenerator
 
     .legend-label {
       font-weight: 500;
-      color: var(--text);
+      color: var(--text-primary);
     }
 
     .legend-count {
       font-weight: 600;
-      color: var(--text);
+      color: var(--text-primary);
     }
 
     .legend-percent {
@@ -2051,7 +2344,7 @@ public sealed class CraReportGenerator
     }
 
     .license-table-container {
-      background: white;
+      background: var(--bg-card);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 24px;
@@ -2070,7 +2363,7 @@ public sealed class CraReportGenerator
     }
 
     .license-table th {
-      background: #f8f9fa;
+      background: var(--bg-tertiary);
       font-weight: 600;
     }
 
@@ -2090,7 +2383,7 @@ public sealed class CraReportGenerator
     .category-badge.unknown { background: #6c757d; }
 
     .license-issues {
-      background: white;
+      background: var(--bg-card);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 24px;
@@ -2107,13 +2400,13 @@ public sealed class CraReportGenerator
     }
 
     .issue-item.error {
-      background: #f8d7da;
-      border-left: 4px solid #dc3545;
+      background: var(--danger-light);
+      border-left: 4px solid var(--danger);
     }
 
     .issue-item.warning {
-      background: #fff3cd;
-      border-left: 4px solid #ffc107;
+      background: var(--warning-light);
+      border-left: 4px solid var(--warning);
     }
 
     .issue-severity {
@@ -2123,17 +2416,17 @@ public sealed class CraReportGenerator
     }
 
     .issue-message {
-      color: #333;
+      color: var(--text-primary);
     }
 
     .issue-recommendation {
-      color: #666;
+      color: var(--text-muted);
       font-size: 0.9rem;
       font-style: italic;
     }
 
     .unknown-licenses {
-      background: #f8f9fa;
+      background: var(--bg-tertiary);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 24px;
@@ -2151,7 +2444,7 @@ public sealed class CraReportGenerator
     .package-dependencies {
       margin-top: 15px;
       padding: 15px;
-      background: #f8f9fa;
+      background: var(--bg-tertiary);
       border-radius: 8px;
       border: 1px solid var(--border);
     }
@@ -2171,7 +2464,7 @@ public sealed class CraReportGenerator
     .dep-item {
       display: inline-block;
       padding: 4px 10px;
-      background: white;
+      background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 15px;
       font-size: 0.8rem;
@@ -2244,7 +2537,8 @@ public sealed class CraReportGenerator
     }
 
     .recommendations {
-      background: #fff3cd;
+      background: var(--warning-light);
+      border: 1px solid var(--warning);
       padding: 15px;
       border-radius: 8px;
       margin-bottom: 15px;
@@ -2252,11 +2546,12 @@ public sealed class CraReportGenerator
 
     .recommendations h4 {
       margin-bottom: 10px;
-      color: #856404;
+      color: var(--warning);
     }
 
     .recommendations ul {
       margin-left: 20px;
+      color: var(--text-secondary);
     }
 
     .vulnerabilities-badge {
@@ -2270,7 +2565,7 @@ public sealed class CraReportGenerator
     .required-by {
       margin-top: 12px;
       padding: 10px 12px;
-      background: var(--bg);
+      background: var(--bg-secondary);
       border-radius: 8px;
       border: 1px solid var(--border);
     }
@@ -2346,7 +2641,7 @@ public sealed class CraReportGenerator
     }
 
     .sbom-table th {
-      background: var(--bg);
+      background: var(--bg-secondary);
       font-weight: 600;
     }
 
@@ -2360,14 +2655,14 @@ public sealed class CraReportGenerator
     }
 
     .license-badge {
-      background: var(--bg);
+      background: var(--bg-secondary);
       padding: 4px 8px;
       border-radius: 4px;
       font-size: 0.85rem;
     }
 
     .purl code {
-      background: var(--bg);
+      background: var(--bg-secondary);
       padding: 4px 8px;
       border-radius: 4px;
       font-size: 0.75rem;
@@ -2440,7 +2735,7 @@ public sealed class CraReportGenerator
       justify-content: space-between;
       align-items: center;
       padding: 12px 16px;
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-radius: 8px;
       cursor: pointer;
       color: var(--text-muted);
@@ -2462,7 +2757,7 @@ public sealed class CraReportGenerator
       text-align: center;
       padding: 20px;
       border-radius: 12px;
-      background: var(--card-bg);
+      background: var(--bg-card);
     }
 
     .vuln-stat .count {
@@ -2521,7 +2816,7 @@ public sealed class CraReportGenerator
     }
 
     .vuln-card {
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-radius: 12px;
       padding: 20px;
       border-left: 4px solid var(--border);
@@ -2570,7 +2865,7 @@ public sealed class CraReportGenerator
     }
 
     .vuln-products code {
-      background: var(--bg);
+      background: var(--bg-secondary);
       padding: 2px 6px;
       border-radius: 4px;
     }
@@ -2588,7 +2883,7 @@ public sealed class CraReportGenerator
     }
 
     .compliance-item {
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-radius: 12px;
       padding: 20px;
       border-left: 4px solid var(--border);
@@ -2674,7 +2969,7 @@ public sealed class CraReportGenerator
       bottom: 0;
       left: var(--sidebar-width);
       right: 0;
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-top: 1px solid var(--border);
       padding: 12px 30px;
       text-align: center;
@@ -2710,7 +3005,7 @@ public sealed class CraReportGenerator
     /* Transitive Dependencies */
     .transitive-section {
       margin-top: 30px;
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-radius: 12px;
       overflow: hidden;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
@@ -2721,24 +3016,24 @@ public sealed class CraReportGenerator
       justify-content: space-between;
       align-items: center;
       padding: 15px 20px;
-      background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%);
+      background: var(--bg-tertiary);
       cursor: pointer;
       border-bottom: 1px solid var(--border);
     }
 
     .transitive-header:hover {
-      background: linear-gradient(90deg, #e9ecef 0%, #dee2e6 100%);
+      background: var(--bg-secondary);
     }
 
     .transitive-header h3 {
       font-size: 1rem;
-      color: var(--text);
+      color: var(--text-primary);
       margin: 0;
     }
 
     .transitive-toggle {
       padding: 4px 12px;
-      background: var(--primary);
+      background: var(--accent);
       color: white;
       border-radius: 20px;
       font-size: 0.8rem;
@@ -2788,7 +3083,7 @@ public sealed class CraReportGenerator
     }
 
     .issue-stat {
-      background: var(--bg);
+      background: var(--bg-secondary);
       padding: 8px 16px;
       border-radius: 6px;
       font-size: 0.9rem;
@@ -2842,7 +3137,7 @@ public sealed class CraReportGenerator
     }
 
     .version-tag {
-      background: var(--bg);
+      background: var(--bg-secondary);
       padding: 4px 10px;
       border-radius: 4px;
       font-family: monospace;
@@ -2866,15 +3161,16 @@ public sealed class CraReportGenerator
 
     .tree-stat {
       padding: 8px 16px;
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-radius: 8px;
       font-size: 0.9rem;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
 
     .tree-stat.vulnerable {
-      background: #f8d7da;
+      background: var(--danger-light);
       color: var(--danger);
+      border: 1px solid var(--danger);
     }
 
     .tree-controls {
@@ -2888,7 +3184,8 @@ public sealed class CraReportGenerator
     .tree-btn {
       padding: 8px 16px;
       border: 1px solid var(--border);
-      background: white;
+      background: var(--bg-card);
+      color: var(--text-secondary);
       border-radius: 8px;
       cursor: pointer;
       font-size: 0.85rem;
@@ -2896,13 +3193,13 @@ public sealed class CraReportGenerator
     }
 
     .tree-btn:hover {
-      background: var(--primary);
+      background: var(--accent);
       color: white;
-      border-color: var(--primary);
+      border-color: var(--accent);
     }
 
     .dependency-tree {
-      background: var(--card-bg);
+      background: var(--bg-card);
       border-radius: 12px;
       padding: 20px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
@@ -2948,7 +3245,7 @@ public sealed class CraReportGenerator
       align-items: center;
       flex-wrap: wrap;
       gap: 8px;
-      background: white;
+      background: var(--bg-card);
       border-radius: 6px;
       border: 1px solid var(--border);
       transition: box-shadow 0.2s;
@@ -2974,14 +3271,11 @@ public sealed class CraReportGenerator
     }
 
     .tree-node.has-vuln-descendant:not(.has-vuln) {
-      border-left: 3px solid var(--danger);
-      margin-left: -3px;
-      padding-left: 7px;
+      /* Subtle indicator - the warning badge is enough */
     }
 
-    .tree-node.has-vuln-descendant:not(.has-vuln) > .tree-toggle,
-    .tree-node.has-vuln-descendant:not(.has-vuln) > .node-name {
-      color: var(--danger);
+    .tree-node.has-vuln-descendant:not(.has-vuln) > .tree-toggle {
+      color: var(--warning);
     }
 
     .tree-toggle {
@@ -3004,7 +3298,7 @@ public sealed class CraReportGenerator
 
     .node-name {
       font-weight: 600;
-      color: var(--text);
+      color: var(--text-primary);
     }
 
     .node-version {
@@ -3052,17 +3346,26 @@ public sealed class CraReportGenerator
       color: white;
       text-decoration: none;
       cursor: pointer;
+      font-size: 0.75em;
+      padding: 3px 8px;
+      font-weight: 700;
+      animation: pulse-danger 2s infinite;
+    }
+
+    @keyframes pulse-danger {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+      50% { box-shadow: 0 0 0 4px rgba(220, 53, 69, 0); }
     }
 
     a.node-badge.vuln:hover {
       background: #c82333;
       text-decoration: underline;
+      animation: none;
     }
 
     .node-badge.transitive-vuln {
-      background: transparent;
-      color: var(--danger);
-      font-size: 1em;
+      color: var(--warning);
+      font-size: 1.1em;
       padding: 0 4px;
     }
 
@@ -3072,11 +3375,20 @@ public sealed class CraReportGenerator
     }
 
     .node-license {
-      color: var(--text-muted);
       font-size: 0.75em;
       padding: 1px 6px;
-      background: var(--bg);
+      background: var(--bg-tertiary);
       border-radius: 4px;
+    }
+
+    .node-license,
+    .node-license a {
+      color: var(--accent);
+    }
+
+    .node-license a:hover {
+      color: #4da3ff;
+      text-decoration: underline;
     }
 
     .tree-children.collapsed {
@@ -3092,10 +3404,10 @@ public sealed class CraReportGenerator
       align-items: center;
       gap: 10px;
       padding: 12px 16px;
-      background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%);
+      background: var(--bg-tertiary);
       border-radius: 8px;
       margin: 20px 0 10px 0;
-      border-left: 4px solid var(--primary);
+      border-left: 4px solid var(--accent);
     }
 
     .ecosystem-header:first-of-type {
@@ -3133,7 +3445,7 @@ public sealed class CraReportGenerator
   </style>";
     }
 
-    private string GetHtmlScripts(CraReport report)
+    private string GetHtmlScripts(CraReport report, bool darkMode)
     {
         var sbomJson = JsonSerializer.Serialize(report.Sbom, new JsonSerializerOptions { WriteIndented = true });
         var vexJson = JsonSerializer.Serialize(report.Vex, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
@@ -3142,6 +3454,16 @@ public sealed class CraReportGenerator
 <script>
 const sbomData = {sbomJson};
 const vexData = {vexJson};
+
+function toggleTheme() {{
+  const toggle = document.getElementById('themeToggle');
+  toggle.classList.toggle('active');
+  if (toggle.classList.contains('active')) {{
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }} else {{
+    document.documentElement.removeAttribute('data-theme');
+  }}
+}}
 
 function showSection(sectionId) {{
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -3639,6 +3961,10 @@ function filterTreeByEcosystem(ecosystem) {{
         {
             parts.Add("License: Unknown (-25 points)");
         }
+        else if (!IsKnownSpdxLicense(license))
+        {
+            parts.Add($"License: Non-standard (-10 points)");
+        }
         else
         {
             parts.Add($"License: {license} ✓");
@@ -3669,6 +3995,39 @@ function filterTreeByEcosystem(ecosystem) {{
         >= 70 => "watch",
         >= 50 => "warning",
         _ => "critical"
+    };
+
+    private static bool IsKnownSpdxLicense(string license)
+    {
+        var normalized = license.Trim().TrimStart('(').TrimEnd(')').Trim();
+        var separators = new[] { " OR ", " AND ", " WITH " };
+        var parts = normalized.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length > 1)
+        {
+            return parts.All(p => IsKnownSingleLicense(p.Trim().TrimStart('(').TrimEnd(')').Trim().ToUpperInvariant()));
+        }
+
+        return IsKnownSingleLicense(normalized.ToUpperInvariant());
+    }
+
+    private static bool IsKnownSingleLicense(string license) => license switch
+    {
+        "MIT" or "MIT-0" => true,
+        "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
+        "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
+        "ISC" => true,
+        "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" or "GPL-2.0-OR-LATER" or "GPL-3.0-OR-LATER" => true,
+        "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" or "LGPL-2.1-OR-LATER" or "LGPL-3.0-OR-LATER" => true,
+        "MPL-2.0" => true,
+        "UNLICENSE" or "UNLICENSED" => true,
+        "CC0-1.0" or "CC-BY-4.0" => true,
+        "BSL-1.0" => true,
+        "WTFPL" => true,
+        "ZLIB" => true,
+        "MS-PL" or "MS-RL" => true,
+        "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
+        _ => false
     };
 
     /// <summary>
