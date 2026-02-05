@@ -4666,7 +4666,6 @@ function filterTreeByEcosystem(ecosystem) {{
     {
         return JsonSerializer.Serialize(report, new JsonSerializerOptions
         {
-            WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
     }
