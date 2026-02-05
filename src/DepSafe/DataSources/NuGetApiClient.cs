@@ -104,6 +104,47 @@ public sealed class NuGetApiClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Get package information for multiple packages in parallel with concurrency control.
+    /// </summary>
+    public async Task<Dictionary<string, NuGetPackageInfo>> GetPackageInfoBatchAsync(
+        IEnumerable<string> packageIds,
+        int maxConcurrency = 10,
+        CancellationToken ct = default)
+    {
+        var results = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var packageList = packageIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (packageList.Count == 0)
+            return results;
+
+        var semaphore = new SemaphoreSlim(maxConcurrency);
+        var lockObj = new object();
+
+        var tasks = packageList.Select(async packageId =>
+        {
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                var info = await GetPackageInfoAsync(packageId, ct);
+                if (info is not null)
+                {
+                    lock (lockObj)
+                    {
+                        results[packageId] = info;
+                    }
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return results;
+    }
+
     private static string? ExtractRepositoryUrl(IPackageSearchMetadata metadata)
     {
         // Try project URL first, then look for GitHub patterns

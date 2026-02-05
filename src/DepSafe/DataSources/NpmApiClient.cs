@@ -125,6 +125,47 @@ public sealed class NpmApiClient : IDisposable
     }
 
     /// <summary>
+    /// Get package information for multiple packages in parallel with concurrency control.
+    /// </summary>
+    public async Task<Dictionary<string, NpmPackageInfo>> GetPackageInfoBatchAsync(
+        IEnumerable<string> packageNames,
+        int maxConcurrency = 10,
+        CancellationToken ct = default)
+    {
+        var results = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        var packageList = packageNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (packageList.Count == 0)
+            return results;
+
+        var semaphore = new SemaphoreSlim(maxConcurrency);
+        var lockObj = new object();
+
+        var tasks = packageList.Select(async packageName =>
+        {
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                var info = await GetPackageInfoAsync(packageName, ct);
+                if (info is not null)
+                {
+                    lock (lockObj)
+                    {
+                        results[packageName] = info;
+                    }
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return results;
+    }
+
+    /// <summary>
     /// Get weekly download count from npm.
     /// </summary>
     public async Task<long> GetDownloadCountAsync(string packageName, CancellationToken ct = default)
