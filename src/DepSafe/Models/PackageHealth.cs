@@ -37,6 +37,12 @@ public sealed class PackageHealth
     /// <summary>CVE IDs from CISA KEV catalog affecting this package.</summary>
     public List<string> KevCves { get; set; } = [];
 
+    /// <summary>Highest EPSS probability across all vulnerabilities (0.0-1.0).</summary>
+    public double? MaxEpssProbability { get; set; }
+
+    /// <summary>Highest EPSS percentile across all vulnerabilities (0.0-1.0).</summary>
+    public double? MaxEpssPercentile { get; set; }
+
     public List<string> Recommendations { get; init; } = [];
     public List<PackageDependency> Dependencies { get; init; } = [];
 

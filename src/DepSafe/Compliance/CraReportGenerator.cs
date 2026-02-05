@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DepSafe.DataSources;
 using DepSafe.Models;
 
 namespace DepSafe.Compliance;
@@ -96,6 +97,27 @@ public sealed partial class CraReportGenerator
                 : null
         });
 
+        // Art. 10(4) - Exploit Probability (EPSS)
+        var highEpssPackages = (_healthDataCache ?? []).Concat(_transitiveDataCache ?? [])
+            .Where(p => p.MaxEpssProbability >= 0.1)
+            .OrderByDescending(p => p.MaxEpssProbability)
+            .ToList();
+        var epssEvidence = highEpssPackages.Count == 0
+            ? "No packages with high exploit probability (EPSS >= 10%)"
+            : string.Join("; ", highEpssPackages.Take(5).Select(p => $"{p.PackageId} ({p.MaxEpssProbability * 100:F1}%)")) + (highEpssPackages.Count > 5 ? "; ..." : "");
+        complianceItems.Add(new CraComplianceItem
+        {
+            Requirement = "CRA Art. 10(4) - Exploit Probability (EPSS)",
+            Description = highEpssPackages.Count == 0
+                ? "No packages with high exploit probability"
+                : $"{highEpssPackages.Count} package(s) with EPSS >= 10% (likely to be exploited)",
+            Status = highEpssPackages.Count == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.ActionRequired,
+            Evidence = epssEvidence,
+            Recommendation = highEpssPackages.Count > 0
+                ? "Prioritize patching packages with high EPSS scores - these vulnerabilities are likely to be exploited"
+                : null
+        });
+
         // Art. 10(6) - Security Updates
         complianceItems.Add(new CraComplianceItem
         {
@@ -151,6 +173,26 @@ public sealed partial class CraReportGenerator
                 ? "Review flagged cryptographic packages for compliance"
                 : null
         });
+
+        // Art. 10 - Supply Chain Integrity (Typosquatting)
+        if (_typosquatChecked)
+        {
+            var typosquatCount = _typosquatResults.Count;
+            var highRiskCount = _typosquatResults.Count(r => r.RiskLevel >= TyposquatRiskLevel.High);
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 10 - Supply Chain Integrity",
+                Description = "Dependencies verified against known package typosquatting attacks",
+                Status = typosquatCount == 0 ? CraComplianceStatus.Compliant :
+                    highRiskCount > 0 ? CraComplianceStatus.ActionRequired : CraComplianceStatus.Review,
+                Evidence = typosquatCount == 0
+                    ? "No potential typosquatting issues detected in project dependencies"
+                    : $"{typosquatCount} potential typosquatting issue(s) found ({highRiskCount} high/critical risk)",
+                Recommendation = typosquatCount > 0
+                    ? "Verify flagged dependencies are legitimate packages and not typosquatting attacks"
+                    : null
+            });
+        }
 
         // ============================================
         // CRA ARTICLE 11 - Vulnerability Handling
@@ -299,6 +341,15 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('issues')\" data-section=\"issues\">");
         sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"16\" x2=\"12.01\" y2=\"16\"/></svg>");
         sb.AppendLine("          Dependency Issues</a></li>");
+        if (_typosquatChecked)
+        {
+            var typosquatBadge = _typosquatResults.Count > 0
+                ? $"<span class=\"nav-badge warning\">{_typosquatResults.Count}</span>"
+                : "";
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('supply-chain')\" data-section=\"supply-chain\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4\"/></svg>");
+            sb.AppendLine($"          Supply Chain{typosquatBadge}</a></li>");
+        }
         if (licenseFileName is not null)
         {
             sb.AppendLine("        <li class=\"external-link-item\"><a href=\"" + licenseFileName + "\" target=\"_blank\" class=\"external\">");
@@ -376,6 +427,14 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("<section id=\"issues\" class=\"section\">");
         GenerateDependencyIssuesSection(sb, report);
         sb.AppendLine("</section>");
+
+        // Supply Chain Section
+        if (_typosquatChecked)
+        {
+            sb.AppendLine("<section id=\"supply-chain\" class=\"section\">");
+            GenerateSupplyChainSection(sb);
+            sb.AppendLine("</section>");
+        }
 
         // Compliance Section
         sb.AppendLine("<section id=\"compliance\" class=\"section\">");
@@ -629,6 +688,12 @@ public sealed partial class CraReportGenerator
             {
                 sb.AppendLine($"        <span class=\"kev-badge\" title=\"Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
             }
+            if (healthData?.MaxEpssProbability is > 0 and var epssDirect)
+            {
+                var epssClass = GetEpssBadgeClass(epssDirect);
+                var epssPct = (epssDirect * 100).ToString("F1");
+                sb.AppendLine($"        <span class=\"epss-badge {epssClass}\" title=\"EPSS: {epssPct}% probability of exploitation in 30 days\">EPSS {epssPct}%</span>");
+            }
             sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
             sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
             sb.AppendLine($"      </div>");
@@ -696,6 +761,12 @@ public sealed partial class CraReportGenerator
                 else if (hasKevTrans)
                 {
                     sb.AppendLine($"        <span class=\"kev-badge\" title=\"Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
+                }
+                if (healthData.MaxEpssProbability is > 0 and var epssTrans)
+                {
+                    var epssClass = GetEpssBadgeClass(epssTrans);
+                    var epssPct = (epssTrans * 100).ToString("F1");
+                    sb.AppendLine($"        <span class=\"epss-badge {epssClass}\" title=\"EPSS: {epssPct}% probability of exploitation in 30 days\">EPSS {epssPct}%</span>");
                 }
                 sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
                 sb.AppendLine($"        {depTypeBadge}");
@@ -1073,6 +1144,27 @@ public sealed partial class CraReportGenerator
         if (stmt.Vulnerability.Aliases?.Count > 0)
         {
             sb.AppendLine($"    <div class=\"vuln-aliases\"><strong>CVEs:</strong> {string.Join(", ", stmt.Vulnerability.Aliases.Select(EscapeHtml))}</div>");
+
+            // EPSS scores for each CVE
+            var cveEpssEntries = stmt.Vulnerability.Aliases
+                .Where(cve => _epssScores.ContainsKey(cve) && _epssScores[cve].Probability > 0)
+                .Select(cve => _epssScores[cve])
+                .OrderByDescending(s => s.Probability)
+                .ToList();
+
+            if (cveEpssEntries.Count > 0)
+            {
+                sb.AppendLine("    <div class=\"vuln-epss\">");
+                sb.AppendLine("      <strong>EPSS (Exploit Probability):</strong>");
+                foreach (var epss in cveEpssEntries)
+                {
+                    var pct = (epss.Probability * 100).ToString("F1");
+                    var percentile = (int)(epss.Percentile * 100);
+                    var badgeClass = GetEpssBadgeClass(epss.Probability);
+                    sb.AppendLine($"      <span class=\"epss-badge {badgeClass}\" title=\"{EscapeHtml(epss.Cve)}: {pct}% chance of exploitation in 30 days (percentile: {percentile})\">{EscapeHtml(epss.Cve)} {pct}% <small>p{percentile}</small></span>");
+                }
+                sb.AppendLine("    </div>");
+            }
         }
         sb.AppendLine("  </div>");
     }
@@ -1115,6 +1207,90 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("  </div>");
         }
 
+        sb.AppendLine("</div>");
+    }
+
+    private void GenerateSupplyChainSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Supply Chain Analysis</h2>");
+        sb.AppendLine("</div>");
+
+        if (_typosquatResults.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card typosquat-success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">&#9989;</div>");
+            sb.AppendLine("  <h3>No Typosquatting Issues Detected</h3>");
+            sb.AppendLine("  <p>All dependency names were verified against known popular packages. No suspicious name similarities were found.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        // Summary stats
+        var criticalCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.Critical);
+        var highCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.High);
+        var mediumCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.Medium);
+        var lowCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.Low);
+
+        sb.AppendLine("<div class=\"typosquat-summary\">");
+        sb.AppendLine($"  <div class=\"typosquat-stat-card\"><span class=\"typosquat-stat-count\">{_typosquatResults.Count}</span><span class=\"typosquat-stat-label\">Total Warnings</span></div>");
+        if (criticalCount > 0)
+            sb.AppendLine($"  <div class=\"typosquat-stat-card critical\"><span class=\"typosquat-stat-count\">{criticalCount}</span><span class=\"typosquat-stat-label\">Critical</span></div>");
+        if (highCount > 0)
+            sb.AppendLine($"  <div class=\"typosquat-stat-card high\"><span class=\"typosquat-stat-count\">{highCount}</span><span class=\"typosquat-stat-label\">High</span></div>");
+        if (mediumCount > 0)
+            sb.AppendLine($"  <div class=\"typosquat-stat-card medium\"><span class=\"typosquat-stat-count\">{mediumCount}</span><span class=\"typosquat-stat-label\">Medium</span></div>");
+        if (lowCount > 0)
+            sb.AppendLine($"  <div class=\"typosquat-stat-card low\"><span class=\"typosquat-stat-count\">{lowCount}</span><span class=\"typosquat-stat-label\">Low</span></div>");
+        sb.AppendLine("</div>");
+
+        // Results table
+        sb.AppendLine("<div class=\"card\">");
+        sb.AppendLine("<table class=\"data-table typosquat-table\">");
+        sb.AppendLine("  <thead>");
+        sb.AppendLine("    <tr>");
+        sb.AppendLine("      <th>Risk</th>");
+        sb.AppendLine("      <th>Package</th>");
+        sb.AppendLine("      <th>Similar To</th>");
+        sb.AppendLine("      <th>Detection Method</th>");
+        sb.AppendLine("      <th>Confidence</th>");
+        sb.AppendLine("      <th>Detail</th>");
+        sb.AppendLine("    </tr>");
+        sb.AppendLine("  </thead>");
+        sb.AppendLine("  <tbody>");
+
+        foreach (var result in _typosquatResults.OrderByDescending(r => r.RiskLevel).ThenByDescending(r => r.Confidence))
+        {
+            var riskClass = result.RiskLevel switch
+            {
+                TyposquatRiskLevel.Critical => "typosquat-critical",
+                TyposquatRiskLevel.High => "typosquat-high",
+                TyposquatRiskLevel.Medium => "typosquat-medium",
+                _ => "typosquat-low"
+            };
+
+            var methodLabel = result.Method switch
+            {
+                TyposquatDetectionMethod.EditDistance => "Edit Distance",
+                TyposquatDetectionMethod.Homoglyph => "Homoglyph",
+                TyposquatDetectionMethod.SeparatorSwap => "Separator Swap",
+                TyposquatDetectionMethod.PrefixSuffix => "Prefix/Suffix",
+                TyposquatDetectionMethod.ScopeConfusion => "Scope Confusion",
+                _ => result.Method.ToString()
+            };
+
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td><span class=\"typosquat-risk {riskClass}\">{result.RiskLevel}</span></td>");
+            sb.AppendLine($"      <td><code>{EscapeHtml(result.PackageName)}</code></td>");
+            sb.AppendLine($"      <td><code>{EscapeHtml(result.SimilarTo)}</code></td>");
+            sb.AppendLine($"      <td>{EscapeHtml(methodLabel)}</td>");
+            sb.AppendLine($"      <td><span class=\"confidence-bar\"><span class=\"confidence-fill\" style=\"width:{result.Confidence}%\"></span><span class=\"confidence-text\">{result.Confidence}%</span></span></td>");
+            sb.AppendLine($"      <td>{EscapeHtml(result.Detail)}</td>");
+            sb.AppendLine("    </tr>");
+        }
+
+        sb.AppendLine("  </tbody>");
+        sb.AppendLine("</table>");
         sb.AppendLine("</div>");
     }
 
@@ -2629,6 +2805,123 @@ public sealed partial class CraReportGenerator
       border-left: 4px solid #dc3545;
     }
 
+    .epss-badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .epss-badge.epss-critical {
+      background: #dc3545;
+      color: white;
+    }
+
+    .epss-badge.epss-high {
+      background: #fd7e14;
+      color: white;
+    }
+
+    .epss-badge.epss-medium {
+      background: #ffc107;
+      color: #212529;
+    }
+
+    .epss-badge.epss-low {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+    }
+
+    /* Supply Chain / Typosquatting */
+    .typosquat-success {
+      text-align: center;
+      padding: 3rem;
+    }
+
+    .typosquat-summary {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .typosquat-stat-card {
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 100px;
+      border: 1px solid var(--border);
+    }
+
+    .typosquat-stat-card.critical { border-color: var(--danger); background: var(--danger-light); }
+    .typosquat-stat-card.high { border-color: #e67e22; background: #fdf2e9; }
+    .typosquat-stat-card.medium { border-color: var(--warning); background: var(--warning-light); }
+    .typosquat-stat-card.low { border-color: var(--text-secondary); }
+
+    .typosquat-stat-count {
+      font-size: 1.5rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .typosquat-stat-card.critical .typosquat-stat-count { color: var(--danger); }
+    .typosquat-stat-card.high .typosquat-stat-count { color: #e67e22; }
+    .typosquat-stat-card.medium .typosquat-stat-count { color: #856404; }
+
+    .typosquat-stat-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .typosquat-risk {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .typosquat-risk.typosquat-critical { background: var(--danger-light); color: var(--danger); }
+    .typosquat-risk.typosquat-high { background: #fdf2e9; color: #e67e22; }
+    .typosquat-risk.typosquat-medium { background: var(--warning-light); color: #856404; }
+    .typosquat-risk.typosquat-low { background: var(--bg-secondary); color: var(--text-secondary); }
+
+    .confidence-bar {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .confidence-fill {
+      display: inline-block;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--accent);
+    }
+
+    .confidence-text {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .typosquat-table code {
+      font-size: 0.85em;
+    }
+
+    .nav-badge.warning {
+      background: var(--warning);
+      color: #000;
+    }
+
     .required-by {
       margin-top: 12px;
       padding: 10px 12px;
@@ -4079,6 +4372,9 @@ function filterTreeByEcosystem(ecosystem) {{
     private int _totalPackagesWithRepo;
     private List<(string Cve, string PackageId)> _kevCvePackages = [];
     private HashSet<string> _kevPackageIds = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, EpssScore> _epssScores = new(StringComparer.OrdinalIgnoreCase);
+    private List<TyposquatResult> _typosquatResults = [];
+    private bool _typosquatChecked;
     private CryptoComplianceResult? _cryptoCompliance;
 
     /// <summary>
@@ -4153,6 +4449,23 @@ function filterTreeByEcosystem(ecosystem) {{
     {
         _kevCvePackages = kevCvePackages.ToList();
         _kevPackageIds = new HashSet<string>(_kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Set EPSS (Exploit Prediction Scoring System) scores for vulnerability prioritization.
+    /// </summary>
+    public void SetEpssScores(Dictionary<string, EpssScore> scores)
+    {
+        _epssScores = scores;
+    }
+
+    /// <summary>
+    /// Set typosquatting detection results for supply chain analysis section.
+    /// </summary>
+    public void SetTyposquatResults(List<TyposquatResult> results)
+    {
+        _typosquatResults = results;
+        _typosquatChecked = true;
     }
 
     /// <summary>
@@ -4432,6 +4745,14 @@ function filterTreeByEcosystem(ecosystem) {{
         >= 70 => "watch",
         >= 50 => "warning",
         _ => "critical"
+    };
+
+    private static string GetEpssBadgeClass(double probability) => probability switch
+    {
+        >= 0.5 => "epss-critical",
+        >= 0.1 => "epss-high",
+        >= 0.01 => "epss-medium",
+        _ => "epss-low"
     };
 
     private static bool IsKnownSpdxLicense(string license)

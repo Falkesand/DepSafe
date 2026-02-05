@@ -29,20 +29,25 @@ public static class AnalyzeCommand
             ["--skip-github"],
             "Skip GitHub API calls (faster, but no repo activity or vulnerability data)");
 
+        var checkTyposquatOption = new Option<bool>(
+            ["--check-typosquat"],
+            "Run typosquatting detection on all dependencies");
+
         var command = new Command("analyze", "Analyze package health for a project or solution")
         {
             pathArg,
             formatOption,
             failBelowOption,
-            skipGitHubOption
+            skipGitHubOption,
+            checkTyposquatOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, failBelowOption, skipGitHubOption);
+        command.SetHandler(ExecuteAsync, pathArg, formatOption, failBelowOption, skipGitHubOption, checkTyposquatOption);
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, int? failBelow, bool skipGitHub)
+    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, int? failBelow, bool skipGitHub, bool checkTyposquat)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -196,6 +201,56 @@ public static class AnalyzeCommand
             packages.Add(health);
         }
 
+        // Phase 5: EPSS enrichment - fetch exploit probability scores
+        var allCves = vulnMap.Values
+            .SelectMany(v => v.SelectMany(vi => vi.Cves))
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .ToList();
+
+        if (allCves.Count > 0)
+        {
+            using var epssService = new EpssService();
+            var epssScores = await AnsiConsole.Status()
+                .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
+                    await epssService.GetScoresAsync(allCves));
+
+            // Enrich vulnerabilities and packages
+            foreach (var (packageId, vulns) in vulnMap)
+            {
+                foreach (var vuln in vulns)
+                {
+                    var maxEpss = vuln.Cves
+                        .Where(c => epssScores.ContainsKey(c))
+                        .Select(c => epssScores[c])
+                        .OrderByDescending(s => s.Probability)
+                        .FirstOrDefault();
+
+                    if (maxEpss is not null)
+                    {
+                        vuln.EpssProbability = maxEpss.Probability;
+                        vuln.EpssPercentile = maxEpss.Percentile;
+                    }
+                }
+
+                var pkg = packages.FirstOrDefault(p =>
+                    string.Equals(p.PackageId, packageId, StringComparison.OrdinalIgnoreCase));
+                if (pkg is not null)
+                {
+                    var maxPkgEpss = vulns
+                        .Where(v => v.EpssProbability.HasValue)
+                        .OrderByDescending(v => v.EpssProbability)
+                        .FirstOrDefault();
+
+                    if (maxPkgEpss is not null)
+                    {
+                        pkg.MaxEpssProbability = maxPkgEpss.EpssProbability;
+                        pkg.MaxEpssPercentile = maxPkgEpss.EpssPercentile;
+                    }
+                }
+            }
+        }
+
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
@@ -238,6 +293,29 @@ public static class AnalyzeCommand
                 break;
         }
 
+        // Typosquatting check (optional)
+        if (checkTyposquat)
+        {
+            var typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false);
+            if (typosquatResults.Count > 0)
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(new Rule("[yellow bold]Typosquatting Warnings[/]").LeftJustified());
+
+                foreach (var result in typosquatResults)
+                {
+                    var riskColor = result.RiskLevel switch
+                    {
+                        TyposquatRiskLevel.Critical => "red",
+                        TyposquatRiskLevel.High => "orange3",
+                        TyposquatRiskLevel.Medium => "yellow",
+                        _ => "dim"
+                    };
+                    AnsiConsole.MarkupLine($"  [{riskColor}]{result.RiskLevel}[/]  {result.PackageName} -> {result.SimilarTo} ({result.Detail}, confidence: {result.Confidence}%)");
+                }
+            }
+        }
+
         // Return exit code based on threshold
         if (failBelow.HasValue && projectScore < failBelow.Value)
         {
@@ -255,12 +333,17 @@ public static class AnalyzeCommand
         AnsiConsole.MarkupLine($"[dim]{report.ProjectPath}[/]");
         AnsiConsole.WriteLine();
 
+        var hasEpss = report.Packages.Any(p => p.MaxEpssProbability.HasValue);
+
         var table = new Table()
             .Border(TableBorder.Rounded)
             .AddColumn("Package")
             .AddColumn("Version")
             .AddColumn(new TableColumn("Score").Centered())
             .AddColumn("Status");
+
+        if (hasEpss)
+            table.AddColumn(new TableColumn("EPSS Risk").Centered());
 
         foreach (var pkg in report.Packages)
         {
@@ -281,11 +364,24 @@ public static class AnalyzeCommand
                 _ => "red"
             };
 
-            table.AddRow(
-                pkg.PackageId,
-                pkg.Version,
-                $"[{scoreColor}]{pkg.Score}[/]",
-                statusMarkup);
+            if (hasEpss)
+            {
+                var epssDisplay = FormatEpss(pkg.MaxEpssProbability, pkg.MaxEpssPercentile);
+                table.AddRow(
+                    pkg.PackageId,
+                    pkg.Version,
+                    $"[{scoreColor}]{pkg.Score}[/]",
+                    statusMarkup,
+                    epssDisplay);
+            }
+            else
+            {
+                table.AddRow(
+                    pkg.PackageId,
+                    pkg.Version,
+                    $"[{scoreColor}]{pkg.Score}[/]",
+                    statusMarkup);
+            }
         }
 
         AnsiConsole.Write(table);
@@ -346,6 +442,24 @@ public static class AnalyzeCommand
                 }
             }
         }
+    }
+
+    private static string FormatEpss(double? probability, double? percentile)
+    {
+        if (!probability.HasValue)
+            return "[dim]-[/]";
+
+        var pct = probability.Value * 100;
+        var pRank = percentile.HasValue ? $"p{(int)(percentile.Value * 100)}" : "";
+        var color = probability.Value switch
+        {
+            >= 0.5 => "red",
+            >= 0.1 => "orange3",
+            >= 0.01 => "yellow",
+            _ => "dim"
+        };
+
+        return $"[{color}]{pct:F1}% ({pRank})[/]";
     }
 
     private static void OutputJson(ProjectReport report)

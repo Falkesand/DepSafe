@@ -9,7 +9,8 @@ var rootCommand = new RootCommand("DepSafe - Dependency safety and compliance fo
     VexCommand.Create(),
     CraReportCommand.Create(),
     LicensesCommand.Create(),
-    BadgeCommand.Create()
+    BadgeCommand.Create(),
+    TyposquatCommand.Create()
 };
 
 return await rootCommand.InvokeAsync(args);

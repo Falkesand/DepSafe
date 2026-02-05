@@ -43,6 +43,10 @@ public static class CraReportCommand
             ["--sbom", "-s"],
             "Export SBOM in specified format (cyclonedx or spdx)");
 
+        var checkTyposquatOption = new Option<bool>(
+            ["--check-typosquat"],
+            "Run typosquatting detection on all dependencies");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -51,10 +55,11 @@ public static class CraReportCommand
             skipGitHubOption,
             deepOption,
             licensesOption,
-            sbomOption
+            sbomOption,
+            checkTyposquatOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption);
+        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption);
 
         return command;
     }
@@ -108,7 +113,7 @@ public static class CraReportCommand
         return config.LicenseOverrides.TryGetValue(packageId, out var license) ? license : null;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat)
+    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, bool checkTyposquat = false)
     {
         var startTime = DateTime.UtcNow;
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
@@ -156,17 +161,44 @@ public static class CraReportCommand
             AnsiConsole.MarkupLine($"[dim]Loaded .cra-config.json with {config.LicenseOverrides.Count} license override(s)[/]");
         }
 
-        // Process based on project type
-        return projectType switch
+        // Run typosquatting analysis before report generation so results are included in HTML
+        List<TyposquatResult>? typosquatResults = null;
+        if (checkTyposquat)
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime),
+            typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false);
+        }
+
+        // Process based on project type
+        var result = projectType switch
+        {
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults),
             _ => 0
         };
+
+        // CLI output for typosquatting warnings
+        if (typosquatResults is { Count: > 0 })
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(new Rule("[yellow bold]Typosquatting Warnings[/]").LeftJustified());
+            foreach (var tr in typosquatResults)
+            {
+                var riskColor = tr.RiskLevel switch
+                {
+                    TyposquatRiskLevel.Critical => "red",
+                    TyposquatRiskLevel.High => "orange3",
+                    TyposquatRiskLevel.Medium => "yellow",
+                    _ => "dim"
+                };
+                AnsiConsole.MarkupLine($"  [{riskColor}]{tr.RiskLevel}[/]  {tr.PackageName} -> {tr.SimilarTo} ({tr.Detail}, confidence: {tr.Confidence}%)");
+            }
+        }
+
+        return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -384,7 +416,8 @@ public static class CraReportCommand
             sbomFormat,
             deprecatedPackages,
             pkgsWithSecurityPolicy,
-            pkgsWithRepo);
+            pkgsWithRepo,
+            typosquatResults);
     }
 
     private static List<PackageHealth> ExtractTransitivePackagesFromTree(
@@ -912,7 +945,7 @@ public static class CraReportCommand
         };
     }
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1254,10 +1287,11 @@ public static class CraReportCommand
             sbomFormat,
             deprecatedPackages,
             pkgsWithSecurityPolicy,
-            pkgsWithRepo);
+            pkgsWithRepo,
+            typosquatResults);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1683,7 +1717,8 @@ public static class CraReportCommand
             sbomFormat,
             allDeprecatedPackages,
             totalPackagesWithSecurityPolicy,
-            totalPackagesWithRepo);
+            totalPackagesWithRepo,
+            typosquatResults);
     }
 
     private static async Task<int> GenerateMixedReportAsync(
@@ -1701,7 +1736,8 @@ public static class CraReportCommand
         SbomFormat? sbomFormat = null,
         List<string>? deprecatedPackages = null,
         int packagesWithSecurityPolicy = 0,
-        int packagesWithRepo = 0)
+        int packagesWithRepo = 0,
+        List<TyposquatResult>? typosquatResults = null)
     {
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
@@ -1798,12 +1834,32 @@ public static class CraReportCommand
             pkg.Recommendations.Insert(0, $"CRITICAL: This package has an actively exploited vulnerability ({cveList}) listed in CISA KEV. Update immediately or find an alternative.");
         }
 
+        // EPSS enrichment - fetch exploit probability scores
+        var allCves = allVulnerabilities.Values
+            .SelectMany(v => v.SelectMany(vi => vi.Cves))
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .ToList();
+
+        if (allCves.Count > 0)
+        {
+            using var epssService = new EpssService();
+            var epssScores = await AnsiConsole.Status()
+                .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
+                    await epssService.GetScoresAsync(allCves));
+
+            EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
+            reportGenerator.SetEpssScores(epssScores);
+        }
+
         // Crypto compliance check
         var allPackageTuples = packages.Concat(transitivePackages)
             .Select(p => (p.PackageId, p.Version))
             .ToList();
         var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
         reportGenerator.SetCryptoCompliance(cryptoResult);
+        if (typosquatResults is not null)
+            reportGenerator.SetTyposquatResults(typosquatResults);
 
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
 
@@ -2167,6 +2223,56 @@ public static class CraReportCommand
         tree.VersionConflictCount = conflictingPackages.Count;
     }
 
+    private static void EnrichWithEpssScores(
+        Dictionary<string, List<VulnerabilityInfo>> allVulnerabilities,
+        List<PackageHealth> packages,
+        List<PackageHealth> transitivePackages,
+        Dictionary<string, EpssScore> epssScores)
+    {
+        // Enrich individual vulnerabilities
+        foreach (var (_, vulns) in allVulnerabilities)
+        {
+            foreach (var vuln in vulns)
+            {
+                var maxEpss = vuln.Cves
+                    .Where(c => epssScores.ContainsKey(c))
+                    .Select(c => epssScores[c])
+                    .OrderByDescending(s => s.Probability)
+                    .FirstOrDefault();
+
+                if (maxEpss is not null)
+                {
+                    vuln.EpssProbability = maxEpss.Probability;
+                    vuln.EpssPercentile = maxEpss.Percentile;
+                }
+            }
+        }
+
+        // Enrich packages with max EPSS across all their vulnerabilities
+        foreach (var pkg in packages.Concat(transitivePackages))
+        {
+            if (!allVulnerabilities.TryGetValue(pkg.PackageId, out var pkgVulns))
+                continue;
+
+            var maxPkgEpss = pkgVulns
+                .Where(v => v.EpssProbability.HasValue)
+                .OrderByDescending(v => v.EpssProbability)
+                .FirstOrDefault();
+
+            if (maxPkgEpss is not null)
+            {
+                pkg.MaxEpssProbability = maxPkgEpss.EpssProbability;
+                pkg.MaxEpssPercentile = maxPkgEpss.EpssPercentile;
+
+                // Flag high EPSS packages for CRA compliance
+                if (maxPkgEpss.EpssProbability >= 0.1 && pkg.CraStatus < CraComplianceStatus.ActionRequired)
+                {
+                    pkg.CraStatus = CraComplianceStatus.ActionRequired;
+                }
+            }
+        }
+    }
+
     private static void ShowGitHubStatus(GitHubApiClient? githubClient, bool skipGitHub)
     {
         // Vulnerabilities are now fetched from OSV (free, no auth required)
@@ -2289,7 +2395,8 @@ public static class CraReportCommand
         SbomFormat? sbomFormat = null,
         List<string>? deprecatedPackages = null,
         int packagesWithSecurityPolicy = 0,
-        int packagesWithRepo = 0)
+        int packagesWithRepo = 0,
+        List<TyposquatResult>? typosquatResults = null)
     {
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
@@ -2382,12 +2489,32 @@ public static class CraReportCommand
             pkg.Recommendations.Insert(0, $"CRITICAL: This package has an actively exploited vulnerability ({cveList}) listed in CISA KEV. Update immediately or find an alternative.");
         }
 
+        // EPSS enrichment - fetch exploit probability scores
+        var allCves = allVulnerabilities.Values
+            .SelectMany(v => v.SelectMany(vi => vi.Cves))
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .ToList();
+
+        if (allCves.Count > 0)
+        {
+            using var epssService = new EpssService();
+            var epssScores = await AnsiConsole.Status()
+                .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
+                    await epssService.GetScoresAsync(allCves));
+
+            EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
+            reportGenerator.SetEpssScores(epssScores);
+        }
+
         // 4. Crypto compliance check
         var allPackageTuples = packages.Concat(transitivePackages)
             .Select(p => (p.PackageId, p.Version))
             .ToList();
         var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
         reportGenerator.SetCryptoCompliance(cryptoResult);
+        if (typosquatResults is not null)
+            reportGenerator.SetTyposquatResults(typosquatResults);
 
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
 
