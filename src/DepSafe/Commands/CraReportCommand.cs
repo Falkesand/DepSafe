@@ -1638,12 +1638,25 @@ public static class CraReportCommand
         reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
         reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
 
-        // CISA KEV check (map CVEs to packages)
+        // CISA KEV check (map CVEs to packages, but only if current version is affected)
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
+
+        // Build lookup of package versions for version range checking
+        var packageVersions = packages.Concat(transitivePackages)
+            .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
+
         var kevCvePackages = allVulnerabilities
-            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key))))
+            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
             .Where(x => kevService.IsKnownExploited(x.Cve))
+            .Where(x =>
+            {
+                // Only flag if installed version is actually in the vulnerable range
+                if (!packageVersions.TryGetValue(x.PackageId, out var installedVersion))
+                    return false;
+                return IsVersionInVulnerableRange(installedVersion, x.Vuln);
+            })
+            .Select(x => (x.Cve, x.PackageId))
             .DistinctBy(x => x.Cve)
             .ToList();
         reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
@@ -2195,12 +2208,25 @@ public static class CraReportCommand
         reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
         reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
 
-        // CISA KEV check (map CVEs to packages)
+        // CISA KEV check (map CVEs to packages, but only if current version is affected)
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
+
+        // Build lookup of package versions for version range checking
+        var packageVersions = packages.Concat(transitivePackages)
+            .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
+
         var kevCvePackages = allVulnerabilities
-            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key))))
+            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
             .Where(x => kevService.IsKnownExploited(x.Cve))
+            .Where(x =>
+            {
+                // Only flag if installed version is actually in the vulnerable range
+                if (!packageVersions.TryGetValue(x.PackageId, out var installedVersion))
+                    return false;
+                return IsVersionInVulnerableRange(installedVersion, x.Vuln);
+            })
+            .Select(x => (x.Cve, x.PackageId))
             .DistinctBy(x => x.Cve)
             .ToList();
         reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
@@ -2509,6 +2535,89 @@ public static class CraReportCommand
         await File.WriteAllTextAsync(outputPath, content);
         AnsiConsole.MarkupLine($"[green]SBOM written to {outputPath}[/]");
         return outputPath;
+    }
+
+    /// <summary>
+    /// Check if a package version is in the vulnerable range of a vulnerability.
+    /// </summary>
+    private static bool IsVersionInVulnerableRange(string installedVersion, VulnerabilityInfo vuln)
+    {
+        if (string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+            return true; // Conservative: assume affected if no range specified
+
+        try
+        {
+            var current = NuGet.Versioning.NuGetVersion.Parse(installedVersion);
+            var range = vuln.VulnerableVersionRange;
+
+            // Split on comma for compound ranges
+            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
+
+            bool hasRangeConstraint = false;
+            bool hasExactMatch = false;
+
+            foreach (var part in parts)
+            {
+                if (part.StartsWith(">="))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
+                    if (current < v) return false;
+                }
+                else if (part.StartsWith('>'))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
+                    if (current <= v) return false;
+                }
+                else if (part.StartsWith("<="))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
+                    if (current > v) return false;
+                }
+                else if (part.StartsWith('<'))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
+                    if (current >= v) return false;
+                }
+                else if (part.StartsWith('='))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
+                    if (current != v) return false;
+                }
+                else if (!string.IsNullOrWhiteSpace(part))
+                {
+                    // Exact version match (e.g., "4.4.2" from OSV's versions list)
+                    try
+                    {
+                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
+                        if (current == v) hasExactMatch = true;
+                    }
+                    catch { /* Not a parseable version */ }
+                }
+            }
+
+            // If we only have exact version matches, return true only if current matches
+            if (!hasRangeConstraint)
+                return hasExactMatch;
+
+            // Check patched version - if current >= patched, not affected
+            if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+            {
+                var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
+                if (current >= patched) return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            // If parsing fails, assume affected for safety
+            return true;
+        }
     }
 }
 
