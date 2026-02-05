@@ -36,25 +36,16 @@ Please include the following information in your report:
 - **Impact assessment** - what could an attacker achieve?
 - **Suggested fix** if you have one
 
-### Response Timeline
-
-| Action | Timeline |
-|--------|----------|
-| Initial acknowledgment | Within 48 hours |
-| Preliminary assessment | Within 7 days |
-| Fix development | Depends on severity |
-| Security advisory publication | After fix is released |
-
 ### Severity Classification
 
-We use the following severity levels:
+We use the following severity levels to prioritize issues:
 
-| Severity | Description | Target Fix Time |
-|----------|-------------|-----------------|
-| **Critical** | Remote code execution, credential theft | 24-48 hours |
-| **High** | Significant data exposure, privilege escalation | 7 days |
-| **Medium** | Limited data exposure, denial of service | 30 days |
-| **Low** | Minor information disclosure | Next release |
+| Severity | Description |
+|----------|-------------|
+| **Critical** | Remote code execution, credential theft |
+| **High** | Significant data exposure, privilege escalation |
+| **Medium** | Limited data exposure, denial of service |
+| **Low** | Minor information disclosure |
 
 ## Security Practices
 
@@ -124,7 +115,7 @@ DepSafe helps you maintain security in your projects:
 We follow a coordinated disclosure policy:
 
 1. **Reporter submits vulnerability** via private channel
-2. **We acknowledge receipt** within 48 hours
+2. **We acknowledge receipt**
 3. **We investigate and develop fix**
 4. **We release patched version**
 5. **We publish security advisory** with credit to reporter (if desired)
