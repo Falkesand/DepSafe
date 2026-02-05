@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DepSafe Icon Concepts</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'SF Pro Display', -apple-system, sans-serif;
+      background: #0a0a0f;
+      color: #f0f0f5;
+      min-height: 100vh;
+      padding: 40px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 300;
+      margin-bottom: 40px;
+      letter-spacing: -0.02em;
+    }
+
+    .concepts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 40px;
+    }
+
+    .concept {
+      background: #12121a;
+      border-radius: 16px;
+      padding: 32px;
+      border: 1px solid #1e1e2e;
+    }
+
+    .concept h2 {
+      font-size: 1rem;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: #8b8b9e;
+    }
+
+    .concept p {
+      font-size: 0.85rem;
+      color: #5a5a6e;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .icon-row {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .icon-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-container span {
+      font-size: 0.7rem;
+      color: #4a4a5e;
+    }
+
+    .icon-dark {
+      background: #1a1d21;
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    .icon-light {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    .sidebar-preview {
+      background: #1a1d21;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 16px;
+    }
+
+    .sidebar-preview .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sidebar-preview .logo-text {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #f0f0f5;
+    }
+
+    .sidebar-preview .logo-badge {
+      font-size: 0.6rem;
+      background: #2b3035;
+      color: #8b8b9e;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>DepSafe Icon Concepts</h1>
+
+  <div class="concepts">
+
+    <!-- Concept 1: Shield with Network Nodes -->
+    <div class="concept">
+      <h2>Option 1: Shield Network</h2>
+      <p>A shield shape containing interconnected dependency nodes. Represents protection of the dependency graph.</p>
+
+      <div class="icon-row">
+        <div class="icon-container">
+          <div class="icon-dark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Shield outline -->
+              <path d="M18 3L5 8v10c0 8.5 5.5 14.5 13 17 7.5-2.5 13-8.5 13-17V8L18 3z"
+                    fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round"/>
+              <!-- Network nodes -->
+              <circle cx="18" cy="12" r="2.5" fill="#0d6efd"/>
+              <circle cx="12" cy="20" r="2" fill="#22c55e"/>
+              <circle cx="24" cy="20" r="2" fill="#22c55e"/>
+              <circle cx="18" cy="26" r="2" fill="#22c55e"/>
+              <!-- Connecting lines -->
+              <path d="M18 14.5v9M14 19l8 0M13.5 21.5l3 3M22.5 21.5l-3 3"
+                    stroke="#0d6efd" stroke-width="1" stroke-opacity="0.6"/>
+            </svg>
+          </div>
+          <span>Dark</span>
+        </div>
+        <div class="icon-container">
+          <div class="icon-light">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 3L5 8v10c0 8.5 5.5 14.5 13 17 7.5-2.5 13-8.5 13-17V8L18 3z"
+                    fill="#0d6efd" fill-opacity="0.1" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round"/>
+              <circle cx="18" cy="12" r="2.5" fill="#0d6efd"/>
+              <circle cx="12" cy="20" r="2" fill="#16a34a"/>
+              <circle cx="24" cy="20" r="2" fill="#16a34a"/>
+              <circle cx="18" cy="26" r="2" fill="#16a34a"/>
+              <path d="M18 14.5v9M14 19l8 0M13.5 21.5l3 3M22.5 21.5l-3 3"
+                    stroke="#0d6efd" stroke-width="1" stroke-opacity="0.5"/>
+            </svg>
+          </div>
+          <span>Light</span>
+        </div>
+      </div>
+
+      <div class="sidebar-preview">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 3L5 8v10c0 8.5 5.5 14.5 13 17 7.5-2.5 13-8.5 13-17V8L18 3z"
+                  fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round"/>
+            <circle cx="18" cy="12" r="2.5" fill="#0d6efd"/>
+            <circle cx="12" cy="20" r="2" fill="#22c55e"/>
+            <circle cx="24" cy="20" r="2" fill="#22c55e"/>
+            <circle cx="18" cy="26" r="2" fill="#22c55e"/>
+            <path d="M18 14.5v9M14 19l8 0M13.5 21.5l3 3M22.5 21.5l-3 3"
+                  stroke="#0d6efd" stroke-width="1" stroke-opacity="0.6"/>
+          </svg>
+          <span class="logo-text">DepSafe</span>
+          <span class="logo-badge">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept 2: Hexagonal Package with Checkmark -->
+    <div class="concept">
+      <h2>Option 2: Verified Package</h2>
+      <p>A hexagonal package shape (npm/dependencies) with an integrated checkmark. Clean and modern.</p>
+
+      <div class="icon-row">
+        <div class="icon-container">
+          <div class="icon-dark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Hexagon -->
+              <path d="M18 4L30 11v14L18 32 6 25V11L18 4z"
+                    fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round"/>
+              <!-- Checkmark -->
+              <path d="M12 18l4 4 8-8" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span>Dark</span>
+        </div>
+        <div class="icon-container">
+          <div class="icon-light">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 4L30 11v14L18 32 6 25V11L18 4z"
+                    fill="#0d6efd" fill-opacity="0.1" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round"/>
+              <path d="M12 18l4 4 8-8" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span>Light</span>
+        </div>
+      </div>
+
+      <div class="sidebar-preview">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 4L30 11v14L18 32 6 25V11L18 4z"
+                  fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M12 18l4 4 8-8" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="logo-text">DepSafe</span>
+          <span class="logo-badge">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept 3: Layered Dependencies with Lock -->
+    <div class="concept">
+      <h2>Option 3: Secure Layers</h2>
+      <p>Stacked dependency layers with a lock symbol. Emphasizes the depth of dependency scanning.</p>
+
+      <div class="icon-row">
+        <div class="icon-container">
+          <div class="icon-dark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Stacked layers -->
+              <path d="M18 6L6 12l12 6 12-6L18 6z" fill="#0d6efd" fill-opacity="0.3"/>
+              <path d="M6 16l12 6 12-6" stroke="#0d6efd" stroke-width="1.5" fill="none"/>
+              <path d="M6 22l12 6 12-6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.6" fill="none"/>
+              <!-- Lock -->
+              <rect x="14" y="14" width="8" height="7" rx="1" fill="#22c55e"/>
+              <path d="M16 14v-2a2 2 0 114 0v2" stroke="#22c55e" stroke-width="1.5" fill="none"/>
+              <circle cx="18" cy="17.5" r="1" fill="#0a0a0f"/>
+            </svg>
+          </div>
+          <span>Dark</span>
+        </div>
+        <div class="icon-container">
+          <div class="icon-light">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 6L6 12l12 6 12-6L18 6z" fill="#0d6efd" fill-opacity="0.2"/>
+              <path d="M6 16l12 6 12-6" stroke="#0d6efd" stroke-width="1.5" fill="none"/>
+              <path d="M6 22l12 6 12-6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.5" fill="none"/>
+              <rect x="14" y="14" width="8" height="7" rx="1" fill="#16a34a"/>
+              <path d="M16 14v-2a2 2 0 114 0v2" stroke="#16a34a" stroke-width="1.5" fill="none"/>
+              <circle cx="18" cy="17.5" r="1" fill="white"/>
+            </svg>
+          </div>
+          <span>Light</span>
+        </div>
+      </div>
+
+      <div class="sidebar-preview">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 6L6 12l12 6 12-6L18 6z" fill="#0d6efd" fill-opacity="0.3"/>
+            <path d="M6 16l12 6 12-6" stroke="#0d6efd" stroke-width="1.5" fill="none"/>
+            <path d="M6 22l12 6 12-6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.6" fill="none"/>
+            <rect x="14" y="14" width="8" height="7" rx="1" fill="#22c55e"/>
+            <path d="M16 14v-2a2 2 0 114 0v2" stroke="#22c55e" stroke-width="1.5" fill="none"/>
+            <circle cx="18" cy="17.5" r="1" fill="#0a0a0f"/>
+          </svg>
+          <span class="logo-text">DepSafe</span>
+          <span class="logo-badge">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept 4: Abstract D+S Monogram -->
+    <div class="concept">
+      <h2>Option 4: D+S Monogram</h2>
+      <p>Stylized letters D and S interlocked, forming a shield-like shape. Distinctive and brandable.</p>
+
+      <div class="icon-row">
+        <div class="icon-container">
+          <div class="icon-dark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- D shape forming left shield -->
+              <path d="M8 6h10c6 0 10 5 10 12s-4 12-10 12H8V6z"
+                    fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="2"/>
+              <!-- S curve -->
+              <path d="M14 12c8-2 10 4 4 6s-2 8 6 6"
+                    stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+            </svg>
+          </div>
+          <span>Dark</span>
+        </div>
+        <div class="icon-container">
+          <div class="icon-light">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8 6h10c6 0 10 5 10 12s-4 12-10 12H8V6z"
+                    fill="#0d6efd" fill-opacity="0.1" stroke="#0d6efd" stroke-width="2"/>
+              <path d="M14 12c8-2 10 4 4 6s-2 8 6 6"
+                    stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+            </svg>
+          </div>
+          <span>Light</span>
+        </div>
+      </div>
+
+      <div class="sidebar-preview">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 6h10c6 0 10 5 10 12s-4 12-10 12H8V6z"
+                  fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="2"/>
+            <path d="M14 12c8-2 10 4 4 6s-2 8 6 6"
+                  stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          </svg>
+          <span class="logo-text">DepSafe</span>
+          <span class="logo-badge">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept 5: Orbital Protection -->
+    <div class="concept">
+      <h2>Option 5: Orbital Shield</h2>
+      <p>A central core (your project) surrounded by protective orbital rings. Dynamic and modern.</p>
+
+      <div class="icon-row">
+        <div class="icon-container">
+          <div class="icon-dark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Orbital rings -->
+              <ellipse cx="18" cy="18" rx="14" ry="6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.4" fill="none" transform="rotate(-30 18 18)"/>
+              <ellipse cx="18" cy="18" rx="14" ry="6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.4" fill="none" transform="rotate(30 18 18)"/>
+              <!-- Central shield/core -->
+              <circle cx="18" cy="18" r="7" fill="#0d6efd" fill-opacity="0.2" stroke="#0d6efd" stroke-width="1.5"/>
+              <!-- Checkmark in center -->
+              <path d="M14 18l2.5 2.5L21 16" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span>Dark</span>
+        </div>
+        <div class="icon-container">
+          <div class="icon-light">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <ellipse cx="18" cy="18" rx="14" ry="6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.3" fill="none" transform="rotate(-30 18 18)"/>
+              <ellipse cx="18" cy="18" rx="14" ry="6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.3" fill="none" transform="rotate(30 18 18)"/>
+              <circle cx="18" cy="18" r="7" fill="#0d6efd" fill-opacity="0.15" stroke="#0d6efd" stroke-width="1.5"/>
+              <path d="M14 18l2.5 2.5L21 16" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span>Light</span>
+        </div>
+      </div>
+
+      <div class="sidebar-preview">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="18" cy="18" rx="14" ry="6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.4" fill="none" transform="rotate(-30 18 18)"/>
+            <ellipse cx="18" cy="18" rx="14" ry="6" stroke="#0d6efd" stroke-width="1.5" stroke-opacity="0.4" fill="none" transform="rotate(30 18 18)"/>
+            <circle cx="18" cy="18" r="7" fill="#0d6efd" fill-opacity="0.2" stroke="#0d6efd" stroke-width="1.5"/>
+            <path d="M14 18l2.5 2.5L21 16" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="logo-text">DepSafe</span>
+          <span class="logo-badge">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept 6: Circuit Shield -->
+    <div class="concept">
+      <h2>Option 6: Circuit Shield</h2>
+      <p>A shield made of circuit-like paths. Technical, modern, represents the digital nature of dependencies.</p>
+
+      <div class="icon-row">
+        <div class="icon-container">
+          <div class="icon-dark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Shield outline -->
+              <path d="M18 3L5 8v10c0 8.5 5.5 14.5 13 17 7.5-2.5 13-8.5 13-17V8L18 3z"
+                    fill="#0d6efd" fill-opacity="0.1" stroke="#0d6efd" stroke-width="1.5"/>
+              <!-- Circuit paths -->
+              <path d="M10 14h4l2-3h4l2 3h4M12 18h3l1.5 2h3l1.5-2h3M14 23h2l2 2 2-2h2"
+                    stroke="#0d6efd" stroke-width="1" stroke-linecap="round"/>
+              <!-- Connection nodes -->
+              <circle cx="18" cy="11" r="1.5" fill="#22c55e"/>
+              <circle cx="12" cy="18" r="1.5" fill="#22c55e"/>
+              <circle cx="24" cy="18" r="1.5" fill="#22c55e"/>
+              <circle cx="18" cy="25" r="1.5" fill="#22c55e"/>
+            </svg>
+          </div>
+          <span>Dark</span>
+        </div>
+        <div class="icon-container">
+          <div class="icon-light">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 3L5 8v10c0 8.5 5.5 14.5 13 17 7.5-2.5 13-8.5 13-17V8L18 3z"
+                    fill="#0d6efd" fill-opacity="0.08" stroke="#0d6efd" stroke-width="1.5"/>
+              <path d="M10 14h4l2-3h4l2 3h4M12 18h3l1.5 2h3l1.5-2h3M14 23h2l2 2 2-2h2"
+                    stroke="#0d6efd" stroke-width="1" stroke-linecap="round"/>
+              <circle cx="18" cy="11" r="1.5" fill="#16a34a"/>
+              <circle cx="12" cy="18" r="1.5" fill="#16a34a"/>
+              <circle cx="24" cy="18" r="1.5" fill="#16a34a"/>
+              <circle cx="18" cy="25" r="1.5" fill="#16a34a"/>
+            </svg>
+          </div>
+          <span>Light</span>
+        </div>
+      </div>
+
+      <div class="sidebar-preview">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 3L5 8v10c0 8.5 5.5 14.5 13 17 7.5-2.5 13-8.5 13-17V8L18 3z"
+                  fill="#0d6efd" fill-opacity="0.1" stroke="#0d6efd" stroke-width="1.5"/>
+            <path d="M10 14h4l2-3h4l2 3h4M12 18h3l1.5 2h3l1.5-2h3M14 23h2l2 2 2-2h2"
+                  stroke="#0d6efd" stroke-width="1" stroke-linecap="round"/>
+            <circle cx="18" cy="11" r="1.5" fill="#22c55e"/>
+            <circle cx="12" cy="18" r="1.5" fill="#22c55e"/>
+            <circle cx="24" cy="18" r="1.5" fill="#22c55e"/>
+            <circle cx="18" cy="25" r="1.5" fill="#22c55e"/>
+          </svg>
+          <span class="logo-text">DepSafe</span>
+          <span class="logo-badge">v1.0.0</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
