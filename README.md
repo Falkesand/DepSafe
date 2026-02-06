@@ -25,6 +25,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
   - [badge](#badge---generate-readme-badges)
 - [Configuration](#configuration)
 - [CRA Compliance Report](#cra-compliance-report)
+- [CRA Readiness Score](#cra-readiness-score)
 - [Health Score Calculation](#health-score-calculation)
 - [License Compatibility](#license-compatibility)
 - [Environment Variables](#environment-variables)
@@ -47,17 +48,30 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 - **Version status tracking** - Shows available updates with color-coded urgency indicators
 - **Peer dependency analysis** - Lists peer dependencies with version requirements (npm)
 
-### EU Cyber Resilience Act (CRA) Compliance
+### EU Cyber Resilience Act (CRA) Compliance (17 items)
 - **Article 10 - SBOM** - Software Bill of Materials generation (SPDX 3.0 and CycloneDX)
 - **Article 10(4) - KEV Monitoring** - CISA Known Exploited Vulnerabilities catalog integration
-- **Article 10(6) - Security Updates** - Tracks packages with deprecated or abandoned status
+- **Article 10(4) - EPSS Scoring** - Exploit Prediction Scoring System for vulnerability prioritization
+- **Article 10(6) - Security Updates** - Data-driven detection of archived and stale dependencies
 - **Article 10(9) - License Information** - SPDX license identification and compatibility
+- **Article 10 - Deprecated Components** - Identifies deprecated packages requiring replacement
+- **Article 10 - Cryptographic Compliance** - Detects deprecated crypto algorithms and libraries
+- **Article 10 - Supply Chain Integrity** - Typosquatting detection for dependency verification
 - **Article 11 - Vulnerability Handling** - VEX document generation with OSV vulnerability data
+- **Article 11(4) - Remediation Timeliness** - Tracks unpatched vulnerabilities with available fixes
 - **Article 11(5) - Security Policy** - GitHub security policy detection
+- **Article 13(5) - Package Provenance** - NuGet and npm registry signature verification
+- **Article 13(8) - Support Period** - Detects unmaintained packages lacking ongoing support
+- **Annex I Part I(1) - Release Readiness** - Verifies no known exploitable vulnerabilities at release
+- **Annex I Part I(10) - Attack Surface** - Dependency tree depth and transitive ratio analysis
+- **Annex I Part II(1) - SBOM Completeness** - BSI TR-03183-2 field validation
+- **Annex II - Documentation** - Project documentation requirements (README, SECURITY.md, support period)
+- **CRA Readiness Score** - Weighted compliance gauge (0-100) across all items
 
 ### Security Analysis
 - **OSV Vulnerability Database** - Real-time vulnerability scanning (no API key required)
 - **CISA KEV Catalog** - Actively exploited vulnerability detection
+- **EPSS Scoring** - Exploit probability prediction for prioritization
 - **GitHub Advisory Database** - Additional vulnerability context via GitHub API
 - **Version-aware filtering** - Only reports vulnerabilities affecting your specific versions
 
@@ -140,6 +154,14 @@ depsafe cra-report [<path>] [options]
 | `--skip-github` | Skip GitHub API calls (faster, less data) | `false` |
 | `-l, --licenses <Html\|Md\|Txt>` | Generate license attribution file | - |
 | `-s, --sbom <CycloneDx\|Spdx>` | Export SBOM in specified format | - |
+| `--check-typosquat` | Run typosquatting detection on all dependencies | `false` |
+
+**Exit Codes:**
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error or non-compliant status |
+| `2` | CI/CD policy violation (configured in `.cra-config.json`) |
 
 **Examples:**
 ```bash
@@ -351,7 +373,13 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
   ],
   "complianceNotes": {
     "OldLegacyPackage": "Approved for use until Q4 2025 migration"
-  }
+  },
+  "supportPeriodEnd": "2028-12",
+  "securityContact": "security@example.com",
+  "failOnKev": true,
+  "failOnEpssThreshold": 0.5,
+  "failOnVulnerabilityCount": 0,
+  "failOnCraReadinessBelow": 70
 }
 ```
 
@@ -362,6 +390,12 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
 | `licenseOverrides` | Override detected licenses for packages (useful when detection fails) |
 | `excludePackages` | Exclude specific packages from analysis (internal/private packages) |
 | `complianceNotes` | Add notes/justifications for compliance decisions |
+| `supportPeriodEnd` | Declared end of support period, e.g. `"2028-12"` (CRA Annex II) |
+| `securityContact` | Security contact email or URL (CRA Annex II) |
+| `failOnKev` | Fail with exit code 2 if any CISA KEV vulnerability is present |
+| `failOnEpssThreshold` | Fail if any EPSS probability exceeds this value (0.0-1.0) |
+| `failOnVulnerabilityCount` | Fail if active vulnerability count exceeds this number |
+| `failOnCraReadinessBelow` | Fail if CRA readiness score is below this value (0-100) |
 
 ---
 
@@ -370,22 +404,35 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
 The HTML report includes comprehensive compliance information:
 
 ### Dashboard
-- Overall CRA compliance status
+- **CRA Readiness Score** gauge (0-100, weighted across all compliance items)
+- Overall CRA compliance status with requirement count
+- CRA compliance score gauge
 - Health score gauge
 - Package count breakdown (direct vs transitive)
-- Vulnerability summary
-- Deprecated package alerts
+- Vulnerability summary and version conflicts
+- License status summary
+- Recommended actions for non-compliant items
 
-### CRA Requirements Checklist
-| Requirement | Description |
-|-------------|-------------|
-| Art. 10 - SBOM | Software Bill of Materials with all components |
-| Art. 10(4) - KEV | No actively exploited vulnerabilities (CISA KEV) |
-| Art. 10(6) - Updates | No deprecated or abandoned components |
-| Art. 10(9) - Licenses | All licenses identified and documented |
-| Art. 10 - Crypto | Cryptographic compliance assessment |
-| Art. 11 - Vulnerabilities | Vulnerability handling process |
-| Art. 11(5) - Security Policy | Security policy availability |
+### CRA Requirements Checklist (17 items)
+| # | Requirement | CRA Reference | Description |
+|---|-------------|---------------|-------------|
+| 1 | SBOM | Art. 10 | Software Bill of Materials with all components |
+| 2 | Exploited Vulnerabilities | Art. 10(4) | No CISA KEV actively exploited vulnerabilities |
+| 3 | Exploit Probability | Art. 10(4) | EPSS scoring for vulnerability prioritization |
+| 4 | Security Updates | Art. 10(6) | Data-driven: no archived repos, <10% stale dependencies |
+| 5 | License Information | Art. 10(9) | All licenses identified and documented |
+| 6 | Deprecated Components | Art. 10 | No deprecated or abandoned packages |
+| 7 | Cryptographic Compliance | Art. 10 | No deprecated crypto algorithms or libraries |
+| 8 | Supply Chain Integrity | Art. 10 | Typosquatting detection (when `--check-typosquat` enabled) |
+| 9 | Vulnerability Handling | Art. 11 | Documentation of known vulnerabilities and status |
+| 10 | Remediation Timeliness | Art. 11(4) | Patches applied without delay (NonCompliant if >30 days) |
+| 11 | Security Policy | Art. 11(5) | Coordinated vulnerability disclosure (SECURITY.md) |
+| 12 | Support Period | Art. 13(8) | Components have ongoing active maintenance |
+| 13 | Package Provenance | Art. 13(5) | NuGet and npm registry signature verification |
+| 14 | Release Readiness | Annex I Part I(1) | No known exploitable vulnerabilities at release |
+| 15 | Attack Surface | Annex I Part I(10) | Dependency tree depth and transitive ratio analysis |
+| 16 | SBOM Completeness | Annex I Part II(1) | BSI TR-03183-2 field validation (supplier, PURL, checksum) |
+| 17 | Documentation | Annex II | README, security contact, support period, changelog |
 
 ### Package Cards
 Each package displays:
@@ -411,6 +458,33 @@ Interactive tree visualization showing:
 - Embedded SBOM (SPDX 3.0 format)
 - Embedded VEX document
 - Export buttons for both formats
+
+---
+
+## CRA Readiness Score
+
+The CRA Readiness Score is a single weighted metric (0-100) that reflects overall compliance posture. Each compliance item is weighted by CRA importance:
+
+| Weight | Compliance Items |
+|--------|-----------------|
+| 15 | Exploited Vulnerabilities (KEV), Vulnerability Handling |
+| 10 | SBOM, Release Readiness |
+| 8 | Remediation Timeliness |
+| 7 | Exploit Probability (EPSS) |
+| 6 | Security Updates |
+| 5 | Support Period, Attack Surface, SBOM Completeness |
+| 4 | Package Provenance |
+| 3 | Documentation |
+| 2 | License Information, Security Policy |
+| 1 | Deprecated Components, Cryptographic Compliance, Supply Chain Integrity |
+
+**Score calculation per item:**
+| Item Status | Score Multiplier |
+|-------------|-----------------|
+| Compliant | 100% of weight |
+| Review | 50% of weight |
+| ActionRequired | 25% of weight |
+| NonCompliant | 0% of weight |
 
 ---
 
@@ -495,6 +569,24 @@ export GITHUB_TOKEN="ghp_your_token_here"
 
 ## CI/CD Integration
 
+### Build Gate with `.cra-config.json`
+
+DepSafe supports config-driven CI/CD build gates via `.cra-config.json`. When thresholds are violated, DepSafe returns **exit code 2** (distinct from exit code 1 for tool errors), making it easy to fail builds on policy violations.
+
+```json
+{
+  "failOnKev": true,
+  "failOnVulnerabilityCount": 0,
+  "failOnCraReadinessBelow": 70
+}
+```
+
+| Exit Code | Meaning |
+|-----------|---------|
+| `0` | All checks passed |
+| `1` | Tool error or non-compliant status |
+| `2` | CI/CD policy violation (threshold exceeded) |
+
 ### GitHub Actions
 
 ```yaml
@@ -527,12 +619,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: depsafe analyze --fail-below 60
 
-      - name: Generate CRA Report
+      - name: CRA Compliance Gate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: depsafe cra-report --deep --output cra-report.html
+        run: |
+          depsafe cra-report --deep --output cra-report.html
+          # Exit code 2 = policy violation (from .cra-config.json thresholds)
 
       - name: Upload Report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cra-compliance-report
@@ -637,10 +732,11 @@ DepSafe integrates with multiple data sources:
 
 | Source | Data | Authentication |
 |--------|------|----------------|
-| **NuGet API** | Package metadata, versions, downloads | None required |
-| **npm Registry** | Package metadata, versions, dependencies | None required |
+| **NuGet API** | Package metadata, versions, downloads, provenance | None required |
+| **npm Registry** | Package metadata, versions, dependencies, provenance | None required |
 | **OSV Database** | Vulnerability data for all ecosystems | None required |
 | **CISA KEV** | Actively exploited vulnerabilities | None required |
+| **FIRST EPSS** | Exploit prediction probability scores | None required |
 | **GitHub API** | Repository stats, security policies, advisories | Optional (GITHUB_TOKEN) |
 
 ---
@@ -701,6 +797,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - [OSV](https://osv.dev/) - Open Source Vulnerability database
 - [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) - Known Exploited Vulnerabilities catalog
+- [FIRST EPSS](https://www.first.org/epss/) - Exploit Prediction Scoring System
+- [BSI TR-03183-2](https://www.bsi.bund.de/EN/Themen/Unternehmen-und-Organisationen/Standards-und-Zertifizierung/Technische-Richtlinien/TR-nach-Thema-sortiert/tr03183/TR-03183_node.html) - SBOM requirements for CRA
 - [SPDX](https://spdx.dev/) - Software Package Data Exchange
 - [CycloneDX](https://cyclonedx.org/) - Software Bill of Materials standard
 - [OpenVEX](https://openvex.dev/) - Vulnerability Exploitability eXchange

@@ -16,7 +16,11 @@ public sealed class CisaKevService : IDisposable
 
     public CisaKevService(ResponseCache? cache = null)
     {
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _httpClient = new HttpClient(new HttpClientHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+        })
+        { Timeout = TimeSpan.FromSeconds(30) };
         _cache = cache ?? new ResponseCache();
     }
 

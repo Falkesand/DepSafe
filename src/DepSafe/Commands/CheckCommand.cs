@@ -43,7 +43,7 @@ public static class CheckCommand
     private static async Task<int> ExecuteAsync(string packageId, string? version, OutputFormat format, bool skipGitHub)
     {
         using var nugetClient = new NuGetApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
 
         // Show GitHub status
@@ -92,6 +92,46 @@ public static class CheckCommand
         }
 
         var health = calculator.Calculate(packageId, version, nugetInfo, repoInfo, vulnerabilities);
+
+        // EPSS enrichment - fetch exploit probability scores for all CVEs
+        if (vulnerabilities.Count > 0)
+        {
+            var allCves = vulnerabilities.SelectMany(v => v.Cves).Where(c => !string.IsNullOrEmpty(c)).ToList();
+            if (allCves.Count > 0)
+            {
+                using var epssService = new EpssService();
+                var epssScores = await AnsiConsole.Status()
+                    .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
+                        await epssService.GetScoresAsync(allCves));
+
+                foreach (var vuln in vulnerabilities)
+                {
+                    var maxEpss = vuln.Cves
+                        .Where(c => epssScores.ContainsKey(c))
+                        .Select(c => epssScores[c])
+                        .OrderByDescending(s => s.Probability)
+                        .FirstOrDefault();
+
+                    if (maxEpss is not null)
+                    {
+                        vuln.EpssProbability = maxEpss.Probability;
+                        vuln.EpssPercentile = maxEpss.Percentile;
+                    }
+                }
+
+                // Enrich PackageHealth with max EPSS
+                var maxPkgEpss = vulnerabilities
+                    .Where(v => v.EpssProbability.HasValue)
+                    .OrderByDescending(v => v.EpssProbability)
+                    .FirstOrDefault();
+
+                if (maxPkgEpss is not null)
+                {
+                    health.MaxEpssProbability = maxPkgEpss.EpssProbability;
+                    health.MaxEpssPercentile = maxPkgEpss.EpssPercentile;
+                }
+            }
+        }
 
         if (format == OutputFormat.Json)
         {
@@ -179,6 +219,7 @@ public static class CheckCommand
                 .Border(TableBorder.Rounded)
                 .AddColumn("ID")
                 .AddColumn("Severity")
+                .AddColumn("EPSS")
                 .AddColumn("Summary")
                 .AddColumn("Patched In");
 
@@ -192,9 +233,12 @@ public static class CheckCommand
                     _ => "dim"
                 };
 
+                var epssDisplay = FormatEpss(vuln.EpssProbability, vuln.EpssPercentile);
+
                 vulnTable.AddRow(
                     vuln.Id,
                     $"[{severityColor}]{vuln.Severity}[/]",
+                    epssDisplay,
                     vuln.Summary.Length > 50 ? vuln.Summary[..47] + "..." : vuln.Summary,
                     vuln.PatchedVersion ?? "N/A");
             }
@@ -236,5 +280,23 @@ public static class CheckCommand
             < -0.2 => $"[red]↓ Declining ({trend:P0})[/]",
             _ => "[dim]→ Stable[/]"
         };
+    }
+
+    private static string FormatEpss(double? probability, double? percentile)
+    {
+        if (!probability.HasValue)
+            return "[dim]N/A[/]";
+
+        var pct = probability.Value * 100;
+        var pRank = percentile.HasValue ? $"p{(int)(percentile.Value * 100)}" : "";
+        var color = probability.Value switch
+        {
+            >= 0.5 => "red",
+            >= 0.1 => "orange3",
+            >= 0.01 => "yellow",
+            _ => "dim"
+        };
+
+        return $"[{color}]{pct:F1}% ({pRank})[/]";
     }
 }

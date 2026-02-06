@@ -13,7 +13,8 @@ public sealed class SbomGenerator
     public SbomGenerator(string? toolName = null, string? toolVersion = null)
     {
         _toolName = toolName ?? "DepSafe";
-        _toolVersion = toolVersion ?? "1.0.0";
+        var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        _toolVersion = toolVersion ?? (asmVersion is not null ? $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}" : "1.0.0");
     }
 
     /// <summary>
@@ -30,7 +31,7 @@ public sealed class SbomGenerator
             SpdxId = $"SPDXRef-Package-{SanitizeId(pkg.PackageId)}",
             Name = pkg.PackageId,
             VersionInfo = pkg.Version,
-            Supplier = "NOASSERTION",
+            Supplier = FormatSupplier(pkg.Authors),
             DownloadLocation = GetDownloadLocation(pkg),
             FilesAnalyzed = false,
             LicenseConcluded = MapLicenseToSpdx(pkg.License),
@@ -45,6 +46,7 @@ public sealed class SbomGenerator
                     ReferenceLocator = GetPurl(pkg)
                 }
             ],
+            Checksums = ParseIntegrity(pkg.ContentIntegrity),
             Ecosystem = pkg.Ecosystem
         }).ToList();
 
@@ -155,6 +157,19 @@ public sealed class SbomGenerator
         };
     }
 
+    private static List<SbomChecksum>? ParseIntegrity(string? integrity)
+    {
+        if (string.IsNullOrEmpty(integrity)) return null;
+
+        // Format: "sha512-base64data==" or "sha256-base64data=="
+        var dashIndex = integrity.IndexOf('-');
+        if (dashIndex < 0) return null;
+
+        var algorithm = integrity[..dashIndex].ToUpperInvariant();
+        var hash = integrity[(dashIndex + 1)..];
+        return [new SbomChecksum { Algorithm = algorithm, ChecksumValue = hash }];
+    }
+
     private static string SanitizeId(string input)
     {
         return new string(input.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '.').ToArray());
@@ -172,6 +187,14 @@ public sealed class SbomGenerator
         return pkg.Ecosystem == PackageEcosystem.Npm
             ? $"pkg:npm/{Uri.EscapeDataString(pkg.PackageId)}@{pkg.Version}"
             : $"pkg:nuget/{pkg.PackageId}@{pkg.Version}";
+    }
+
+    private static string FormatSupplier(IReadOnlyList<string> authors)
+    {
+        if (authors.Count == 0) return "NOASSERTION";
+        var joined = string.Join(", ", authors);
+        if (string.IsNullOrWhiteSpace(joined)) return "NOASSERTION";
+        return $"Organization: {joined}";
     }
 
     private static string MapLicenseToSpdx(string? license)

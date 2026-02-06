@@ -23,13 +23,13 @@ public sealed class PackageHealth
     public required PackageMetrics Metrics { get; init; }
     public string? RepositoryUrl { get; init; }
     public string? License { get; init; }
-    public List<string> Vulnerabilities { get; init; } = [];
+    public IReadOnlyList<string> Vulnerabilities { get; init; } = [];
 
     /// <summary>Latest available version of the package.</summary>
     public string? LatestVersion { get; init; }
 
     /// <summary>Peer dependencies (npm only) - packages that must be installed alongside.</summary>
-    public Dictionary<string, string> PeerDependencies { get; init; } = [];
+    public IReadOnlyDictionary<string, string> PeerDependencies { get; init; } = new Dictionary<string, string>();
 
     /// <summary>True if this package has a vulnerability in the CISA KEV catalog (actively exploited).</summary>
     public bool HasKevVulnerability { get; set; }
@@ -37,8 +37,26 @@ public sealed class PackageHealth
     /// <summary>CVE IDs from CISA KEV catalog affecting this package.</summary>
     public List<string> KevCves { get; set; } = [];
 
+    /// <summary>Highest EPSS probability across all vulnerabilities (0.0-1.0).</summary>
+    public double? MaxEpssProbability { get; set; }
+
+    /// <summary>Highest EPSS percentile across all vulnerabilities (0.0-1.0).</summary>
+    public double? MaxEpssPercentile { get; set; }
+
+    /// <summary>Days since the oldest unpatched vulnerability was published.</summary>
+    public int? OldestUnpatchedVulnDays { get; set; }
+
+    /// <summary>Number of vulnerabilities where a patch is available but not applied.</summary>
+    public int PatchAvailableNotAppliedCount { get; set; }
+
+    /// <summary>Package content integrity hash for SBOM checksum field (e.g., sha512-...).</summary>
+    public string? ContentIntegrity { get; set; }
+
+    /// <summary>Package authors/publishers for SBOM supplier field.</summary>
+    public IReadOnlyList<string> Authors { get; init; } = [];
+
     public List<string> Recommendations { get; init; } = [];
-    public List<PackageDependency> Dependencies { get; init; } = [];
+    public IReadOnlyList<PackageDependency> Dependencies { get; init; } = [];
 
     /// <summary>Type of dependency relationship.</summary>
     public DependencyType DependencyType { get; init; } = DependencyType.Direct;

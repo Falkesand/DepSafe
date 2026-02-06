@@ -29,20 +29,25 @@ public static class AnalyzeCommand
             ["--skip-github"],
             "Skip GitHub API calls (faster, but no repo activity or vulnerability data)");
 
+        var checkTyposquatOption = new Option<bool>(
+            ["--check-typosquat"],
+            "Run typosquatting detection on all dependencies");
+
         var command = new Command("analyze", "Analyze package health for a project or solution")
         {
             pathArg,
             formatOption,
             failBelowOption,
-            skipGitHubOption
+            skipGitHubOption,
+            checkTyposquatOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, failBelowOption, skipGitHubOption);
+        command.SetHandler(ExecuteAsync, pathArg, formatOption, failBelowOption, skipGitHubOption, checkTyposquatOption);
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, int? failBelow, bool skipGitHub)
+    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, int? failBelow, bool skipGitHub, bool checkTyposquat)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -52,149 +57,20 @@ public static class AnalyzeCommand
             return 1;
         }
 
-        var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
-        if (projectFiles.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]No project files found.[/]");
-            return 0;
-        }
+        using var pipeline = new AnalysisPipeline(skipGitHub);
+        pipeline.ShowGitHubStatus("No repo activity or vulnerability data.");
 
-        using var nugetClient = new NuGetApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
-        var calculator = new HealthScoreCalculator();
-
-        // Show GitHub status
-        if (!skipGitHub && githubClient is not null)
-        {
-            if (!githubClient.HasToken)
-            {
-                AnsiConsole.MarkupLine("[yellow]No GITHUB_TOKEN found. GitHub API rate limited to 60 requests/hour.[/]");
-                AnsiConsole.MarkupLine("[dim]Set GITHUB_TOKEN environment variable for 5000 requests/hour.[/]");
-                AnsiConsole.WriteLine();
-            }
-        }
-        else if (skipGitHub)
-        {
-            AnsiConsole.MarkupLine("[dim]Skipping GitHub API (--skip-github). No repo activity or vulnerability data.[/]");
-            AnsiConsole.WriteLine();
-        }
-
-        // Collect all package references
-        var allReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
-
-        await AnsiConsole.Status()
-            .StartAsync("Scanning project files...", async ctx =>
-            {
-                foreach (var projectFile in projectFiles)
-                {
-                    var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                    foreach (var r in refs)
-                    {
-                        if (!allReferences.ContainsKey(r.PackageId))
-                        {
-                            allReferences[r.PackageId] = r;
-                        }
-                    }
-                }
-            });
-
+        var allReferences = await pipeline.ScanProjectFilesAsync(path);
         if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");
             return 0;
         }
 
-        // Phase 1: Fetch all NuGet info
-        var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        await pipeline.RunAsync(allReferences);
+        await pipeline.EnrichWithEpssAsync();
 
-        await AnsiConsole.Progress()
-            .StartAsync(async ctx =>
-            {
-                var task = ctx.AddTask($"Fetching NuGet info for {allReferences.Count} packages", maxValue: allReferences.Count);
-
-                foreach (var (packageId, _) in allReferences)
-                {
-                    task.Description = $"NuGet: {packageId}";
-                    var info = await nugetClient.GetPackageInfoAsync(packageId);
-                    if (info is not null)
-                    {
-                        nugetInfoMap[packageId] = info;
-                    }
-                    task.Increment(1);
-                }
-            });
-
-        // Phase 2: Batch fetch GitHub repo info (if not skipped)
-        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-        var vulnMap = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-
-        if (githubClient is not null && !githubClient.IsRateLimited)
-        {
-            await AnsiConsole.Status()
-                .StartAsync("Fetching GitHub repository info (batch)...", async ctx =>
-                {
-                    var repoUrls = nugetInfoMap.Values
-                        .Select(n => n.RepositoryUrl ?? n.ProjectUrl)
-                        .Where(u => u?.Contains("github.com", StringComparison.OrdinalIgnoreCase) == true)
-                        .ToList();
-
-                    if (repoUrls.Count > 0)
-                    {
-                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls);
-
-                        // Map back to package IDs
-                        foreach (var (packageId, info) in nugetInfoMap)
-                        {
-                            var url = info.RepositoryUrl ?? info.ProjectUrl;
-                            if (url is not null && results.TryGetValue(url, out var repoInfo))
-                            {
-                                repoInfoMap[packageId] = repoInfo;
-                            }
-                        }
-                    }
-
-                    if (githubClient.IsRateLimited)
-                    {
-                        ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
-                    }
-                });
-
-            // Phase 3: Batch fetch vulnerabilities
-            if (!githubClient.IsRateLimited && githubClient.HasToken)
-            {
-                await AnsiConsole.Status()
-                    .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
-                    {
-                        vulnMap = await githubClient.GetVulnerabilitiesBatchAsync(allReferences.Keys);
-
-                        if (githubClient.IsRateLimited)
-                        {
-                            ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
-                        }
-                    });
-            }
-        }
-
-        // Phase 4: Calculate health scores
-        var packages = new List<PackageHealth>();
-
-        foreach (var (packageId, reference) in allReferences)
-        {
-            if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo))
-                continue;
-
-            repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = vulnMap.GetValueOrDefault(packageId, []);
-
-            var health = calculator.Calculate(
-                packageId,
-                reference.Version,
-                nugetInfo,
-                repoInfo,
-                vulnerabilities);
-
-            packages.Add(health);
-        }
+        var packages = pipeline.Packages;
 
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
@@ -234,8 +110,31 @@ public static class AnalyzeCommand
                 OutputMarkdown(report);
                 break;
             default:
-                OutputTable(report, githubClient?.IsRateLimited == true, skipGitHub);
+                OutputTable(report, false, skipGitHub);
                 break;
+        }
+
+        // Typosquatting check (optional)
+        if (checkTyposquat)
+        {
+            var typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false);
+            if (typosquatResults.Count > 0)
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(new Rule("[yellow bold]Typosquatting Warnings[/]").LeftJustified());
+
+                foreach (var result in typosquatResults)
+                {
+                    var riskColor = result.RiskLevel switch
+                    {
+                        TyposquatRiskLevel.Critical => "red",
+                        TyposquatRiskLevel.High => "orange3",
+                        TyposquatRiskLevel.Medium => "yellow",
+                        _ => "dim"
+                    };
+                    AnsiConsole.MarkupLine($"  [{riskColor}]{result.RiskLevel}[/]  {result.PackageName} -> {result.SimilarTo} ({result.Detail}, confidence: {result.Confidence}%)");
+                }
+            }
         }
 
         // Return exit code based on threshold
@@ -255,12 +154,17 @@ public static class AnalyzeCommand
         AnsiConsole.MarkupLine($"[dim]{report.ProjectPath}[/]");
         AnsiConsole.WriteLine();
 
+        var hasEpss = report.Packages.Any(p => p.MaxEpssProbability.HasValue);
+
         var table = new Table()
             .Border(TableBorder.Rounded)
             .AddColumn("Package")
             .AddColumn("Version")
             .AddColumn(new TableColumn("Score").Centered())
             .AddColumn("Status");
+
+        if (hasEpss)
+            table.AddColumn(new TableColumn("EPSS Risk").Centered());
 
         foreach (var pkg in report.Packages)
         {
@@ -281,11 +185,24 @@ public static class AnalyzeCommand
                 _ => "red"
             };
 
-            table.AddRow(
-                pkg.PackageId,
-                pkg.Version,
-                $"[{scoreColor}]{pkg.Score}[/]",
-                statusMarkup);
+            if (hasEpss)
+            {
+                var epssDisplay = FormatEpss(pkg.MaxEpssProbability, pkg.MaxEpssPercentile);
+                table.AddRow(
+                    pkg.PackageId,
+                    pkg.Version,
+                    $"[{scoreColor}]{pkg.Score}[/]",
+                    statusMarkup,
+                    epssDisplay);
+            }
+            else
+            {
+                table.AddRow(
+                    pkg.PackageId,
+                    pkg.Version,
+                    $"[{scoreColor}]{pkg.Score}[/]",
+                    statusMarkup);
+            }
         }
 
         AnsiConsole.Write(table);
@@ -346,6 +263,24 @@ public static class AnalyzeCommand
                 }
             }
         }
+    }
+
+    private static string FormatEpss(double? probability, double? percentile)
+    {
+        if (!probability.HasValue)
+            return "[dim]-[/]";
+
+        var pct = probability.Value * 100;
+        var pRank = percentile.HasValue ? $"p{(int)(percentile.Value * 100)}" : "";
+        var color = probability.Value switch
+        {
+            >= 0.5 => "red",
+            >= 0.1 => "orange3",
+            >= 0.01 => "yellow",
+            _ => "dim"
+        };
+
+        return $"[{color}]{pct:F1}% ({pRank})[/]";
     }
 
     private static void OutputJson(ProjectReport report)

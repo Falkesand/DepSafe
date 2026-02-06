@@ -11,6 +11,9 @@ public sealed class ProjectReport
     public required HealthStatus OverallStatus { get; init; }
     public required List<PackageHealth> Packages { get; init; }
     public required ProjectSummary Summary { get; init; }
+
+    /// <summary>Typosquatting warnings from supply chain analysis (populated when --check-typosquat is used).</summary>
+    public List<TyposquatResult> TyposquatWarnings { get; set; } = [];
 }
 
 public sealed class ProjectSummary

@@ -1,4 +1,5 @@
 using DepSafe.Models;
+using DepSafe.Scoring;
 
 namespace DepSafe.Compliance;
 
@@ -47,10 +48,10 @@ public sealed class VexGenerator
                     [
                         new VexProduct
                         {
-                            Id = $"pkg:nuget/{pkg.PackageId}@{pkg.Version}",
+                            Id = $"pkg:{(pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget")}/{pkg.PackageId}@{pkg.Version}",
                             Identifiers = new VexIdentifiers
                             {
-                                Purl = $"pkg:nuget/{pkg.PackageId}@{pkg.Version}"
+                                Purl = $"pkg:{(pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget")}/{pkg.PackageId}@{pkg.Version}"
                             }
                         }
                     ],
@@ -115,85 +116,8 @@ public sealed class VexGenerator
         return VexStatus.Affected;
     }
 
-    private static bool IsVersionInRange(string version, string range)
-    {
-        // Parse common vulnerability range formats like "< 4.5.0", ">= 2.0, < 3.0"
-        try
-        {
-            var current = NuGet.Versioning.NuGetVersion.Parse(version);
-
-            // Split on comma for compound ranges
-            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
-
-            // Track whether we have any range constraints vs just exact versions
-            bool hasRangeConstraint = false;
-            bool hasExactMatch = false;
-
-            foreach (var part in parts)
-            {
-                if (part.StartsWith(">="))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current < v) return false;
-                }
-                else if (part.StartsWith('>'))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current <= v) return false;
-                }
-                else if (part.StartsWith("<="))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current > v) return false;
-                }
-                else if (part.StartsWith('<'))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current >= v) return false;
-                }
-                else if (part.StartsWith('='))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current != v) return false;
-                }
-                else if (!string.IsNullOrWhiteSpace(part))
-                {
-                    // Exact version match (e.g., "4.4.2" from OSV's versions list)
-                    try
-                    {
-                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
-                        if (current == v)
-                        {
-                            hasExactMatch = true;
-                        }
-                    }
-                    catch
-                    {
-                        // Not a parseable version, ignore
-                    }
-                }
-            }
-
-            // If we only have exact version matches, return true only if current matches
-            if (!hasRangeConstraint)
-            {
-                return hasExactMatch;
-            }
-
-            // Range constraints all passed
-            return true;
-        }
-        catch
-        {
-            // If we can't parse, assume affected for safety
-            return true;
-        }
-    }
+    private static bool IsVersionInRange(string version, string range) =>
+        Scoring.HealthScoreCalculator.IsVersionInVulnerableRange(version, range);
 
     private static string? DetermineJustification(VulnerabilityInfo vuln, string packageVersion)
     {

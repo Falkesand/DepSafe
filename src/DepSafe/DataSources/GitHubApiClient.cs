@@ -51,7 +51,11 @@ public sealed partial class GitHubApiClient : IDisposable
         _requestLimiter = new SemaphoreSlim(maxConcurrentRequests);
 
         _client = new GitHubClient(new ProductHeaderValue("DepSafe"));
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _httpClient = new HttpClient(new HttpClientHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+        })
+        { Timeout = TimeSpan.FromSeconds(30) };
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "DepSafe");
 
         _token = token ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");

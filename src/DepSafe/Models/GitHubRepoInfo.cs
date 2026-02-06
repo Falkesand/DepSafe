@@ -37,4 +37,10 @@ public sealed class VulnerabilityInfo
     public List<string> Cves { get; init; } = [];
     public string? Url { get; init; }
     public DateTime? PublishedAt { get; init; }
+
+    /// <summary>EPSS probability of exploitation in the next 30 days (0.0-1.0). Max across all CVEs.</summary>
+    public double? EpssProbability { get; set; }
+
+    /// <summary>EPSS percentile ranking (0.0-1.0). Max across all CVEs.</summary>
+    public double? EpssPercentile { get; set; }
 }
