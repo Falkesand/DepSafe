@@ -188,7 +188,7 @@ public sealed class SbomGenerator
             : $"pkg:nuget/{pkg.PackageId}@{pkg.Version}";
     }
 
-    private static string FormatSupplier(List<string> authors)
+    private static string FormatSupplier(IReadOnlyList<string> authors)
     {
         if (authors.Count == 0) return "NOASSERTION";
         var joined = string.Join(", ", authors);

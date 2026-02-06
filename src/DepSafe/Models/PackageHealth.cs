@@ -23,13 +23,13 @@ public sealed class PackageHealth
     public required PackageMetrics Metrics { get; init; }
     public string? RepositoryUrl { get; init; }
     public string? License { get; init; }
-    public List<string> Vulnerabilities { get; init; } = [];
+    public IReadOnlyList<string> Vulnerabilities { get; init; } = [];
 
     /// <summary>Latest available version of the package.</summary>
     public string? LatestVersion { get; init; }
 
     /// <summary>Peer dependencies (npm only) - packages that must be installed alongside.</summary>
-    public Dictionary<string, string> PeerDependencies { get; init; } = [];
+    public IReadOnlyDictionary<string, string> PeerDependencies { get; init; } = new Dictionary<string, string>();
 
     /// <summary>True if this package has a vulnerability in the CISA KEV catalog (actively exploited).</summary>
     public bool HasKevVulnerability { get; set; }
@@ -53,10 +53,10 @@ public sealed class PackageHealth
     public string? ContentIntegrity { get; set; }
 
     /// <summary>Package authors/publishers for SBOM supplier field.</summary>
-    public List<string> Authors { get; init; } = [];
+    public IReadOnlyList<string> Authors { get; init; } = [];
 
     public List<string> Recommendations { get; init; } = [];
-    public List<PackageDependency> Dependencies { get; init; } = [];
+    public IReadOnlyList<PackageDependency> Dependencies { get; init; } = [];
 
     /// <summary>Type of dependency relationship.</summary>
     public DependencyType DependencyType { get; init; } = DependencyType.Direct;

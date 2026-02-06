@@ -86,7 +86,7 @@ public sealed class HealthScoreCalculator
             Dependencies = nugetInfo.Dependencies,
             DependencyType = dependencyType,
             LatestVersion = nugetInfo.LatestVersion,
-            PeerDependencies = [] // NuGet doesn't have peer dependencies concept
+            PeerDependencies = new Dictionary<string, string>() // NuGet doesn't have peer dependencies concept
         };
     }
 
