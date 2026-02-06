@@ -53,7 +53,7 @@ public static class AnalyzeCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
@@ -145,7 +145,7 @@ public static class AnalyzeCommand
                         TyposquatRiskLevel.Medium => "yellow",
                         _ => "dim"
                     };
-                    AnsiConsole.MarkupLine($"  [{riskColor}]{result.RiskLevel}[/]  {result.PackageName} -> {result.SimilarTo} ({result.Detail}, confidence: {result.Confidence}%)");
+                    AnsiConsole.MarkupLine($"  [{riskColor}]{result.RiskLevel}[/]  {Markup.Escape(result.PackageName)} -> {Markup.Escape(result.SimilarTo)} ({Markup.Escape(result.Detail)}, confidence: {result.Confidence}%)");
                 }
             }
         }
@@ -164,7 +164,7 @@ public static class AnalyzeCommand
     {
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule($"[bold]Package Health Report[/]").LeftJustified());
-        AnsiConsole.MarkupLine($"[dim]{report.ProjectPath}[/]");
+        AnsiConsole.MarkupLine($"[dim]{Markup.Escape(report.ProjectPath)}[/]");
         AnsiConsole.WriteLine();
 
         var hasEpss = report.Packages.Any(p => p.MaxEpssProbability.HasValue);
@@ -202,8 +202,8 @@ public static class AnalyzeCommand
             {
                 var epssDisplay = FormatEpss(pkg.MaxEpssProbability, pkg.MaxEpssPercentile);
                 table.AddRow(
-                    pkg.PackageId,
-                    pkg.Version,
+                    Markup.Escape(pkg.PackageId),
+                    Markup.Escape(pkg.Version),
                     $"[{scoreColor}]{pkg.Score}[/]",
                     statusMarkup,
                     epssDisplay);
@@ -211,8 +211,8 @@ public static class AnalyzeCommand
             else
             {
                 table.AddRow(
-                    pkg.PackageId,
-                    pkg.Version,
+                    Markup.Escape(pkg.PackageId),
+                    Markup.Escape(pkg.Version),
                     $"[{scoreColor}]{pkg.Score}[/]",
                     statusMarkup);
             }
@@ -269,10 +269,10 @@ public static class AnalyzeCommand
 
             foreach (var pkg in problemPackages)
             {
-                AnsiConsole.MarkupLine($"\n[bold]{pkg.PackageId}[/] (score: {pkg.Score})");
+                AnsiConsole.MarkupLine($"\n[bold]{Markup.Escape(pkg.PackageId)}[/] (score: {pkg.Score})");
                 foreach (var rec in pkg.Recommendations)
                 {
-                    AnsiConsole.MarkupLine($"  • {rec}");
+                    AnsiConsole.MarkupLine($"  \u2022 {Markup.Escape(rec)}");
                 }
             }
         }

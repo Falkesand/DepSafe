@@ -12,6 +12,7 @@ public sealed class CisaKevService : IDisposable
     private const string KevUrl = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly SemaphoreSlim _loadLock = new(1, 1);
     private HashSet<string>? _kevCves; // Uses OrdinalIgnoreCase comparer
 
     public CisaKevService(ResponseCache? cache = null)
@@ -31,46 +32,56 @@ public sealed class CisaKevService : IDisposable
     {
         if (_kevCves is not null) return;
 
-        var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct);
-        if (cached is not null)
-        {
-            _kevCves = cached;
-            return;
-        }
-
+        await _loadLock.WaitAsync(ct);
         try
         {
-            using var response = await _httpClient.GetAsync(KevUrl, ct);
-            if (!response.IsSuccessStatusCode)
+            if (_kevCves is not null) return; // double-check after acquiring lock
+
+            var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct);
+            if (cached is not null)
             {
-                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                _kevCves = cached;
                 return;
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-            _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            if (json.TryGetProperty("vulnerabilities", out var vulns))
+            try
             {
-                foreach (var vuln in vulns.EnumerateArray())
+                using var response = await _httpClient.GetAsync(KevUrl, ct);
+                if (!response.IsSuccessStatusCode)
                 {
-                    if (vuln.TryGetProperty("cveID", out var cveId))
+                    _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    return;
+                }
+
+                var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                if (json.TryGetProperty("vulnerabilities", out var vulns))
+                {
+                    foreach (var vuln in vulns.EnumerateArray())
                     {
-                        var cve = cveId.GetString();
-                        if (!string.IsNullOrEmpty(cve))
+                        if (vuln.TryGetProperty("cveID", out var cveId))
                         {
-                            _kevCves.Add(cve);
+                            var cve = cveId.GetString();
+                            if (!string.IsNullOrEmpty(cve))
+                            {
+                                _kevCves.Add(cve);
+                            }
                         }
                     }
                 }
-            }
 
-            await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
+                await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
-            _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            _loadLock.Release();
         }
     }
 

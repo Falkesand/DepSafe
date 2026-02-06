@@ -217,8 +217,7 @@ public sealed class AnalysisPipeline : IDisposable
             {
                 var maxPkgEpss = vulns
                     .Where(v => v.EpssProbability.HasValue)
-                    .OrderByDescending(v => v.EpssProbability)
-                    .FirstOrDefault();
+                    .MaxBy(v => v.EpssProbability);
 
                 if (maxPkgEpss is not null)
                 {

@@ -12,6 +12,7 @@ public sealed class PackageProvenanceChecker : IDisposable
 {
     private static readonly string s_userAgent = GetUserAgent();
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
     private bool _disposed;
 
     public PackageProvenanceChecker(HttpClient? httpClient = null)
@@ -19,6 +20,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         if (httpClient is not null)
         {
             _httpClient = httpClient;
+            _ownsHttpClient = false;
         }
         else
         {
@@ -27,6 +29,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             };
             _httpClient = new HttpClient(handler);
+            _ownsHttpClient = true;
         }
         _httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd(s_userAgent);
     }
@@ -111,7 +114,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                         }
                     }
                 }
-                catch { /* Non-critical — checksum is best-effort */ }
+                catch (Exception ex) when (ex is HttpRequestException or JsonException) { /* Non-critical — checksum is best-effort */ }
             }
 
             // NuGet.org repository-signs all packages since April 2019
@@ -127,7 +130,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 ContentHashAlgorithm = hashAlgorithm
             };
         }
-        catch
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
         {
             return new ProvenanceResult
             {
@@ -241,7 +244,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 ContentHashAlgorithm = hashAlgorithm
             };
         }
-        catch
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
         {
             return new ProvenanceResult
             {
@@ -265,7 +268,10 @@ public sealed class PackageProvenanceChecker : IDisposable
     {
         if (!_disposed)
         {
-            _httpClient.Dispose();
+            if (_ownsHttpClient)
+            {
+                _httpClient.Dispose();
+            }
             _disposed = true;
         }
     }

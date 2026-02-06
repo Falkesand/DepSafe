@@ -629,7 +629,12 @@ public sealed partial class GitHubApiClient : IDisposable
     /// </summary>
     private static string SanitizeGraphQLString(string input)
     {
-        return input.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        return input
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\n", "\\n")
+            .Replace("\r", "\\r")
+            .Replace("\t", "\\t");
     }
 
     public void Dispose()

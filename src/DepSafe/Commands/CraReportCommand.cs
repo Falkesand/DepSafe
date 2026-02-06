@@ -127,7 +127,7 @@ public static class CraReportCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
@@ -199,7 +199,7 @@ public static class CraReportCommand
                     TyposquatRiskLevel.Medium => "yellow",
                     _ => "dim"
                 };
-                AnsiConsole.MarkupLine($"  [{riskColor}]{tr.RiskLevel}[/]  {tr.PackageName} -> {tr.SimilarTo} ({tr.Detail}, confidence: {tr.Confidence}%)");
+                AnsiConsole.MarkupLine($"  [{riskColor}]{tr.RiskLevel}[/]  {Markup.Escape(tr.PackageName)} -> {Markup.Escape(tr.SimilarTo)} ({Markup.Escape(tr.Detail)}, confidence: {tr.Confidence}%)");
             }
         }
 
@@ -645,8 +645,13 @@ public static class CraReportCommand
         HashSet<string> excludePackageIds,
         HashSet<string> transitiveIds)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (!excludePackageIds.Contains(node.PackageId))
             {
                 transitiveIds.Add(node.PackageId);
@@ -668,8 +673,13 @@ public static class CraReportCommand
         List<DependencyTreeNode> roots,
         Dictionary<string, List<VulnerabilityInfo>> vulnerabilities)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (vulnerabilities.TryGetValue(node.PackageId, out var vulns) && vulns.Count > 0)
             {
                 // Find the first vulnerability that actually affects this version
@@ -1094,7 +1104,7 @@ public static class CraReportCommand
         var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
 
         // Include dependency packages in the list for GitHub lookups
-        var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).ToList();
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {
@@ -1413,7 +1423,7 @@ public static class CraReportCommand
 
                 // Check NuGet vulnerabilities via OSV (free, no auth required)
                 var nugetRepoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-                var allNuGetPackageIds = allPackageIds.Concat(dependencyPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                var allNuGetPackageIds = allPackageIds.Concat(dependencyPackageIds).ToList();
 
                 using var osvNuGetClient = new OsvApiClient();
                 await AnsiConsole.Status()
@@ -2216,9 +2226,13 @@ public static class CraReportCommand
     private static int CalculateMaxDepth(List<DependencyTreeNode> roots)
     {
         var maxDepth = 0;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (node.Depth > maxDepth) maxDepth = node.Depth;
             foreach (var child in node.Children)
             {
@@ -2237,9 +2251,13 @@ public static class CraReportCommand
     private static int CountVulnerableNodes(List<DependencyTreeNode> roots)
     {
         var count = 0;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (node.HasVulnerabilities) count++;
             foreach (var child in node.Children)
             {
@@ -2261,9 +2279,15 @@ public static class CraReportCommand
     /// </summary>
     private static void PropagateVulnerabilityStatus(List<DependencyTreeNode> roots)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         // Returns true if this node or any descendant has vulnerabilities
         bool Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key))
+                return node.HasVulnerabilities || node.HasVulnerableDescendant;
+
             var hasVulnerableChild = false;
 
             foreach (var child in node.Children)
@@ -2295,9 +2319,13 @@ public static class CraReportCommand
     {
         // Collect all versions for each package
         var packageVersions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var visitedCollect = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void CollectVersions(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visitedCollect.Add(key)) return;
+
             if (!packageVersions.TryGetValue(node.PackageId, out var versions))
             {
                 versions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2325,8 +2353,13 @@ public static class CraReportCommand
             return;
 
         // Mark nodes with conflicts and create issues
+        var visitedMark = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         void MarkConflicts(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visitedMark.Add(key)) return;
+
             if (conflictingPackages.TryGetValue(node.PackageId, out var versions))
             {
                 node.HasVersionConflict = true;
@@ -2475,61 +2508,6 @@ public static class CraReportCommand
                     ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
                 }
             });
-    }
-
-    private static async Task FetchGitHubDataAsync(
-        GitHubApiClient githubClient,
-        List<string> repoUrls,
-        Dictionary<string, NpmPackageInfo> npmInfoMap,
-        List<string> packageNames,
-        Dictionary<string, GitHubRepoInfo?> repoInfoMap,
-        Dictionary<string, List<VulnerabilityInfo>> allVulnerabilities)
-    {
-        await AnsiConsole.Status()
-            .StartAsync("Fetching GitHub repository info (batch)...", async ctx =>
-            {
-                var validUrls = repoUrls
-                    .Where(u => u.Contains("github.com", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (validUrls.Count > 0)
-                {
-                    var results = await githubClient.GetRepositoriesBatchAsync(validUrls);
-
-                    foreach (var (packageName, info) in npmInfoMap)
-                    {
-                        var url = info.RepositoryUrl;
-                        if (url is not null && results.TryGetValue(url, out var repoInfo))
-                        {
-                            repoInfoMap[packageName] = repoInfo;
-                        }
-                    }
-                }
-
-                if (githubClient.IsRateLimited)
-                {
-                    ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
-                }
-            });
-
-        // Fetch vulnerabilities
-        if (!githubClient.IsRateLimited && githubClient.HasToken)
-        {
-            await AnsiConsole.Status()
-                .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
-                {
-                    var results = await githubClient.GetVulnerabilitiesBatchAsync(packageNames);
-                    foreach (var (name, vulns) in results)
-                    {
-                        allVulnerabilities[name] = vulns;
-                    }
-
-                    if (githubClient.IsRateLimited)
-                    {
-                        ctx.Status("[yellow]GitHub rate limited - vulnerability data may be incomplete[/]");
-                    }
-                });
-        }
     }
 
     private static async Task<int> GenerateReportAsync(
@@ -3074,7 +3052,7 @@ public static class CraReportCommand
             sb.AppendLine($"    <h3>{System.Web.HttpUtility.HtmlEncode(pkg.PackageId)} <span class=\"meta\">v{System.Web.HttpUtility.HtmlEncode(pkg.Version)}</span></h3>");
             sb.AppendLine($"    <span class=\"{licenseClass}\">{System.Web.HttpUtility.HtmlEncode(pkg.License ?? "Unknown")}</span>");
 
-            if (!string.IsNullOrEmpty(pkg.RepositoryUrl))
+            if (pkg.RepositoryUrl is not null && (pkg.RepositoryUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || pkg.RepositoryUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
             {
                 sb.AppendLine("    <p class=\"meta\">");
                 sb.AppendLine($"      <a href=\"{System.Web.HttpUtility.HtmlEncode(pkg.RepositoryUrl)}\" target=\"_blank\">Repository</a>");

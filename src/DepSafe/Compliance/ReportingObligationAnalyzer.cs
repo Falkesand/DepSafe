@@ -1,7 +1,6 @@
 using DepSafe.DataSources;
 using DepSafe.Models;
 using DepSafe.Scoring;
-using NuGet.Versioning;
 
 namespace DepSafe.Compliance;
 
@@ -39,16 +38,16 @@ public static class ReportingObligationAnalyzer
                 continue;
 
             // Collect CVEs that trigger reporting for this package
-            var reportableCves = new List<string>();
+            var reportableCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool hasKev = false;
             double maxEpss = 0.0;
-            string highestSeverity = "LOW";
+            int highestRank = s_severityOrder.Length - 1; // index of LOW
             DateTime? earliestPublished = null;
 
             foreach (var vuln in vulns)
             {
                 // Skip vulnerabilities that don't affect the installed version
-                if (!IsAffected(pkg.Version, vuln))
+                if (!HealthScoreCalculator.IsAffected(pkg.Version, vuln))
                     continue;
 
                 foreach (var cve in vuln.Cves)
@@ -64,10 +63,9 @@ public static class ReportingObligationAnalyzer
                     if (cveEpss > maxEpss) maxEpss = cveEpss;
 
                     // Track highest severity
-                    int currentRank = Array.IndexOf(s_severityOrder, highestSeverity.ToUpperInvariant());
-                    int vulnRank = Array.IndexOf(s_severityOrder, vuln.Severity.ToUpperInvariant());
-                    if (vulnRank >= 0 && (currentRank < 0 || vulnRank < currentRank))
-                        highestSeverity = vuln.Severity;
+                    int vulnRank = Array.IndexOf(s_severityOrder, vuln.Severity?.ToUpperInvariant());
+                    if (vulnRank >= 0 && vulnRank < highestRank)
+                        highestRank = vulnRank;
                 }
 
                 // Track earliest published date (only for affected vulns)
@@ -77,6 +75,8 @@ public static class ReportingObligationAnalyzer
 
             if (reportableCves.Count == 0)
                 continue;
+
+            var highestSeverity = s_severityOrder[highestRank];
 
             var trigger = (hasKev, maxEpss >= EpssReportingThreshold) switch
             {
@@ -89,7 +89,7 @@ public static class ReportingObligationAnalyzer
             {
                 PackageId = pkg.PackageId,
                 Version = pkg.Version,
-                CveIds = reportableCves.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                CveIds = reportableCves.ToList(),
                 Severity = highestSeverity,
                 Trigger = trigger,
                 DiscoveryDate = earliestPublished ?? DateTime.UtcNow,
@@ -113,29 +113,4 @@ public static class ReportingObligationAnalyzer
         return obligations;
     }
 
-    /// <summary>
-    /// Check if the installed version is actually affected by the vulnerability.
-    /// Uses the same logic as VEX generation: version must be in vulnerable range
-    /// and below the patched version (if one exists).
-    /// </summary>
-    private static bool IsAffected(string installedVersion, VulnerabilityInfo vuln)
-    {
-        // Check if installed version is >= patched version (already fixed)
-        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
-        {
-            if (NuGetVersion.TryParse(installedVersion, out var current) &&
-                NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
-                current >= patched)
-                return false;
-        }
-
-        // Check if installed version is in the vulnerable range
-        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-        {
-            return HealthScoreCalculator.IsVersionInVulnerableRange(installedVersion, vuln.VulnerableVersionRange);
-        }
-
-        // Conservative: if no range specified, assume affected
-        return true;
-    }
 }

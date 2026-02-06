@@ -56,7 +56,7 @@ public sealed class ResponseCache : IDisposable
             if (File.Exists(metaPath))
             {
                 var meta = await File.ReadAllTextAsync(metaPath, ct);
-                var expiry = DateTime.Parse(meta, CultureInfo.InvariantCulture);
+                var expiry = DateTime.Parse(meta, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind);
                 if (DateTime.UtcNow > expiry)
                 {
                     // Cache expired
@@ -77,7 +77,7 @@ public sealed class ResponseCache : IDisposable
 
             return null;
         }
-        catch
+        catch (Exception ex) when (ex is IOException or JsonException or FormatException)
         {
             return null;
         }
@@ -106,7 +106,7 @@ public sealed class ResponseCache : IDisposable
             await JsonSerializer.SerializeAsync(stream, value, cancellationToken: ct);
             await File.WriteAllTextAsync(metaPath, expiry.ToString("O"), ct);
         }
-        catch
+        catch (Exception ex) when (ex is IOException or JsonException)
         {
             // Ignore cache write failures — L1 still holds the value
         }
@@ -181,7 +181,7 @@ public sealed class ResponseCache : IDisposable
         Span<byte> hashBytes = stackalloc byte[32]; // SHA256 = 32 bytes
         SHA256.HashData(keyBytes[..actualByteCount], hashBytes);
 
-        return Path.Combine(_cacheDir, Convert.ToHexString(hashBytes[..8]));
+        return Path.Combine(_cacheDir, Convert.ToHexString(hashBytes[..16]));
     }
 
     private static void TryDeleteFile(string path)

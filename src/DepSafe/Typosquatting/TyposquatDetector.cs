@@ -99,6 +99,8 @@ public sealed class TyposquatDetector
         var checkScopeConfusion = ecosystem == PackageEcosystem.Npm && packageName.StartsWith('@');
         foreach (var candidate in GetAllEntries())
         {
+            if (candidate.Ecosystem != ecosystem) continue;
+
             // Layer 4: Prefix/suffix detection (check broader range since lengths can differ more)
             if (StringDistance.IsPrefixSuffixMatchCore(lowerName, candidate.NormalizedName))
             {

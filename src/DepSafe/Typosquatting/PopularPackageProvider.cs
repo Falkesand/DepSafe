@@ -87,7 +87,7 @@ public sealed class PopularPackageProvider : IDisposable
                 })
                 .ToList();
         }
-        catch
+        catch (JsonException)
         {
             return [];
         }

@@ -68,7 +68,7 @@ public static class CheckCommand
 
         if (nugetInfo is null)
         {
-            AnsiConsole.MarkupLine($"[red]Package not found: {packageId}[/]");
+            AnsiConsole.MarkupLine($"[red]Package not found: {Markup.Escape(packageId)}[/]");
             return 1;
         }
 
@@ -163,9 +163,9 @@ public static class CheckCommand
             .AddColumn("Metric")
             .AddColumn("Value");
 
-        table.AddRow("Package ID", packageId);
-        table.AddRow("Version", version);
-        table.AddRow("Latest Version", nugetInfo.LatestVersion);
+        table.AddRow("Package ID", Markup.Escape(packageId));
+        table.AddRow("Version", Markup.Escape(version));
+        table.AddRow("Latest Version", Markup.Escape(nugetInfo.LatestVersion));
         table.AddRow("Total Downloads", FormatNumber(nugetInfo.TotalDownloads));
         table.AddRow("Days Since Release", health.Metrics.DaysSinceLastRelease?.ToString() ?? "[dim]Unknown[/]");
         table.AddRow("Releases/Year", health.Metrics.ReleasesPerYear.ToString("F1"));
@@ -188,12 +188,12 @@ public static class CheckCommand
 
         if (!string.IsNullOrEmpty(health.License))
         {
-            table.AddRow("License", health.License);
+            table.AddRow("License", Markup.Escape(health.License));
         }
 
         if (!string.IsNullOrEmpty(health.RepositoryUrl))
         {
-            table.AddRow("Repository", health.RepositoryUrl);
+            table.AddRow("Repository", Markup.Escape(health.RepositoryUrl));
         }
 
         if (health.Metrics.VulnerabilityCount > 0)
@@ -229,12 +229,13 @@ public static class CheckCommand
 
                 var epssDisplay = FormatEpss(vuln.EpssProbability, vuln.EpssPercentile);
 
+                var summaryText = vuln.Summary.Length > 50 ? vuln.Summary[..47] + "..." : vuln.Summary;
                 vulnTable.AddRow(
-                    vuln.Id,
-                    $"[{severityColor}]{vuln.Severity}[/]",
+                    Markup.Escape(vuln.Id),
+                    $"[{severityColor}]{Markup.Escape(vuln.Severity)}[/]",
                     epssDisplay,
-                    vuln.Summary.Length > 50 ? vuln.Summary[..47] + "..." : vuln.Summary,
-                    vuln.PatchedVersion ?? "N/A");
+                    Markup.Escape(summaryText),
+                    Markup.Escape(vuln.PatchedVersion ?? "N/A"));
             }
 
             AnsiConsole.Write(vulnTable);
@@ -248,7 +249,7 @@ public static class CheckCommand
 
             foreach (var rec in health.Recommendations)
             {
-                AnsiConsole.MarkupLine($"  • {rec}");
+                AnsiConsole.MarkupLine($"  \u2022 {Markup.Escape(rec)}");
             }
         }
 

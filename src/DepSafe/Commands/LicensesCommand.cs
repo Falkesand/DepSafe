@@ -50,7 +50,7 @@ public static class LicensesCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
@@ -189,9 +189,9 @@ public static class LicensesCommand
             {
                 var severityColor = issue.Severity == "Error" ? "red" : "yellow";
                 issuesTable.AddRow(
-                    $"[{severityColor}]{issue.Severity}[/]",
-                    issue.Message,
-                    issue.Recommendation ?? "-");
+                    $"[{severityColor}]{Markup.Escape(issue.Severity)}[/]",
+                    Markup.Escape(issue.Message),
+                    Markup.Escape(issue.Recommendation ?? "-"));
             }
 
             AnsiConsole.Write(issuesTable);
@@ -208,7 +208,7 @@ public static class LicensesCommand
             AnsiConsole.Write(new Rule("[bold yellow]Packages with Unknown Licenses[/]").LeftJustified());
             foreach (var unknown in report.UnknownLicenses.Take(10))
             {
-                AnsiConsole.MarkupLine($"  [dim]•[/] {unknown}");
+                AnsiConsole.MarkupLine($"  [dim]\u2022[/] {Markup.Escape(unknown)}");
             }
             if (report.UnknownLicenses.Count > 10)
             {

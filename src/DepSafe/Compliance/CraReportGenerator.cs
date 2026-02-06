@@ -25,8 +25,8 @@ public sealed partial class CraReportGenerator
         return "<style>" + MinifyCss(reader.ReadToEnd()) + "</style>";
     });
 
-    // Compiled regex for parsing PURLs (used repeatedly in FormatPurlForSbom)
-    [GeneratedRegex(@"pkg:nuget/([^@]+)", RegexOptions.Compiled)]
+    // Source-generated regex for parsing PURLs (used repeatedly in FormatPurlForSbom)
+    [GeneratedRegex(@"pkg:nuget/([^@]+)")]
     private static partial Regex PurlRegex();
 
     public CraReportGenerator(SbomGenerator? sbomGenerator = null, VexGenerator? vexGenerator = null)
@@ -98,8 +98,12 @@ public sealed partial class CraReportGenerator
         var complianceItems = new List<CraComplianceItem>();
 
         // Vulnerability documentation - only count ACTIVE vulnerabilities (affecting current versions)
-        var activeVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Affected);
-        var fixedVulnCount = vex.Statements.Count(s => s.Status == VexStatus.Fixed);
+        int activeVulnCount = 0, fixedVulnCount = 0;
+        foreach (var s in vex.Statements)
+        {
+            if (s.Status == VexStatus.Affected) activeVulnCount++;
+            else if (s.Status == VexStatus.Fixed) fixedVulnCount++;
+        }
         var totalVulnStatements = vex.Statements.Count;
 
         // ============================================
@@ -713,7 +717,7 @@ public sealed partial class CraReportGenerator
         }
         if (licenseFileName is not null)
         {
-            sb.AppendLine("        <li class=\"external-link-item\"><a href=\"" + licenseFileName + "\" target=\"_blank\" class=\"external\">");
+            sb.AppendLine("        <li class=\"external-link-item\"><a href=\"" + EscapeHtml(licenseFileName) + "\" target=\"_blank\" class=\"external\">");
             sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6\"/><polyline points=\"15 3 21 3 21 9\"/><line x1=\"10\" y1=\"14\" x2=\"21\" y2=\"3\"/></svg>");
             sb.AppendLine("          License File</a></li>");
         }
@@ -4008,7 +4012,7 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
                     }
                 }
             }
-            catch { /* Use default display name */ }
+            catch (FormatException) { /* Use default display name */ }
 
             return $"<a href=\"{EscapeHtml(license)}\" target=\"_blank\" title=\"{EscapeHtml(license)}\" class=\"license-link\">{EscapeHtml(displayName)}</a>";
         }

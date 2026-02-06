@@ -506,7 +506,10 @@ public sealed class NuGetApiClient : IDisposable
             using var process = new Process { StartInfo = startInfo };
             process.Start();
 
-            var output = await process.StandardOutput.ReadToEndAsync(ct);
+            var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+            var errorTask = process.StandardError.ReadToEndAsync(ct);
+            var output = await outputTask;
+            await errorTask;
             await process.WaitForExitAsync(ct);
 
             if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))

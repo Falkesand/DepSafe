@@ -44,6 +44,7 @@ public sealed class RemediationRoadmapItem
 public static class RemediationPrioritizer
 {
     private const int MaxItems = 20;
+    private static readonly string[] s_severityOrder = ["CRITICAL", "HIGH", "MODERATE", "MEDIUM", "LOW"];
 
     /// <summary>
     /// Prioritize package updates by CRA score improvement potential.
@@ -76,7 +77,7 @@ public static class RemediationPrioritizer
             foreach (var vuln in vulns)
             {
                 // Skip vulnerabilities that don't affect the installed version
-                if (!IsAffected(pkg.Version, vuln))
+                if (!HealthScoreCalculator.IsAffected(pkg.Version, vuln))
                     continue;
 
                 affectedVulns.Add(vuln);
@@ -157,30 +158,6 @@ public static class RemediationPrioritizer
         return items.Count > MaxItems ? items.GetRange(0, MaxItems) : items;
     }
 
-    /// <summary>
-    /// Check if the installed version is actually affected by the vulnerability.
-    /// </summary>
-    private static bool IsAffected(string installedVersion, VulnerabilityInfo vuln)
-    {
-        // Check if installed version is >= patched version (already fixed)
-        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
-        {
-            if (NuGetVersion.TryParse(installedVersion, out var current) &&
-                NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
-                current >= patched)
-                return false;
-        }
-
-        // Check if installed version is in the vulnerable range
-        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
-        {
-            return HealthScoreCalculator.IsVersionInVulnerableRange(installedVersion, vuln.VulnerableVersionRange);
-        }
-
-        // Conservative: if no range specified, assume affected
-        return true;
-    }
-
     private static UpgradeEffort DetermineEffort(string currentVersion, string recommendedVersion)
     {
         if (!NuGetVersion.TryParse(currentVersion, out var current) ||
@@ -217,13 +194,12 @@ public static class RemediationPrioritizer
 
     private static string GetHighestSeverity(List<VulnerabilityInfo> vulns)
     {
-        string[] order = ["CRITICAL", "HIGH", "MODERATE", "MEDIUM", "LOW"];
-        int best = order.Length;
+        int best = s_severityOrder.Length;
         foreach (var vuln in vulns)
         {
-            int idx = Array.IndexOf(order, vuln.Severity.ToUpperInvariant());
+            int idx = Array.IndexOf(s_severityOrder, vuln.Severity?.ToUpperInvariant());
             if (idx >= 0 && idx < best) best = idx;
         }
-        return best < order.Length ? order[best] : "LOW";
+        return best < s_severityOrder.Length ? s_severityOrder[best] : "LOW";
     }
 }

@@ -42,7 +42,7 @@ public sealed class NpmApiClient : IDisposable
         {
             // URL encode package name (handles scoped packages like @org/package)
             var encodedName = Uri.EscapeDataString(packageName);
-            var response = await _httpClient.GetAsync($"{NpmRegistryUrl}/{encodedName}", ct);
+            using var response = await _httpClient.GetAsync($"{NpmRegistryUrl}/{encodedName}", ct);
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
@@ -178,7 +178,7 @@ public sealed class NpmApiClient : IDisposable
         try
         {
             var encodedName = Uri.EscapeDataString(packageName);
-            var response = await _httpClient.GetAsync($"{NpmDownloadsUrl}/{encodedName}", ct);
+            using var response = await _httpClient.GetAsync($"{NpmDownloadsUrl}/{encodedName}", ct);
 
             if (!response.IsSuccessStatusCode) return 0;
 

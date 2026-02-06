@@ -48,8 +48,20 @@ public static class SbomCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
+        }
+
+        // Validate output path: block relative path traversal
+        if (!string.IsNullOrEmpty(outputPath) && !Path.IsPathRooted(outputPath))
+        {
+            var fullOutputPath = Path.GetFullPath(outputPath);
+            var workingDir = Path.GetFullPath(Directory.GetCurrentDirectory());
+            if (!fullOutputPath.StartsWith(workingDir, StringComparison.OrdinalIgnoreCase))
+            {
+                AnsiConsole.MarkupLine("[red]Error: Relative output path must not traverse outside the working directory.[/]");
+                return 1;
+            }
         }
 
         using var pipeline = new AnalysisPipeline(skipGitHub);
@@ -83,7 +95,7 @@ public static class SbomCommand
         if (!string.IsNullOrEmpty(outputPath))
         {
             await File.WriteAllTextAsync(outputPath, output);
-            AnsiConsole.MarkupLine($"[green]SBOM written to {outputPath}[/]");
+            AnsiConsole.MarkupLine($"[green]SBOM written to {Markup.Escape(outputPath)}[/]");
         }
         else
         {

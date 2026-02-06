@@ -103,7 +103,7 @@ public sealed class VexGenerator
                     return VexStatus.Fixed;
                 }
             }
-            catch
+            catch (Exception ex) when (ex is FormatException or ArgumentException)
             {
                 // Version parsing failed, fall through to range-based logic
             }

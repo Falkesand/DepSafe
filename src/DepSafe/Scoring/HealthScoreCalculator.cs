@@ -548,6 +548,31 @@ public sealed class HealthScoreCalculator
     }
 
     /// <summary>
+    /// Check if the installed version is actually affected by the vulnerability.
+    /// Shared logic used by RemediationPrioritizer and ReportingObligationAnalyzer.
+    /// </summary>
+    internal static bool IsAffected(string installedVersion, VulnerabilityInfo vuln)
+    {
+        // Check if installed version is >= patched version (already fixed)
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        {
+            if (NuGet.Versioning.NuGetVersion.TryParse(installedVersion, out var current) &&
+                NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                current >= patched)
+                return false;
+        }
+
+        // Check if installed version is in the vulnerable range
+        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+        {
+            return IsVersionInVulnerableRange(installedVersion, vuln.VulnerableVersionRange);
+        }
+
+        // Conservative: if no range specified, assume affected
+        return true;
+    }
+
+    /// <summary>
     /// Check if a version falls within a vulnerable version range string.
     /// Supports operators: &gt;=, &gt;, &lt;=, &lt;, = and exact version matches, comma-separated.
     /// </summary>
@@ -624,7 +649,7 @@ public sealed class HealthScoreCalculator
             // Range constraints passed
             return true;
         }
-        catch
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
         {
             // If we can't parse, assume affected (conservative for security)
             // May result in false positives - user should verify
