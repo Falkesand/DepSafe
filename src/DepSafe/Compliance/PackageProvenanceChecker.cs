@@ -6,8 +6,8 @@ using DepSafe.Models;
 namespace DepSafe.Compliance;
 
 /// <summary>
-/// Checks NuGet package signing/provenance per CRA Art. 13(5).
-/// v1.2 scope: NuGet repository signatures only. npm provenance in v1.3.
+/// Checks package signing/provenance per CRA Art. 13(5).
+/// Supports NuGet repository signatures and npm registry signatures/attestations.
 /// </summary>
 public sealed class PackageProvenanceChecker : IDisposable
 {
@@ -138,6 +138,122 @@ public sealed class PackageProvenanceChecker : IDisposable
                 HasRepositorySignature = false,
                 HasAuthorSignature = false,
                 Ecosystem = PackageEcosystem.NuGet
+            };
+        }
+    }
+
+    /// <summary>
+    /// Check provenance for a batch of npm packages.
+    /// Uses the npm registry per-version endpoint to check for signatures and attestations.
+    /// </summary>
+    public async Task<List<ProvenanceResult>> CheckNpmProvenanceAsync(
+        IReadOnlyList<(string PackageId, string Version)> packages)
+    {
+        var results = new ConcurrentBag<ProvenanceResult>();
+        var semaphore = new SemaphoreSlim(10);
+
+        var tasks = packages.Select(async pkg =>
+        {
+            await semaphore.WaitAsync();
+            try
+            {
+                var result = await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version);
+                results.Add(result);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return results.ToList();
+    }
+
+    private async Task<ProvenanceResult> CheckSingleNpmPackageAsync(string packageId, string version)
+    {
+        try
+        {
+            // Scoped packages like @scope/name need URL encoding
+            var encodedName = Uri.EscapeDataString(packageId);
+            var encodedVersion = Uri.EscapeDataString(version);
+            var url = $"https://registry.npmjs.org/{encodedName}/{encodedVersion}";
+
+            using var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ProvenanceResult
+                {
+                    PackageId = packageId,
+                    Version = version,
+                    HasRepositorySignature = false,
+                    HasAuthorSignature = false,
+                    Ecosystem = PackageEcosystem.Npm
+                };
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var hasRepoSignature = false;
+            var hasAuthorSignature = false;
+            string? contentHash = null;
+            string? hashAlgorithm = null;
+
+            // Check dist.signatures — npm ECDSA registry signatures (present since 2022)
+            if (root.TryGetProperty("dist", out var dist))
+            {
+                if (dist.TryGetProperty("signatures", out var signatures) &&
+                    signatures.ValueKind == JsonValueKind.Array &&
+                    signatures.GetArrayLength() > 0)
+                {
+                    hasRepoSignature = true;
+                }
+
+                // Check dist.attestations — Sigstore provenance from publisher
+                if (dist.TryGetProperty("attestations", out var attestations) &&
+                    attestations.TryGetProperty("url", out _))
+                {
+                    hasAuthorSignature = true;
+                }
+
+                // Extract content hash from dist.integrity (SRI format: "sha512-...")
+                if (dist.TryGetProperty("integrity", out var integrity))
+                {
+                    var sri = integrity.GetString();
+                    if (!string.IsNullOrEmpty(sri))
+                    {
+                        var dashIndex = sri.IndexOf('-');
+                        if (dashIndex > 0)
+                        {
+                            hashAlgorithm = sri[..dashIndex].ToUpperInvariant();
+                            contentHash = sri[(dashIndex + 1)..];
+                        }
+                    }
+                }
+            }
+
+            return new ProvenanceResult
+            {
+                PackageId = packageId,
+                Version = version,
+                HasRepositorySignature = hasRepoSignature,
+                HasAuthorSignature = hasAuthorSignature,
+                Ecosystem = PackageEcosystem.Npm,
+                ContentHash = contentHash,
+                ContentHashAlgorithm = hashAlgorithm
+            };
+        }
+        catch
+        {
+            return new ProvenanceResult
+            {
+                PackageId = packageId,
+                Version = version,
+                HasRepositorySignature = false,
+                HasAuthorSignature = false,
+                Ecosystem = PackageEcosystem.Npm
             };
         }
     }

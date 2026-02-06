@@ -2050,20 +2050,37 @@ public static class CraReportCommand
         if (typosquatResults is not null)
             reportGenerator.SetTyposquatResults(typosquatResults);
 
-        // Package provenance check (F9) - NuGet only
+        // Package provenance check (F9)
         {
+            using var provenanceChecker = new PackageProvenanceChecker();
+            var allProvenanceResults = new List<ProvenanceResult>();
+
             var nugetPackages = packages.Concat(transitivePackages)
                 .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
             if (nugetPackages.Count > 0)
             {
-                using var provenanceChecker = new PackageProvenanceChecker();
-                var provenanceResults = await AnsiConsole.Status()
-                    .StartAsync("Checking package provenance...", async _ =>
+                var nugetResults = await AnsiConsole.Status()
+                    .StartAsync("Checking NuGet package provenance...", async _ =>
                         await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages));
-                reportGenerator.SetProvenanceResults(provenanceResults);
+                allProvenanceResults.AddRange(nugetResults);
             }
+
+            var npmPackages = packages.Concat(transitivePackages)
+                .Where(p => p.Ecosystem == PackageEcosystem.Npm)
+                .Select(p => (p.PackageId, p.Version))
+                .ToList();
+            if (npmPackages.Count > 0)
+            {
+                var npmResults = await AnsiConsole.Status()
+                    .StartAsync("Checking npm package provenance...", async _ =>
+                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages));
+                allProvenanceResults.AddRange(npmResults);
+            }
+
+            if (allProvenanceResults.Count > 0)
+                reportGenerator.SetProvenanceResults(allProvenanceResults);
         }
 
         // Generate SBOM/VEX once, validate SBOM, then build final report
@@ -2845,20 +2862,37 @@ public static class CraReportCommand
         if (typosquatResults is not null)
             reportGenerator.SetTyposquatResults(typosquatResults);
 
-        // Package provenance check (F9) - NuGet only
+        // Package provenance check (F9)
         {
+            using var provenanceChecker = new PackageProvenanceChecker();
+            var allProvenanceResults = new List<ProvenanceResult>();
+
             var nugetPackages = packages.Concat(transitivePackages)
                 .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
             if (nugetPackages.Count > 0)
             {
-                using var provenanceChecker = new PackageProvenanceChecker();
-                var provenanceResults = await AnsiConsole.Status()
-                    .StartAsync("Checking package provenance...", async _ =>
+                var nugetResults = await AnsiConsole.Status()
+                    .StartAsync("Checking NuGet package provenance...", async _ =>
                         await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages));
-                reportGenerator.SetProvenanceResults(provenanceResults);
+                allProvenanceResults.AddRange(nugetResults);
             }
+
+            var npmPackages = packages.Concat(transitivePackages)
+                .Where(p => p.Ecosystem == PackageEcosystem.Npm)
+                .Select(p => (p.PackageId, p.Version))
+                .ToList();
+            if (npmPackages.Count > 0)
+            {
+                var npmResults = await AnsiConsole.Status()
+                    .StartAsync("Checking npm package provenance...", async _ =>
+                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages));
+                allProvenanceResults.AddRange(npmResults);
+            }
+
+            if (allProvenanceResults.Count > 0)
+                reportGenerator.SetProvenanceResults(allProvenanceResults);
         }
 
         // Generate SBOM/VEX once, validate SBOM, then build final report
