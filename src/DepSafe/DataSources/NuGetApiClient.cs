@@ -184,6 +184,7 @@ public sealed class NuGetApiClient : IDisposable
             // Try different frameworks in preference order
             var frameworks = new[]
             {
+                NuGetFramework.Parse("net10.0"),
                 NuGetFramework.Parse("net8.0"),
                 NuGetFramework.Parse("net6.0"),
                 NuGetFramework.Parse("netstandard2.1"),
@@ -225,6 +226,7 @@ public sealed class NuGetApiClient : IDisposable
 
     /// <summary>
     /// Parse package references from a project file.
+    /// Falls back to packages.config if no PackageReference elements are found.
     /// </summary>
     public static async Task<List<PackageReference>> ParseProjectFileAsync(string projectPath, CancellationToken ct = default)
     {
@@ -274,10 +276,66 @@ public sealed class NuGetApiClient : IDisposable
                     });
                 }
             }
+
+            // Fall back to packages.config if no PackageReference elements found
+            if (references.Count == 0)
+            {
+                var dir = Path.GetDirectoryName(projectPath);
+                if (dir is not null)
+                {
+                    var packagesConfigPath = Path.Combine(dir, "packages.config");
+                    if (File.Exists(packagesConfigPath))
+                    {
+                        references = await ParsePackagesConfigAsync(packagesConfigPath, ct);
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error parsing project file {projectPath}: {ex.Message}");
+        }
+
+        return references;
+    }
+
+    /// <summary>
+    /// Parse package references from a packages.config file (.NET Framework).
+    /// packages.config is a flat resolved list containing both direct and transitive packages.
+    /// </summary>
+    public static async Task<List<PackageReference>> ParsePackagesConfigAsync(string configPath, CancellationToken ct = default)
+    {
+        var references = new List<PackageReference>();
+
+        if (!File.Exists(configPath)) return references;
+
+        try
+        {
+            var content = await File.ReadAllTextAsync(configPath, ct);
+            var doc = XDocument.Parse(content);
+
+            var packages = doc.Descendants()
+                .Where(e => e.Name.LocalName == "package");
+
+            foreach (var pkg in packages)
+            {
+                var id = pkg.Attribute("id")?.Value;
+                var version = pkg.Attribute("version")?.Value;
+
+                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(version))
+                {
+                    references.Add(new PackageReference
+                    {
+                        PackageId = id,
+                        Version = version,
+                        SourceFile = configPath
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error parsing packages.config {configPath}: {ex.Message}");
         }
 
         return references;
@@ -456,11 +514,7 @@ public sealed class NuGetApiClient : IDisposable
                 return (topLevel, transitive);
             }
 
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-            var result = JsonSerializer.Deserialize<DotnetPackageListOutput>(output, options);
+            var result = JsonSerializer.Deserialize<DotnetPackageListOutput>(output, JsonDefaults.CaseInsensitive);
 
             if (result?.Projects == null) return (topLevel, transitive);
 

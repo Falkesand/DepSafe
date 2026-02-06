@@ -94,10 +94,7 @@ public static class CraReportCommand
         try
         {
             var json = await File.ReadAllTextAsync(configPath);
-            var config = JsonSerializer.Deserialize<CraConfig>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var config = JsonSerializer.Deserialize<CraConfig>(json, JsonDefaults.CaseInsensitive);
             return config;
         }
         catch (Exception ex)
@@ -1008,7 +1005,8 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"[dim]Found {allReferences.Count} direct packages and {transitiveReferences.Count} transitive dependencies[/]");
 
         // Warn about incomplete transitive dependencies
-        var incompleteTransitive = usedFallbackParsing || transitiveReferences.Count == 0;
+        // Only warn when fallback parsing also found nothing — packages.config is already a complete flat list
+        var incompleteTransitive = usedFallbackParsing && allReferences.Count == 0;
         if (incompleteTransitive || hasUnresolvedVersions)
         {
             AnsiConsole.WriteLine();
@@ -1351,7 +1349,7 @@ public static class CraReportCommand
                     }
                 });
 
-            incompleteTransitive = usedFallbackParsing || transitiveReferences.Count == 0;
+            incompleteTransitive = usedFallbackParsing && allReferences.Count == 0;
 
             if (allReferences.Count > 0)
             {
@@ -3120,23 +3118,13 @@ public static class CraReportCommand
         if (format == SbomFormat.CycloneDx)
         {
             var bom = sbomGenerator.GenerateCycloneDx(projectName, allPackages);
-            content = JsonSerializer.Serialize(bom, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            });
+            content = JsonSerializer.Serialize(bom, JsonDefaults.IndentedIgnoreNull);
             fileName = $"{projectName}-sbom.cdx.json";
         }
         else
         {
             var sbom = sbomGenerator.Generate(projectName, allPackages);
-            content = JsonSerializer.Serialize(sbom, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            });
+            content = JsonSerializer.Serialize(sbom, JsonDefaults.IndentedIgnoreNull);
             fileName = $"{projectName}-sbom.spdx.json";
         }
 
