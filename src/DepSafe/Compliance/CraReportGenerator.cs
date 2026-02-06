@@ -1765,7 +1765,7 @@ public sealed partial class CraReportGenerator
 
         sb.AppendLine("<div class=\"info-box\">");
         sb.AppendLine("  <div class=\"info-box-title\">What is this?</div>");
-        sb.AppendLine("  <p><strong>Provenance</strong> means verifying that a package actually came from its claimed source. When NuGet signs a package, it creates a cryptographic proof that the package was published through the official registry and hasn't been tampered with.</p>");
+        sb.AppendLine("  <p><strong>Provenance</strong> means verifying that a package actually came from its claimed source. Package registries sign packages with cryptographic proofs &mdash; NuGet uses repository signatures, while npm uses ECDSA registry signatures and Sigstore attestations.</p>");
         sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Why it matters:</strong> Supply chain attacks work by injecting malicious code into packages. Signed packages are harder to tamper with. Unsigned packages aren't necessarily dangerous, but they lack this verification layer.</p>");
         sb.AppendLine("</div>");
 
@@ -1792,7 +1792,7 @@ public sealed partial class CraReportGenerator
         if (unsigned.Count > 0)
         {
             sb.AppendLine("<h3>Unsigned Packages</h3>");
-            sb.AppendLine("<p style=\"color:var(--text-secondary);margin-bottom:12px;\">These packages could not be verified through NuGet repository signatures. This is common for npm packages (signing support is newer) and some smaller NuGet packages. It doesn't mean they're malicious &mdash; but extra review may be warranted.</p>");
+            sb.AppendLine("<p style=\"color:var(--text-secondary);margin-bottom:12px;\">These packages could not be verified through registry signatures. This can happen with older npm packages published before registry signing, or smaller NuGet packages. It doesn't mean they're malicious &mdash; but extra review may be warranted.</p>");
             sb.AppendLine("<table class=\"detail-table\">");
             sb.AppendLine("  <thead><tr>");
             sb.AppendLine("    <th title=\"The package that couldn't be verified\">Package</th>");

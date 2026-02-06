@@ -26,6 +26,18 @@ public sealed class SbomValidationResult
     /// <summary>Whether the SBOM has creator information.</summary>
     public required bool HasCreator { get; init; }
 
+    /// <summary>Package names missing supplier info.</summary>
+    public List<string> MissingSupplier { get; init; } = [];
+
+    /// <summary>Package names missing license info.</summary>
+    public List<string> MissingLicense { get; init; } = [];
+
+    /// <summary>Package names missing PURL reference.</summary>
+    public List<string> MissingPurl { get; init; } = [];
+
+    /// <summary>Package names missing checksum.</summary>
+    public List<string> MissingChecksum { get; init; } = [];
+
     /// <summary>Overall field completeness percentage (0-100).</summary>
     public int CompletenessPercent
     {

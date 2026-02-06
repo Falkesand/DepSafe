@@ -18,22 +18,36 @@ public static class SbomValidator
                          sbom.CreationInfo.Creators.Any(c => !string.IsNullOrWhiteSpace(c));
 
         int withSupplier = 0, withLicense = 0, withPurl = 0, withChecksum = 0;
+        var missingSupplier = new List<string>();
+        var missingLicense = new List<string>();
+        var missingPurl = new List<string>();
+        var missingChecksum = new List<string>();
 
         foreach (var pkg in sbom.Packages)
         {
+            var name = $"{pkg.Name}@{pkg.VersionInfo}";
+
             if (!string.IsNullOrEmpty(pkg.Supplier) && pkg.Supplier != "NOASSERTION")
                 withSupplier++;
+            else
+                missingSupplier.Add(name);
 
             if (!string.IsNullOrEmpty(pkg.LicenseConcluded) && pkg.LicenseConcluded != "NOASSERTION")
                 withLicense++;
+            else
+                missingLicense.Add(name);
 
             if (pkg.ExternalRefs?.Any(r =>
                     r.ReferenceType == "purl" ||
                     r.ReferenceLocator.StartsWith("pkg:", StringComparison.OrdinalIgnoreCase)) == true)
                 withPurl++;
+            else
+                missingPurl.Add(name);
 
             if (pkg.Checksums?.Count > 0)
                 withChecksum++;
+            else
+                missingChecksum.Add(name);
         }
 
         return new SbomValidationResult
@@ -44,7 +58,11 @@ public static class SbomValidator
             WithPurl = withPurl,
             WithChecksum = withChecksum,
             HasTimestamp = hasTimestamp,
-            HasCreator = hasCreator
+            HasCreator = hasCreator,
+            MissingSupplier = missingSupplier,
+            MissingLicense = missingLicense,
+            MissingPurl = missingPurl,
+            MissingChecksum = missingChecksum
         };
     }
 }
