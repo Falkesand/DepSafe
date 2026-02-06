@@ -159,15 +159,7 @@ public sealed class TyposquatDetector
 
     private IEnumerable<PopularPackageEntry> GetAllEntries()
     {
-        // For prefix/suffix and scope confusion, we need to check all entries
-        // This is still fast because these checks are simple string operations
-        return _index.FindCandidates("") // Empty string won't match by length
-            .Concat(Enumerable.Range(1, 100).SelectMany(len =>
-            {
-                var dummy = new string('x', len);
-                return _index.FindCandidates(dummy);
-            }))
-            .DistinctBy(e => e.Name, StringComparer.OrdinalIgnoreCase);
+        return _index.AllEntries;
     }
 
     private static string DetectHomoglyphDetail(string candidate, string popular)

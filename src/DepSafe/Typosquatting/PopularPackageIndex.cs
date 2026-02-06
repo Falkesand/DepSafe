@@ -67,6 +67,11 @@ public sealed class PopularPackageIndex
     }
 
     /// <summary>
+    /// All entries across all buckets.
+    /// </summary>
+    public IEnumerable<PopularPackageEntry> AllEntries => _buckets.Values.SelectMany(b => b);
+
+    /// <summary>
     /// Total number of entries in the index.
     /// </summary>
     public int Count => _allNames.Count;

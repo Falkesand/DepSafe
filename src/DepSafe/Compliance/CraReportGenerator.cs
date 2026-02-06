@@ -590,7 +590,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
         sb.AppendLine($"  <title>CRA Compliance Report - {EscapeHtml(Path.GetFileName(report.ProjectPath))}</title>");
         sb.AppendLine("  <link href=\"https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap\" rel=\"stylesheet\">");
-        sb.Append(GetHtmlStyles());
+        sb.Append(MinifyCss(GetHtmlStyles()));
         sb.AppendLine("</head>");
         sb.AppendLine("<body>");
         sb.AppendLine("<div class=\"app-container\">");
@@ -6262,6 +6262,81 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
                 default: sb.Append(c); break;
             }
         }
+        return sb.ToString();
+    }
+
+    private static string MinifyCss(string css)
+    {
+        var sb = new StringBuilder(css.Length);
+        var inComment = false;
+        var i = 0;
+
+        while (i < css.Length)
+        {
+            // Strip CSS comments
+            if (!inComment && i + 1 < css.Length && css[i] == '/' && css[i + 1] == '*')
+            {
+                inComment = true;
+                i += 2;
+                continue;
+            }
+            if (inComment)
+            {
+                if (i + 1 < css.Length && css[i] == '*' && css[i + 1] == '/')
+                {
+                    inComment = false;
+                    i += 2;
+                }
+                else
+                {
+                    i++;
+                }
+                continue;
+            }
+
+            var c = css[i];
+
+            // Collapse newlines and carriage returns
+            if (c == '\n' || c == '\r')
+            {
+                i++;
+                continue;
+            }
+
+            // Collapse runs of whitespace to a single space
+            if (c == ' ' || c == '\t')
+            {
+                // Skip whitespace after structural characters
+                if (sb.Length > 0)
+                {
+                    var prev = sb[sb.Length - 1];
+                    if (prev == '{' || prev == '}' || prev == ';' || prev == ':' || prev == ',')
+                    {
+                        i++;
+                        continue;
+                    }
+                }
+
+                // Collapse to single space, skip trailing whitespace
+                sb.Append(' ');
+                i++;
+                while (i < css.Length && (css[i] == ' ' || css[i] == '\t' || css[i] == '\n' || css[i] == '\r'))
+                    i++;
+                continue;
+            }
+
+            // Skip whitespace before structural characters
+            if ((c == '{' || c == '}' || c == ';' || c == ':' || c == ',') && sb.Length > 0 && sb[sb.Length - 1] == ' ')
+            {
+                sb[sb.Length - 1] = c;
+                i++;
+                continue;
+            }
+
+            sb.Append(c);
+            i++;
+        }
+
         return sb.ToString();
     }
 }
