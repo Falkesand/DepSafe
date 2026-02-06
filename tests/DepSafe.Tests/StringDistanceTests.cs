@@ -99,9 +99,14 @@ public class StringDistanceTests
     [Theory]
     [InlineData("node-lodash", "lodash", true)]
     [InlineData("lodash-js", "lodash", true)]
-    [InlineData("lodash.core", "lodash", true)]
+    [InlineData("lodash.core", "lodash", false)]    // Namespace child (starts with popular.)
     [InlineData("express", "express", false)]       // Same name
     [InlineData("node-ab", "ab", false)]            // Too short (< 4)
+    [InlineData("Microsoft.EntityFrameworkCore.Design", "Microsoft.EntityFrameworkCore", false)] // NuGet sub-package
+    [InlineData("Serilog.Enrichers.Thread", "Serilog", false)]  // NuGet sub-package
+    [InlineData("xunit.runner.visualstudio", "xunit", false)]   // NuGet sub-package
+    [InlineData("my-lodash", "lodash", true)]       // Prepended name, still suspicious
+    [InlineData("fake.lodash", "lodash", true)]     // Contains popular after dot but doesn't start with it
     public void IsPrefixSuffixMatch_DetectsVariants(string candidate, string popular, bool expected)
     {
         Assert.Equal(expected, StringDistance.IsPrefixSuffixMatch(candidate, popular));

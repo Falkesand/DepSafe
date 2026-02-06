@@ -2452,14 +2452,17 @@ public static class CraReportCommand
             }
         }
 
-        // Enrich packages with max EPSS across all their vulnerabilities
+        // Enrich packages with max EPSS across their ACTIVE vulnerabilities only
+        // (not all CVEs ever reported against the package name)
         foreach (var pkg in packages.Concat(transitivePackages))
         {
-            if (!allVulnerabilities.TryGetValue(pkg.PackageId, out var pkgVulns))
+            if (pkg.Vulnerabilities.Count == 0 || !allVulnerabilities.TryGetValue(pkg.PackageId, out var pkgVulns))
                 continue;
 
+            // Only consider vulnerabilities that affect the installed version
+            var activeVulnIds = new HashSet<string>(pkg.Vulnerabilities, StringComparer.OrdinalIgnoreCase);
             var maxPkgEpss = pkgVulns
-                .Where(v => v.EpssProbability.HasValue)
+                .Where(v => v.EpssProbability.HasValue && activeVulnIds.Contains(v.Id))
                 .OrderByDescending(v => v.EpssProbability)
                 .FirstOrDefault();
 

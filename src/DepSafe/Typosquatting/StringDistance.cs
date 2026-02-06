@@ -133,6 +133,7 @@ public static class StringDistance
     /// Check if candidate is a prefix/suffix variant of a popular package.
     /// e.g., "node-lodash" or "lodash-js" when "lodash" is the popular package.
     /// Only triggers for popular packages with names >= 4 chars.
+    /// Excludes namespace children (e.g., Serilog.Enrichers.Thread is a sub-package of Serilog, not a typosquat).
     /// </summary>
     public static bool IsPrefixSuffixMatch(string candidate, string popular)
     {
@@ -143,6 +144,11 @@ public static class StringDistance
         var lowerPopular = popular.ToLowerInvariant();
 
         if (lowerCandidate == lowerPopular)
+            return false;
+
+        // Sub-package in dotted namespace convention is not typosquatting
+        // e.g., Microsoft.EntityFrameworkCore.Design extends Microsoft.EntityFrameworkCore
+        if (lowerCandidate.StartsWith($"{lowerPopular}."))
             return false;
 
         // Check common prefixes/suffixes with separators
