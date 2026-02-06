@@ -30,15 +30,14 @@ public sealed partial class CraReportGenerator
     /// <param name="healthReport">The health report data.</param>
     /// <param name="vulnerabilities">Vulnerability data by package.</param>
     /// <param name="startTime">Optional start time for calculating generation duration.</param>
-    public CraReport Generate(
+    /// <summary>
+    /// Generate SBOM and VEX artifacts without building compliance items.
+    /// Use this to get the SBOM for validation before calling Generate(sbom, vex).
+    /// </summary>
+    public (SbomDocument Sbom, VexDocument Vex) GenerateArtifacts(
         ProjectReport healthReport,
-        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities,
-        DateTime? startTime = null)
+        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities)
     {
-        // Build reverse dependency lookup for "Required by" information
-        BuildParentLookup();
-
-        // Include both direct and transitive packages in SBOM for CRA compliance
         var allPackagesForSbom = healthReport.Packages.AsEnumerable();
         if (_transitiveDataCache is not null)
         {
@@ -47,7 +46,7 @@ public sealed partial class CraReportGenerator
 
         var sbom = _sbomGenerator.Generate(healthReport.ProjectPath, allPackagesForSbom);
 
-        // Apply package checksums from provenance data (extracted from NuGet registration API)
+        // Apply package checksums from provenance data
         if (_provenanceResults.Count > 0)
         {
             var hashLookup = _provenanceResults
@@ -70,8 +69,20 @@ public sealed partial class CraReportGenerator
             }
         }
 
-        // VEX should include both direct and transitive packages for proper vulnerability counting
         var vex = _vexGenerator.Generate(allPackagesForSbom, vulnerabilities);
+        return (sbom, vex);
+    }
+
+    /// <summary>
+    /// Generate a full CRA report using pre-built SBOM and VEX artifacts.
+    /// </summary>
+    public CraReport Generate(
+        ProjectReport healthReport,
+        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities,
+        SbomDocument sbom, VexDocument vex,
+        DateTime? startTime = null)
+    {
+        BuildParentLookup();
 
         var complianceItems = new List<CraComplianceItem>();
 
@@ -476,6 +487,19 @@ public sealed partial class CraReportGenerator
             DependencyIssues = allDependencyIssues,
             CraReadinessScore = craReadinessScore
         };
+    }
+
+    /// <summary>
+    /// Generate a full CRA report, building SBOM and VEX internally.
+    /// Prefer the overload accepting pre-built artifacts when SBOM validation is needed.
+    /// </summary>
+    public CraReport Generate(
+        ProjectReport healthReport,
+        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities,
+        DateTime? startTime = null)
+    {
+        var (sbom, vex) = GenerateArtifacts(healthReport, vulnerabilities);
+        return Generate(healthReport, vulnerabilities, sbom, vex, startTime);
     }
 
     /// <summary>

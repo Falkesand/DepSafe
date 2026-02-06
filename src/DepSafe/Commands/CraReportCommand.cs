@@ -2057,14 +2057,10 @@ public static class CraReportCommand
             }
         }
 
-        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
-
-        // SBOM validation (F8) - must run after Generate() since SBOM is created there
-        {
-            var sbomValidation = SbomValidator.Validate(craReport.Sbom);
-            reportGenerator.SetSbomValidation(sbomValidation);
-            craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
-        }
+        // Generate SBOM/VEX once, validate SBOM, then build final report
+        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
+        reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
+        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
         if (string.IsNullOrEmpty(outputPath))
         {
@@ -2856,15 +2852,10 @@ public static class CraReportCommand
             }
         }
 
-        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
-
-        // SBOM validation (F8) - must run after Generate() since SBOM is created there
-        {
-            var sbomValidation = SbomValidator.Validate(craReport.Sbom);
-            reportGenerator.SetSbomValidation(sbomValidation);
-            // Re-generate to include SBOM validation results
-            craReport = reportGenerator.Generate(healthReport, allVulnerabilities, startTime);
-        }
+        // Generate SBOM/VEX once, validate SBOM, then build final report
+        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
+        reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
+        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
         // Determine output path
         if (string.IsNullOrEmpty(outputPath))
