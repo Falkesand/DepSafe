@@ -18,12 +18,6 @@ public sealed partial class CraReportGenerator
     [GeneratedRegex(@"pkg:nuget/([^@]+)", RegexOptions.Compiled)]
     private static partial Regex PurlRegex();
 
-    // Static JsonSerializerOptions to avoid per-call allocations
-    private static readonly JsonSerializerOptions CamelCaseOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
     public CraReportGenerator(SbomGenerator? sbomGenerator = null, VexGenerator? vexGenerator = null)
     {
         _sbomGenerator = sbomGenerator ?? new SbomGenerator();
@@ -1676,13 +1670,17 @@ public sealed partial class CraReportGenerator
         if (v.TotalPackages > 0)
         {
             AppendFieldCardWithBar(sb, "Supplier", v.WithSupplier, v.TotalPackages,
-                "Who published the package. Needed to contact maintainers about vulnerabilities.");
+                "Who published the package. Needed to contact maintainers about vulnerabilities.",
+                v.MissingSupplier, "supplier");
             AppendFieldCardWithBar(sb, "License", v.WithLicense, v.TotalPackages,
-                "The license under which the package is distributed. Required for legal compliance.");
+                "The license under which the package is distributed. Required for legal compliance.",
+                v.MissingLicense, "license");
             AppendFieldCardWithBar(sb, "Package URL (PURL)", v.WithPurl, v.TotalPackages,
-                "A universal identifier (like pkg:nuget/Newtonsoft.Json@13.0.1) that uniquely identifies the exact package version across all registries.");
+                "A universal identifier (like pkg:nuget/Newtonsoft.Json@13.0.1) that uniquely identifies the exact package version across all registries.",
+                v.MissingPurl, "purl");
             AppendFieldCardWithBar(sb, "Checksum", v.WithChecksum, v.TotalPackages,
-                "A cryptographic hash verifying the package hasn't been tampered with since download.");
+                "A cryptographic hash verifying the package hasn't been tampered with since download.",
+                v.MissingChecksum, "checksum");
         }
 
         sb.AppendLine("</div>");
@@ -1696,14 +1694,22 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("  </div>");
     }
 
-    private static void AppendFieldCardWithBar(StringBuilder sb, string label, int count, int total, string tooltip)
+    private static void AppendFieldCardWithBar(StringBuilder sb, string label, int count, int total, string tooltip, List<string> missing, string fieldKey)
     {
         var pct = total > 0 ? (int)Math.Round(100.0 * count / total) : 0;
         var barClass = pct >= 90 ? "high" : pct >= 70 ? "medium" : "low";
-        sb.AppendLine($"  <div class=\"field-card\" title=\"{EscapeHtml(tooltip)}\">");
-        sb.AppendLine($"    <div class=\"field-label\">{EscapeHtml(label)}</div>");
+        var hasMissing = missing.Count > 0;
+        var cardClass = hasMissing ? "field-card field-card-clickable" : "field-card";
+        sb.AppendLine($"  <div class=\"{cardClass}\" title=\"{EscapeHtml(tooltip)}{(hasMissing ? " — click to see missing packages" : "")}\">");
+        sb.AppendLine($"    <div class=\"field-label\">{EscapeHtml(label)}{(hasMissing ? "<span class=\"field-toggle\">&#9660;</span>" : "")}</div>");
         sb.AppendLine($"    <div style=\"display:flex;justify-content:space-between;margin-bottom:4px;\"><span>{count}/{total} packages</span><span>{pct}%</span></div>");
         sb.AppendLine($"    <div class=\"progress-bar-container\"><div class=\"progress-bar-fill {barClass}\" style=\"width:{pct}%\"></div></div>");
+        if (hasMissing)
+        {
+            sb.AppendLine($"    <div class=\"field-missing-list\" data-field=\"{fieldKey}\" style=\"display:none;\">");
+            sb.AppendLine($"      <div class=\"field-missing-header\">Missing ({missing.Count})</div>");
+            sb.AppendLine("    </div>");
+        }
         sb.AppendLine("  </div>");
     }
 
@@ -4601,6 +4607,27 @@ public sealed partial class CraReportGenerator
       font-size: 1.1rem;
       font-weight: 600;
     }
+    .field-card-clickable { cursor: pointer; }
+    .field-card-clickable:hover { border-color: var(--text-muted); }
+    .field-toggle { float: right; font-size: 0.7rem; color: var(--text-muted); transition: transform 0.2s; }
+    .field-card.expanded .field-toggle { transform: rotate(180deg); }
+    .field-missing-header {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin: 10px 0 6px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .field-missing-item {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      padding: 2px 0;
+      font-family: var(--font-mono, 'SFMono-Regular', Consolas, monospace);
+    }
+    .field-missing-list { max-height: 240px; overflow-y: auto; }
 
     .surface-metrics {
       display: grid;
@@ -4739,16 +4766,17 @@ public sealed partial class CraReportGenerator
     {
         // Serialize without indentation to minimize HTML report size (saves 1-3MB for large projects)
         var sbomJson = JsonSerializer.Serialize(report.Sbom);
-        var vexJson = JsonSerializer.Serialize(report.Vex, CamelCaseOptions);
 
         // Generate centralized package data for lazy loading (reduces DOM size by 80%+)
         var packageDataJson = GeneratePackageDataJson();
+        var sbomMissingJson = GenerateSbomMissingDataJson();
 
         return $@"
+<script id=""sbom-json"" type=""application/json"">{sbomJson}</script>
 <script>
-const sbomData = {sbomJson};
-const vexData = {vexJson};
+var _hasSbomData = true;
 const packageData = {packageDataJson};
+const sbomMissingData = {sbomMissingJson};
 
 function toggleTheme() {{
   const toggle = document.getElementById('themeToggle');
@@ -5137,17 +5165,11 @@ function toggleReviewedVulns() {{
 }}
 
 function exportSbom(format) {{
-  let data, filename, type;
-  if (format === 'spdx') {{
-    data = JSON.stringify(sbomData, null, 2);
-    filename = 'sbom.spdx.json';
-    type = 'application/json';
-  }} else {{
-    // Convert to CycloneDX format
-    data = JSON.stringify(sbomData, null, 2);
-    filename = 'sbom.cyclonedx.json';
-    type = 'application/json';
-  }}
+  if (!_hasSbomData) return;
+  var raw = document.getElementById('sbom-json').textContent;
+  var data = JSON.stringify(JSON.parse(raw), null, 2);
+  var filename = format === 'spdx' ? 'sbom.spdx.json' : 'sbom.cyclonedx.json';
+  var type = 'application/json';
 
   const blob = new Blob([data], {{ type }});
   const url = URL.createObjectURL(blob);
@@ -5474,6 +5496,29 @@ document.addEventListener('click', function() {{
     _activePopover = null;
   }}
 }});
+
+// SBOM field card click-to-expand (lazy-populated from sbomMissingData)
+document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
+  card.addEventListener('click', function() {{
+    var list = card.querySelector('.field-missing-list');
+    if (!list) return;
+    // Lazy populate on first click
+    if (!list.dataset.loaded && sbomMissingData) {{
+      var field = list.dataset.field;
+      var items = sbomMissingData[field] || [];
+      items.forEach(function(pkg) {{
+        var div = document.createElement('div');
+        div.className = 'field-missing-item';
+        div.textContent = pkg;
+        list.appendChild(div);
+      }});
+      list.dataset.loaded = 'true';
+    }}
+    var isOpen = list.style.display !== 'none';
+    list.style.display = isOpen ? 'none' : 'block';
+    card.classList.toggle('expanded', !isOpen);
+  }});
+}});
 </script>";
     }
 
@@ -5765,6 +5810,22 @@ document.addEventListener('click', function() {{
         }
 
         return JsonSerializer.Serialize(packages);
+    }
+
+    private string GenerateSbomMissingDataJson()
+    {
+        if (_sbomValidation is null)
+            return "null";
+
+        var data = new Dictionary<string, List<string>>
+        {
+            ["supplier"] = _sbomValidation.MissingSupplier,
+            ["license"] = _sbomValidation.MissingLicense,
+            ["purl"] = _sbomValidation.MissingPurl,
+            ["checksum"] = _sbomValidation.MissingChecksum
+        };
+
+        return JsonSerializer.Serialize(data);
     }
 
     private object CreatePackageDataObject(PackageHealth pkg, bool isDirect)
