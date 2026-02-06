@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.CommandLine;
+using System.CommandLine.Binding;
 using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
@@ -59,7 +60,8 @@ public static class CraReportCommand
             checkTyposquatOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption);
+        command.SetHandler(options => ExecuteAsync(options), binder);
 
         return command;
     }
@@ -113,10 +115,17 @@ public static class CraReportCommand
         return config.LicenseOverrides.TryGetValue(packageId, out var license) ? license : null;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, bool checkTyposquat = false)
+    private static async Task<int> ExecuteAsync(CraReportOptions options)
     {
         var startTime = DateTime.UtcNow;
-        path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
+        var path = string.IsNullOrEmpty(options.Path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(options.Path);
+        var format = options.Format;
+        var outputPath = options.Output;
+        var skipGitHub = options.SkipGitHub;
+        var deepScan = options.Deep;
+        var licensesFormat = options.Licenses;
+        var sbomFormat = options.Sbom;
+        var checkTyposquat = options.CheckTyposquat;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -3266,6 +3275,58 @@ public static class CraReportCommand
             return true;
         }
     }
+}
+
+public sealed record CraReportOptions(
+    string? Path,
+    CraOutputFormat Format,
+    string? Output,
+    bool SkipGitHub,
+    bool Deep,
+    LicenseOutputFormat? Licenses,
+    SbomFormat? Sbom,
+    bool CheckTyposquat);
+
+public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
+{
+    private readonly Argument<string?> _path;
+    private readonly Option<CraOutputFormat> _format;
+    private readonly Option<string?> _output;
+    private readonly Option<bool> _skipGitHub;
+    private readonly Option<bool> _deep;
+    private readonly Option<LicenseOutputFormat?> _licenses;
+    private readonly Option<SbomFormat?> _sbom;
+    private readonly Option<bool> _checkTyposquat;
+
+    public CraReportOptionsBinder(
+        Argument<string?> path,
+        Option<CraOutputFormat> format,
+        Option<string?> output,
+        Option<bool> skipGitHub,
+        Option<bool> deep,
+        Option<LicenseOutputFormat?> licenses,
+        Option<SbomFormat?> sbom,
+        Option<bool> checkTyposquat)
+    {
+        _path = path;
+        _format = format;
+        _output = output;
+        _skipGitHub = skipGitHub;
+        _deep = deep;
+        _licenses = licenses;
+        _sbom = sbom;
+        _checkTyposquat = checkTyposquat;
+    }
+
+    protected override CraReportOptions GetBoundValue(BindingContext bindingContext) => new(
+        bindingContext.ParseResult.GetValueForArgument(_path),
+        bindingContext.ParseResult.GetValueForOption(_format),
+        bindingContext.ParseResult.GetValueForOption(_output),
+        bindingContext.ParseResult.GetValueForOption(_skipGitHub),
+        bindingContext.ParseResult.GetValueForOption(_deep),
+        bindingContext.ParseResult.GetValueForOption(_licenses),
+        bindingContext.ParseResult.GetValueForOption(_sbom),
+        bindingContext.ParseResult.GetValueForOption(_checkTyposquat));
 }
 
 public enum CraOutputFormat
