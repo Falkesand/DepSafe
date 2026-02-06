@@ -41,7 +41,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         IReadOnlyList<(string PackageId, string Version)> packages)
     {
         var results = new ConcurrentBag<ProvenanceResult>();
-        var semaphore = new SemaphoreSlim(5);
+        using var semaphore = new SemaphoreSlim(5);
 
         var tasks = packages.Select(async pkg =>
         {
@@ -152,7 +152,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         IReadOnlyList<(string PackageId, string Version)> packages)
     {
         var results = new ConcurrentBag<ProvenanceResult>();
-        var semaphore = new SemaphoreSlim(10);
+        using var semaphore = new SemaphoreSlim(10);
 
         var tasks = packages.Select(async pkg =>
         {

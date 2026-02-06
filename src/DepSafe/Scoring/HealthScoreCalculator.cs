@@ -539,7 +539,11 @@ public sealed class HealthScoreCalculator
         return active;
     }
 
-    private static bool IsVersionInVulnerableRange(string version, string range)
+    /// <summary>
+    /// Check if a version falls within a vulnerable version range string.
+    /// Supports operators: &gt;=, &gt;, &lt;=, &lt;, = and exact version matches, comma-separated.
+    /// </summary>
+    internal static bool IsVersionInVulnerableRange(string version, string range)
     {
         try
         {
@@ -575,6 +579,12 @@ public sealed class HealthScoreCalculator
                     hasRangeConstraint = true;
                     var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
                     if (current >= v) return false;
+                }
+                else if (part.StartsWith("="))
+                {
+                    hasRangeConstraint = true;
+                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
+                    if (current != v) return false;
                 }
                 else if (!string.IsNullOrWhiteSpace(part))
                 {

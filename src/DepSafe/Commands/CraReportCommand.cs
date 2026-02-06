@@ -279,7 +279,7 @@ public static class CraReportCommand
                 var task = ctx.AddTask($"Fetching npm info for {packagesToFetch.Count} packages", maxValue: packagesToFetch.Count);
 
                 // Fetch in parallel with concurrency limit for 3-5x speedup
-                var semaphore = new SemaphoreSlim(10);
+                using var semaphore = new SemaphoreSlim(10);
                 var tasks = packagesToFetch.Select(async packageName =>
                 {
                     await semaphore.WaitAsync();
@@ -781,77 +781,8 @@ public static class CraReportCommand
         return true;
     }
 
-    private static bool IsVersionInVulnerableRange(string version, string range)
-    {
-        try
-        {
-            var current = NuGet.Versioning.NuGetVersion.Parse(version);
-            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
-
-            // Track whether we have any range constraints
-            bool hasRangeConstraint = false;
-            bool hasExactMatch = false;
-
-            foreach (var part in parts)
-            {
-                if (part.StartsWith(">="))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current < v) return false;
-                }
-                else if (part.StartsWith(">"))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current <= v) return false;
-                }
-                else if (part.StartsWith("<="))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current > v) return false;
-                }
-                else if (part.StartsWith("<"))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current >= v) return false;
-                }
-                else if (!string.IsNullOrWhiteSpace(part))
-                {
-                    // Exact version match (e.g., "4.4.2" from OSV's versions list)
-                    try
-                    {
-                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
-                        if (current == v)
-                        {
-                            hasExactMatch = true;
-                        }
-                    }
-                    catch
-                    {
-                        // Not a parseable version, ignore
-                    }
-                }
-            }
-
-            // If we only have exact version matches, check if current matches any
-            if (!hasRangeConstraint)
-            {
-                return hasExactMatch;
-            }
-
-            // Range constraints passed
-            return true;
-        }
-        catch
-        {
-            // If we can't parse, assume affected (conservative for security)
-            // May result in false positives - user should verify
-            return true;
-        }
-    }
+    private static bool IsVersionInVulnerableRange(string version, string range) =>
+        Scoring.HealthScoreCalculator.IsVersionInVulnerableRange(version, range);
 
     /// <summary>
     /// Extract a parseable version from a NuGet version range string.
@@ -1106,7 +1037,7 @@ public static class CraReportCommand
                 var task = ctx.AddTask($"Fetching NuGet info for {allPackageIds.Count} packages", maxValue: allPackageIds.Count);
 
                 // Fetch in parallel with concurrency limit for 3-5x speedup
-                var semaphore = new SemaphoreSlim(10);
+                using var semaphore = new SemaphoreSlim(10);
                 var tasks = allPackageIds.Select(async packageId =>
                 {
                     await semaphore.WaitAsync();
@@ -1149,26 +1080,18 @@ public static class CraReportCommand
                     var task = ctx.AddTask($"Fetching NuGet info for {dependencyPackageIds.Count} package dependencies", maxValue: dependencyPackageIds.Count);
 
                     // Fetch in parallel with concurrency limit for 3-5x speedup
-                    var semaphore = new SemaphoreSlim(10);
+                    using var semaphore = new SemaphoreSlim(10);
                     var tasks = dependencyPackageIds.Select(async packageId =>
                     {
                         await semaphore.WaitAsync();
                         try
                         {
-                            bool alreadyExists;
-                            lock (nugetInfoMap)
-                            {
-                                alreadyExists = nugetInfoMap.ContainsKey(packageId);
-                            }
-                            if (!alreadyExists)
+                            if (!nugetInfoMap.ContainsKey(packageId))
                             {
                                 var info = await nugetClient.GetPackageInfoAsync(packageId);
                                 if (info is not null)
                                 {
-                                    lock (nugetInfoMap)
-                                    {
-                                        nugetInfoMap[packageId] = info;
-                                    }
+                                    nugetInfoMap[packageId] = info;
                                 }
                             }
                         }
@@ -1278,10 +1201,12 @@ public static class CraReportCommand
         }
 
         // Calculate health scores for package dependencies (sub-dependencies for drill-down navigation)
+        var transitivePackageIds = new HashSet<string>(
+            transitivePackages.Select(p => p.PackageId), StringComparer.OrdinalIgnoreCase);
         foreach (var packageId in dependencyPackageIds)
         {
             // Skip if already in transitive list
-            if (transitivePackages.Any(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase)))
+            if (transitivePackageIds.Contains(packageId))
                 continue;
 
             if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo))
@@ -1442,7 +1367,7 @@ public static class CraReportCommand
                         var task = ctx.AddTask($"Fetching NuGet info", maxValue: allPackageIds.Count);
 
                         // Fetch in parallel with concurrency limit for 3-5x speedup
-                        var semaphore = new SemaphoreSlim(10);
+                        using var semaphore = new SemaphoreSlim(10);
                         var tasks = allPackageIds.Select(async packageId =>
                         {
                             await semaphore.WaitAsync();
@@ -1482,26 +1407,18 @@ public static class CraReportCommand
                             var task = ctx.AddTask($"Fetching NuGet dependencies", maxValue: dependencyPackageIds.Count);
 
                             // Fetch in parallel with concurrency limit for 3-5x speedup
-                            var semaphore = new SemaphoreSlim(10);
+                            using var semaphore = new SemaphoreSlim(10);
                             var tasks = dependencyPackageIds.Select(async packageId =>
                             {
                                 await semaphore.WaitAsync();
                                 try
                                 {
-                                    bool alreadyExists;
-                                    lock (nugetInfoMap)
-                                    {
-                                        alreadyExists = nugetInfoMap.ContainsKey(packageId);
-                                    }
-                                    if (!alreadyExists)
+                                    if (!nugetInfoMap.ContainsKey(packageId))
                                     {
                                         var info = await nugetClient.GetPackageInfoAsync(packageId);
                                         if (info is not null)
                                         {
-                                            lock (nugetInfoMap)
-                                            {
-                                                nugetInfoMap[packageId] = info;
-                                            }
+                                            nugetInfoMap[packageId] = info;
                                         }
                                     }
                                 }
@@ -3237,79 +3154,26 @@ public static class CraReportCommand
         if (string.IsNullOrEmpty(vuln.VulnerableVersionRange))
             return true; // Conservative: assume affected if no range specified
 
-        try
+        // Use canonical range parser
+        if (!Scoring.HealthScoreCalculator.IsVersionInVulnerableRange(installedVersion, vuln.VulnerableVersionRange))
+            return false;
+
+        // Additional check: if current >= patched version, not affected
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
         {
-            var current = NuGet.Versioning.NuGetVersion.Parse(installedVersion);
-            var range = vuln.VulnerableVersionRange;
-
-            // Split on comma for compound ranges
-            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
-
-            bool hasRangeConstraint = false;
-            bool hasExactMatch = false;
-
-            foreach (var part in parts)
+            try
             {
-                if (part.StartsWith(">="))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current < v) return false;
-                }
-                else if (part.StartsWith('>'))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current <= v) return false;
-                }
-                else if (part.StartsWith("<="))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current > v) return false;
-                }
-                else if (part.StartsWith('<'))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current >= v) return false;
-                }
-                else if (part.StartsWith('='))
-                {
-                    hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current != v) return false;
-                }
-                else if (!string.IsNullOrWhiteSpace(part))
-                {
-                    // Exact version match (e.g., "4.4.2" from OSV's versions list)
-                    try
-                    {
-                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
-                        if (current == v) hasExactMatch = true;
-                    }
-                    catch { /* Not a parseable version */ }
-                }
-            }
-
-            // If we only have exact version matches, return true only if current matches
-            if (!hasRangeConstraint)
-                return hasExactMatch;
-
-            // Check patched version - if current >= patched, not affected
-            if (!string.IsNullOrEmpty(vuln.PatchedVersion))
-            {
+                var current = NuGet.Versioning.NuGetVersion.Parse(installedVersion);
                 var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
                 if (current >= patched) return false;
             }
+            catch
+            {
+                // If parsing fails, fall through to affected
+            }
+        }
 
-            return true;
-        }
-        catch
-        {
-            // If parsing fails, assume affected for safety
-            return true;
-        }
+        return true;
     }
 }
 

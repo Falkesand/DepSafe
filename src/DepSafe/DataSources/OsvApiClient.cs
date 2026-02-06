@@ -23,7 +23,10 @@ public sealed partial class OsvApiClient : IDisposable
 
     public OsvApiClient(ResponseCache? cache = null)
     {
-        _httpClient = new HttpClient
+        _httpClient = new HttpClient(new HttpClientHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+        })
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
@@ -230,7 +233,7 @@ public sealed partial class OsvApiClient : IDisposable
         var results = new Dictionary<string, OsvVulnerability>(StringComparer.OrdinalIgnoreCase);
 
         // Fetch vulnerabilities in parallel (with some concurrency limit)
-        var semaphore = new SemaphoreSlim(10); // Max 10 concurrent requests
+        using var semaphore = new SemaphoreSlim(10); // Max 10 concurrent requests
         var tasks = vulnIds.Select(async vulnId =>
         {
             await semaphore.WaitAsync(ct);

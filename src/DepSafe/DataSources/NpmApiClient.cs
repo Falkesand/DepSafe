@@ -18,7 +18,10 @@ public sealed class NpmApiClient : IDisposable
 
     public NpmApiClient(ResponseCache? cache = null)
     {
-        _httpClient = new HttpClient
+        _httpClient = new HttpClient(new HttpClientHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+        })
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
@@ -144,7 +147,7 @@ public sealed class NpmApiClient : IDisposable
         if (packageList.Count == 0)
             return new Dictionary<string, NpmPackageInfo>(results);
 
-        var semaphore = new SemaphoreSlim(maxConcurrency);
+        using var semaphore = new SemaphoreSlim(maxConcurrency);
 
         var tasks = packageList.Select(async packageName =>
         {
@@ -479,7 +482,7 @@ public sealed class NpmApiClient : IDisposable
             Version = version,
             Depth = depth,
             DependencyType = depth == 0
-                ? (isDev ? DependencyType.Direct : DependencyType.Direct)
+                ? DependencyType.Direct
                 : DependencyType.Transitive,
             IsDuplicate = isDuplicate,
             Ecosystem = PackageEcosystem.Npm

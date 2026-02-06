@@ -119,7 +119,7 @@ public sealed class NuGetApiClient : IDisposable
         if (packageList.Count == 0)
             return new Dictionary<string, NuGetPackageInfo>(results);
 
-        var semaphore = new SemaphoreSlim(maxConcurrency);
+        using var semaphore = new SemaphoreSlim(maxConcurrency);
 
         var tasks = packageList.Select(async packageId =>
         {

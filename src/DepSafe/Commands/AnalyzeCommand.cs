@@ -57,199 +57,20 @@ public static class AnalyzeCommand
             return 1;
         }
 
-        var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
-        if (projectFiles.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]No project files found.[/]");
-            return 0;
-        }
+        using var pipeline = new AnalysisPipeline(skipGitHub);
+        pipeline.ShowGitHubStatus("No repo activity or vulnerability data.");
 
-        using var nugetClient = new NuGetApiClient();
-        using var githubClient = skipGitHub ? null : new GitHubApiClient();
-        var calculator = new HealthScoreCalculator();
-
-        // Show GitHub status
-        if (!skipGitHub && githubClient is not null)
-        {
-            if (!githubClient.HasToken)
-            {
-                AnsiConsole.MarkupLine("[yellow]No GITHUB_TOKEN found. GitHub API rate limited to 60 requests/hour.[/]");
-                AnsiConsole.MarkupLine("[dim]Set GITHUB_TOKEN environment variable for 5000 requests/hour.[/]");
-                AnsiConsole.WriteLine();
-            }
-        }
-        else if (skipGitHub)
-        {
-            AnsiConsole.MarkupLine("[dim]Skipping GitHub API (--skip-github). No repo activity or vulnerability data.[/]");
-            AnsiConsole.WriteLine();
-        }
-
-        // Collect all package references
-        var allReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
-
-        await AnsiConsole.Status()
-            .StartAsync("Scanning project files...", async ctx =>
-            {
-                foreach (var projectFile in projectFiles)
-                {
-                    var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                    foreach (var r in refs)
-                    {
-                        if (!allReferences.ContainsKey(r.PackageId))
-                        {
-                            allReferences[r.PackageId] = r;
-                        }
-                    }
-                }
-            });
-
+        var allReferences = await pipeline.ScanProjectFilesAsync(path);
         if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");
             return 0;
         }
 
-        // Phase 1: Fetch all NuGet info
-        var nugetInfoMap = new Dictionary<string, NuGetPackageInfo>(StringComparer.OrdinalIgnoreCase);
+        await pipeline.RunAsync(allReferences);
+        await pipeline.EnrichWithEpssAsync();
 
-        await AnsiConsole.Progress()
-            .StartAsync(async ctx =>
-            {
-                var task = ctx.AddTask($"Fetching NuGet info for {allReferences.Count} packages", maxValue: allReferences.Count);
-
-                foreach (var (packageId, _) in allReferences)
-                {
-                    task.Description = $"NuGet: {packageId}";
-                    var info = await nugetClient.GetPackageInfoAsync(packageId);
-                    if (info is not null)
-                    {
-                        nugetInfoMap[packageId] = info;
-                    }
-                    task.Increment(1);
-                }
-            });
-
-        // Phase 2: Batch fetch GitHub repo info (if not skipped)
-        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-        var vulnMap = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-
-        if (githubClient is not null && !githubClient.IsRateLimited)
-        {
-            await AnsiConsole.Status()
-                .StartAsync("Fetching GitHub repository info (batch)...", async ctx =>
-                {
-                    var repoUrls = nugetInfoMap.Values
-                        .Select(n => n.RepositoryUrl ?? n.ProjectUrl)
-                        .Where(u => u?.Contains("github.com", StringComparison.OrdinalIgnoreCase) == true)
-                        .ToList();
-
-                    if (repoUrls.Count > 0)
-                    {
-                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls);
-
-                        // Map back to package IDs
-                        foreach (var (packageId, info) in nugetInfoMap)
-                        {
-                            var url = info.RepositoryUrl ?? info.ProjectUrl;
-                            if (url is not null && results.TryGetValue(url, out var repoInfo))
-                            {
-                                repoInfoMap[packageId] = repoInfo;
-                            }
-                        }
-                    }
-
-                    if (githubClient.IsRateLimited)
-                    {
-                        ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
-                    }
-                });
-
-            // Phase 3: Batch fetch vulnerabilities
-            if (!githubClient.IsRateLimited && githubClient.HasToken)
-            {
-                await AnsiConsole.Status()
-                    .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
-                    {
-                        vulnMap = await githubClient.GetVulnerabilitiesBatchAsync(allReferences.Keys);
-
-                        if (githubClient.IsRateLimited)
-                        {
-                            ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
-                        }
-                    });
-            }
-        }
-
-        // Phase 4: Calculate health scores
-        var packages = new List<PackageHealth>();
-
-        foreach (var (packageId, reference) in allReferences)
-        {
-            if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo))
-                continue;
-
-            repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = vulnMap.GetValueOrDefault(packageId, []);
-
-            var health = calculator.Calculate(
-                packageId,
-                reference.Version,
-                nugetInfo,
-                repoInfo,
-                vulnerabilities);
-
-            packages.Add(health);
-        }
-
-        // Phase 5: EPSS enrichment - fetch exploit probability scores
-        var allCves = vulnMap.Values
-            .SelectMany(v => v.SelectMany(vi => vi.Cves))
-            .Where(c => !string.IsNullOrEmpty(c))
-            .Distinct()
-            .ToList();
-
-        if (allCves.Count > 0)
-        {
-            using var epssService = new EpssService();
-            var epssScores = await AnsiConsole.Status()
-                .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
-                    await epssService.GetScoresAsync(allCves));
-
-            // Enrich vulnerabilities and packages
-            foreach (var (packageId, vulns) in vulnMap)
-            {
-                foreach (var vuln in vulns)
-                {
-                    var maxEpss = vuln.Cves
-                        .Where(c => epssScores.ContainsKey(c))
-                        .Select(c => epssScores[c])
-                        .OrderByDescending(s => s.Probability)
-                        .FirstOrDefault();
-
-                    if (maxEpss is not null)
-                    {
-                        vuln.EpssProbability = maxEpss.Probability;
-                        vuln.EpssPercentile = maxEpss.Percentile;
-                    }
-                }
-
-                var pkg = packages.FirstOrDefault(p =>
-                    string.Equals(p.PackageId, packageId, StringComparison.OrdinalIgnoreCase));
-                if (pkg is not null)
-                {
-                    var maxPkgEpss = vulns
-                        .Where(v => v.EpssProbability.HasValue)
-                        .OrderByDescending(v => v.EpssProbability)
-                        .FirstOrDefault();
-
-                    if (maxPkgEpss is not null)
-                    {
-                        pkg.MaxEpssProbability = maxPkgEpss.EpssProbability;
-                        pkg.MaxEpssPercentile = maxPkgEpss.EpssPercentile;
-                    }
-                }
-            }
-        }
+        var packages = pipeline.Packages;
 
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
@@ -289,7 +110,7 @@ public static class AnalyzeCommand
                 OutputMarkdown(report);
                 break;
             default:
-                OutputTable(report, githubClient?.IsRateLimited == true, skipGitHub);
+                OutputTable(report, false, skipGitHub);
                 break;
         }
 

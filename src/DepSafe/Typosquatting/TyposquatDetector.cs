@@ -29,12 +29,13 @@ public sealed class TyposquatDetector
 
         var lowerName = packageName.ToLowerInvariant();
 
-        // Layer 1: Damerau-Levenshtein distance (length-bucketed for performance)
+        // Layers 1-3: Single pass over length-bucketed candidates
         foreach (var candidate in _index.FindCandidates(packageName))
         {
             if (string.Equals(packageName, candidate.Name, StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            // Layer 1: Damerau-Levenshtein distance
             var distance = StringDistance.DamerauLevenshtein(
                 lowerName.AsSpan(),
                 candidate.NormalizedName.AsSpan(),
@@ -56,14 +57,10 @@ public sealed class TyposquatDetector
                     Ecosystem = ecosystem
                 });
             }
-        }
 
-        // Layer 2: Homoglyph normalization (check all popular packages in length range)
-        foreach (var candidate in _index.FindCandidates(packageName))
-        {
+            // Layer 2: Homoglyph normalization
             if (StringDistance.IsHomoglyphMatch(packageName, candidate.Name))
             {
-                // Determine which homoglyph was used
                 var detail = DetectHomoglyphDetail(lowerName, candidate.NormalizedName);
 
                 results.Add(new TyposquatResult
@@ -77,11 +74,8 @@ public sealed class TyposquatDetector
                     Ecosystem = ecosystem
                 });
             }
-        }
 
-        // Layer 3: Separator normalization
-        foreach (var candidate in _index.FindCandidates(packageName))
-        {
+            // Layer 3: Separator normalization
             if (StringDistance.IsSeparatorMatch(packageName, candidate.Name))
             {
                 results.Add(new TyposquatResult

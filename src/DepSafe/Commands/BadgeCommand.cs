@@ -60,62 +60,28 @@ public static class BadgeCommand
             return 1;
         }
 
-        // Get packages
+        // Get transitive count from dotnet list (for badge display)
         var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
 
-        if (topLevel.Count == 0)
+        using var pipeline = new AnalysisPipeline(skipGitHub);
+        var allReferences = await pipeline.ScanProjectFilesAsync(path);
+
+        // Merge in any packages from dotnet list that weren't found via project file parsing
+        foreach (var pkg in topLevel)
         {
-            var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
-            foreach (var projectFile in projectFiles)
-            {
-                var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                topLevel.AddRange(refs);
-            }
+            allReferences.TryAdd(pkg.PackageId, pkg);
         }
 
-        if (topLevel.Count == 0)
+        if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");
             return 0;
         }
 
-        // Analyze health
-        using var nugetClient = new NuGetApiClient();
-        using var githubClient = skipGitHub ? null : new GitHubApiClient();
-        var calculator = new HealthScoreCalculator();
-        var packages = new List<PackageHealth>();
-        var vulnCount = 0;
+        await pipeline.RunAsync(allReferences);
 
-        await AnsiConsole.Status()
-            .StartAsync("Analyzing packages...", async ctx =>
-            {
-                var allPackageIds = topLevel.Select(p => p.PackageId).ToList();
-                var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-
-                // Fetch vulnerabilities if GitHub available
-                if (githubClient?.HasToken == true)
-                {
-                    allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allPackageIds);
-                    vulnCount = allVulnerabilities.Values.Sum(v => v.Count);
-                }
-
-                foreach (var pkg in topLevel)
-                {
-                    var nugetInfo = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
-                    if (nugetInfo == null) continue;
-
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(pkg.PackageId, []);
-
-                    var health = calculator.Calculate(
-                        pkg.PackageId,
-                        pkg.Version,
-                        nugetInfo,
-                        null,
-                        vulnerabilities);
-
-                    packages.Add(health);
-                }
-            });
+        var packages = pipeline.Packages;
+        var vulnCount = pipeline.VulnerabilityMap.Values.Sum(v => v.Count);
 
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
