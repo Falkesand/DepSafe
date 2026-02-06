@@ -952,6 +952,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("    <span class=\"filter-label\">Sort:</span>");
         sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('name')\">Name</button>");
         sb.AppendLine("    <button class=\"filter-btn sort-btn active\" onclick=\"sortPackages('health')\">Health</button>");
+        sb.AppendLine("    <button class=\"filter-btn sort-btn\" onclick=\"sortPackages('cra')\">CRA</button>");
         sb.AppendLine("  </span>");
         sb.AppendLine("</div>");
 
@@ -1014,7 +1015,9 @@ public sealed partial class CraReportGenerator
 
             var hasKev = _kevPackageIds.Contains(pkgName);
             var kevClass = hasKev ? " has-kev" : "";
-            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\">");
+            var craScore = healthData?.CraScore ?? 0;
+            var craTooltip = GetCraBadgeTooltip(healthData);
+            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScore}\">");
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1042,6 +1045,10 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness, activity, and maintenance\">");
             sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
             sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
+            sb.AppendLine($"        </div>");
+            sb.AppendLine($"        <div class=\"package-score-item\" title=\"{EscapeHtml(craTooltip)}\">");
+            sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
+            sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
             sb.AppendLine($"        </div>");
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
@@ -1083,7 +1090,9 @@ public sealed partial class CraReportGenerator
 
                 var hasKevTrans = _kevPackageIds.Contains(pkgName);
                 var kevClassTrans = hasKevTrans ? " has-kev" : "";
-                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\">");
+                var craScoreTrans = healthData.CraScore;
+                var craTooltipTrans = GetCraBadgeTooltip(healthData);
+                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScoreTrans}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1122,6 +1131,10 @@ public sealed partial class CraReportGenerator
                     sb.AppendLine($"          <span class=\"score-value na\">—</span>");
                     sb.AppendLine($"        </div>");
                 }
+                sb.AppendLine($"        <div class=\"package-score-item\" title=\"{EscapeHtml(craTooltipTrans)}\">");
+                sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
+                sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScoreTrans)}\">{craScoreTrans}</span>");
+                sb.AppendLine($"        </div>");
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");
@@ -5014,6 +5027,9 @@ function sortPackages(sortBy, isInitial) {{
     }} else if (sortBy === 'health') {{
       result = parseInt(a.dataset.health || 50) - parseInt(b.dataset.health || 50);
       if (result === 0) result = a.dataset.name.localeCompare(b.dataset.name);
+    }} else if (sortBy === 'cra') {{
+      result = parseInt(a.dataset.cra || 50) - parseInt(b.dataset.cra || 50);
+      if (result === 0) result = a.dataset.name.localeCompare(b.dataset.name);
     }}
     return result;
   }};
@@ -5523,7 +5539,9 @@ function filterTreeByEcosystem(ecosystem) {{
             dependencies = pkg.Dependencies.Select(d => new { id = d.PackageId, range = d.VersionRange }).ToList(),
             parents = parents ?? [],
             latestVersion = pkg.LatestVersion,
-            peerDependencies = pkg.PeerDependencies.Select(p => new { id = p.Key, range = p.Value }).ToList()
+            peerDependencies = pkg.PeerDependencies.Select(p => new { id = p.Key, range = p.Value }).ToList(),
+            craScore = pkg.CraScore,
+            craStatus = pkg.CraStatus.ToString()
         };
     }
 
@@ -5534,6 +5552,28 @@ function filterTreeByEcosystem(ecosystem) {{
         >= 40 => "warning",
         _ => "critical"
     };
+
+    private static string GetCraScoreClass(int score) => score switch
+    {
+        >= 90 => "healthy",
+        >= 70 => "watch",
+        >= 50 => "warning",
+        _ => "critical"
+    };
+
+    private static string GetCraBadgeTooltip(PackageHealth? pkg)
+    {
+        if (pkg is null) return "CRA Readiness Score";
+        var status = pkg.CraStatus switch
+        {
+            CraComplianceStatus.Compliant => "Compliant",
+            CraComplianceStatus.Review => "Review needed",
+            CraComplianceStatus.ActionRequired => "Action required",
+            CraComplianceStatus.NonCompliant => "Non-compliant",
+            _ => "Unknown"
+        };
+        return $"CRA Readiness: {pkg.CraScore}/100 - {status}";
+    }
 
     private static string GetEpssBadgeClass(double probability) => probability switch
     {

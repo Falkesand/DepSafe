@@ -384,14 +384,14 @@ public static class CraReportCommand
                 // Deep scan: calculate full health scores for transitive packages
                 var transitiveFromTree = ExtractTransitivePackagesWithFullHealth(
                     dependencyTree.Roots, directPackageIds, allVulnerabilities,
-                    npmInfoMap, repoInfoMap, calculator);
+                    npmInfoMap, repoInfoMap, calculator, integrityLookup);
                 transitivePackages.AddRange(transitiveFromTree);
                 AnsiConsole.MarkupLine($"[dim]Including {transitivePackages.Count} transitive npm packages with full health data[/]");
             }
             else
             {
                 // Minimal scan: only CRA scores (no full health metrics)
-                var transitiveFromTree = ExtractTransitivePackagesFromTree(dependencyTree.Roots, directPackageIds, allVulnerabilities);
+                var transitiveFromTree = ExtractTransitivePackagesFromTree(dependencyTree.Roots, directPackageIds, allVulnerabilities, integrityLookup);
                 transitivePackages.AddRange(transitiveFromTree);
                 AnsiConsole.MarkupLine($"[dim]Including {transitivePackages.Count} transitive npm packages in SBOM[/]");
             }
@@ -438,13 +438,14 @@ public static class CraReportCommand
         List<DependencyTreeNode> roots,
         HashSet<string> excludePackageIds)
     {
-        return ExtractTransitivePackagesFromTree(roots, excludePackageIds, new Dictionary<string, List<VulnerabilityInfo>>());
+        return ExtractTransitivePackagesFromTree(roots, excludePackageIds, new Dictionary<string, List<VulnerabilityInfo>>(), null);
     }
 
     private static List<PackageHealth> ExtractTransitivePackagesFromTree(
         List<DependencyTreeNode> roots,
         HashSet<string> excludePackageIds,
-        Dictionary<string, List<VulnerabilityInfo>> vulnerabilities)
+        Dictionary<string, List<VulnerabilityInfo>> vulnerabilities,
+        Dictionary<string, string>? integrityLookup = null)
     {
         var packages = new List<PackageHealth>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -482,7 +483,7 @@ public static class CraReportCommand
 
                 var (craScore, craStatus) = CalculateTransitiveCraScore(activeVulns, node.License, node.PackageId, node.Version);
 
-                packages.Add(new PackageHealth
+                var pkg = new PackageHealth
                 {
                     PackageId = node.PackageId,
                     Version = node.Version,
@@ -495,7 +496,12 @@ public static class CraReportCommand
                     DependencyType = DependencyType.Transitive,
                     Ecosystem = node.Ecosystem,
                     Vulnerabilities = activeVulns.Select(v => v.Id).ToList()
-                });
+                };
+
+                if (integrityLookup?.TryGetValue(node.PackageId, out var integrity) == true)
+                    pkg.ContentIntegrity = integrity;
+
+                packages.Add(pkg);
             }
 
             foreach (var child in node.Children)
@@ -522,7 +528,8 @@ public static class CraReportCommand
         Dictionary<string, List<VulnerabilityInfo>> vulnerabilities,
         IDictionary<string, NpmPackageInfo> npmInfoMap,
         Dictionary<string, GitHubRepoInfo?> repoInfoMap,
-        HealthScoreCalculator calculator)
+        HealthScoreCalculator calculator,
+        Dictionary<string, string>? integrityLookup = null)
     {
         var packages = new List<PackageHealth>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -574,6 +581,9 @@ public static class CraReportCommand
                     node.HealthScore = health.Score;
                     node.Status = health.Status;
 
+                    if (integrityLookup?.TryGetValue(node.PackageId, out var integ) == true)
+                        health.ContentIntegrity = integ;
+
                     packages.Add(health);
                 }
                 else
@@ -581,7 +591,7 @@ public static class CraReportCommand
                     // Fallback: no npm info available - use minimal CRA calculation
                     var (craScore, craStatus) = CalculateTransitiveCraScore(activeVulns, node.License, node.PackageId, node.Version);
 
-                    packages.Add(new PackageHealth
+                    var fallbackPkg = new PackageHealth
                     {
                         PackageId = node.PackageId,
                         Version = node.Version,
@@ -594,7 +604,12 @@ public static class CraReportCommand
                         DependencyType = DependencyType.Transitive,
                         Ecosystem = node.Ecosystem,
                         Vulnerabilities = activeVulns.Select(v => v.Id).ToList()
-                    });
+                    };
+
+                    if (integrityLookup?.TryGetValue(node.PackageId, out var integFb) == true)
+                        fallbackPkg.ContentIntegrity = integFb;
+
+                    packages.Add(fallbackPkg);
                 }
             }
 
@@ -1712,14 +1727,14 @@ public static class CraReportCommand
                             // Deep scan: calculate full health scores for transitive packages
                             var npmTransitiveFromTree = ExtractTransitivePackagesWithFullHealth(
                                 npmTree.Roots, directNpmPackageIds, allVulnerabilities,
-                                npmInfoMap, npmRepoInfoMap, calculator);
+                                npmInfoMap, npmRepoInfoMap, calculator, npmIntegrityLookup);
                             allTransitivePackages.AddRange(npmTransitiveFromTree);
                             AnsiConsole.MarkupLine($"[dim]Including {npmTransitiveFromTree.Count} transitive npm packages with full health data[/]");
                         }
                         else
                         {
                             // Minimal scan: only CRA scores (no full health metrics)
-                            var npmTransitiveFromTree = ExtractTransitivePackagesFromTree(npmTree.Roots, directNpmPackageIds, allVulnerabilities);
+                            var npmTransitiveFromTree = ExtractTransitivePackagesFromTree(npmTree.Roots, directNpmPackageIds, allVulnerabilities, npmIntegrityLookup);
                             allTransitivePackages.AddRange(npmTransitiveFromTree);
                             AnsiConsole.MarkupLine($"[dim]Including {npmTransitiveFromTree.Count} transitive npm packages in SBOM[/]");
                         }
@@ -1924,14 +1939,12 @@ public static class CraReportCommand
             .ToList();
         reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
 
-        // Update CRA scores for packages with KEV vulnerabilities (critical penalty)
+        // Mark packages with KEV vulnerabilities
         var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
         var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
         foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
         {
             pkg.HasKevVulnerability = true;
-            pkg.CraScore = Math.Min(pkg.CraScore, 10); // KEV = maximum 10 CRA score
-            pkg.CraStatus = CraComplianceStatus.NonCompliant;
 
             // Add KEV recommendation with CVE details
             var cves = kevCvesByPackage[pkg.PackageId].ToList();
@@ -1956,6 +1969,51 @@ public static class CraReportCommand
 
             EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
             reportGenerator.SetEpssScores(epssScores);
+        }
+
+        // Populate patch timeliness data from remediation info for enhanced CRA scoring
+        {
+            var packageVersions3 = packages.Concat(transitivePackages)
+                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (packageId, vulns) in allVulnerabilities)
+            {
+                if (!packageVersions3.TryGetValue(packageId, out var installedVersion))
+                    continue;
+
+                var patchCount = 0;
+                int? oldestDays = null;
+
+                foreach (var vuln in vulns)
+                {
+                    if (string.IsNullOrEmpty(vuln.PatchedVersion) || vuln.PublishedAt is null)
+                        continue;
+                    if (!IsVersionInVulnerableRange(installedVersion, vuln))
+                        continue;
+
+                    patchCount++;
+                    var days = (int)(DateTime.UtcNow - vuln.PublishedAt.Value).TotalDays;
+                    if (!oldestDays.HasValue || days > oldestDays.Value)
+                        oldestDays = days;
+                }
+
+                if (patchCount > 0)
+                {
+                    var target = packages.Concat(transitivePackages)
+                        .FirstOrDefault(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+                    if (target is not null)
+                    {
+                        target.PatchAvailableNotAppliedCount = patchCount;
+                        target.OldestUnpatchedVulnDays = oldestDays;
+                    }
+                }
+            }
+        }
+
+        // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
+        foreach (var pkg in packages.Concat(transitivePackages))
+        {
+            HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
         }
 
         // Crypto compliance check
@@ -2677,14 +2735,12 @@ public static class CraReportCommand
             .ToList();
         reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
 
-        // Update CRA scores for packages with KEV vulnerabilities (critical penalty)
+        // Mark packages with KEV vulnerabilities
         var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
         var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
         foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
         {
             pkg.HasKevVulnerability = true;
-            pkg.CraScore = Math.Min(pkg.CraScore, 10); // KEV = maximum 10 CRA score
-            pkg.CraStatus = CraComplianceStatus.NonCompliant;
 
             // Add KEV recommendation with CVE details
             var cves = kevCvesByPackage[pkg.PackageId].ToList();
@@ -2709,6 +2765,51 @@ public static class CraReportCommand
 
             EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
             reportGenerator.SetEpssScores(epssScores);
+        }
+
+        // Populate patch timeliness data from remediation info for enhanced CRA scoring
+        {
+            var packageVersions3 = packages.Concat(transitivePackages)
+                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (packageId, vulns) in allVulnerabilities)
+            {
+                if (!packageVersions3.TryGetValue(packageId, out var installedVersion))
+                    continue;
+
+                var patchCount = 0;
+                int? oldestDays = null;
+
+                foreach (var vuln in vulns)
+                {
+                    if (string.IsNullOrEmpty(vuln.PatchedVersion) || vuln.PublishedAt is null)
+                        continue;
+                    if (!IsVersionInVulnerableRange(installedVersion, vuln))
+                        continue;
+
+                    patchCount++;
+                    var days = (int)(DateTime.UtcNow - vuln.PublishedAt.Value).TotalDays;
+                    if (!oldestDays.HasValue || days > oldestDays.Value)
+                        oldestDays = days;
+                }
+
+                if (patchCount > 0)
+                {
+                    var target = packages.Concat(transitivePackages)
+                        .FirstOrDefault(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+                    if (target is not null)
+                    {
+                        target.PatchAvailableNotAppliedCount = patchCount;
+                        target.OldestUnpatchedVulnDays = oldestDays;
+                    }
+                }
+            }
+        }
+
+        // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
+        foreach (var pkg in packages.Concat(transitivePackages))
+        {
+            HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
         }
 
         // 4. Crypto compliance check

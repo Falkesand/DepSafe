@@ -723,6 +723,134 @@ public sealed class HealthScoreCalculator
     }
 
     /// <summary>
+    /// Recalculate an enhanced CRA score for a package using 7 weighted criteria.
+    /// Call AFTER all enrichment (KEV, EPSS, integrity, remediation) is complete.
+    /// Weights sum to 64, normalized to 0-100.
+    /// </summary>
+    public static void RecalculateEnhancedCraScore(PackageHealth pkg)
+    {
+        // Weight allocations (total = 64, normalized to 0-100)
+        const int wVuln = 15;       // Art. 11 - Vulnerabilities
+        const int wKev = 15;        // Art. 10(4) - Known exploited
+        const int wPatch = 8;       // Art. 11(4) - Patch timeliness
+        const int wEpss = 7;        // Art. 10(4) - Exploit probability
+        const int wMaint = 11;      // Art. 13(8) + 10(6) - Maintenance
+        const int wProv = 4;        // Art. 13(5) - Provenance
+        const int wLicense = 2;     // Art. 10(9) - License
+        const int wIdent = 2;       // Identifiability
+
+        var rawScore = 0.0;
+
+        // 1. Vulnerabilities (15 pts) - Art. 11
+        var vulnCount = pkg.Metrics?.VulnerabilityCount ?? 0;
+        rawScore += vulnCount switch
+        {
+            0 => wVuln,
+            1 => wVuln * 0.3,
+            2 => wVuln * 0.1,
+            _ => 0
+        };
+
+        // 2. KEV (15 pts) - Art. 10(4)
+        if (!pkg.HasKevVulnerability)
+            rawScore += wKev;
+        // else: 0 pts (and hard cap later)
+
+        // 3. Patch timeliness (8 pts) - Art. 11(4)
+        if (pkg.PatchAvailableNotAppliedCount == 0)
+        {
+            rawScore += wPatch;
+        }
+        else
+        {
+            // Deduction based on how long patches have been pending
+            var daysPending = pkg.OldestUnpatchedVulnDays ?? 0;
+            rawScore += daysPending switch
+            {
+                <= 7 => wPatch * 0.7,   // Within a week - acceptable
+                <= 30 => wPatch * 0.4,   // Within a month
+                <= 90 => wPatch * 0.15,  // Within a quarter
+                _ => 0                    // Over 90 days unpatched
+            };
+        }
+
+        // 4. EPSS (7 pts) - Art. 10(4)
+        var epss = pkg.MaxEpssProbability ?? 0;
+        rawScore += epss switch
+        {
+            0 => wEpss,
+            < 0.01 => wEpss * 0.8,
+            < 0.1 => wEpss * 0.4,
+            < 0.5 => wEpss * 0.15,
+            _ => 0
+        };
+
+        // 5. Maintenance (11 pts) - Art. 13(8) + Art. 10(6)
+        var daysSinceCommit = pkg.Metrics?.DaysSinceLastCommit;
+        var daysSinceRelease = pkg.Metrics?.DaysSinceLastRelease;
+        // Use whichever is available (commit preferred, then release)
+        var activityDays = daysSinceCommit ?? daysSinceRelease;
+        if (activityDays.HasValue)
+        {
+            rawScore += activityDays.Value switch
+            {
+                <= 90 => wMaint,
+                <= 180 => wMaint * 0.8,
+                <= 365 => wMaint * 0.6,
+                <= 730 => wMaint * 0.3,
+                _ => 0
+            };
+        }
+        else
+        {
+            // No maintenance data - partial credit (unknown != bad)
+            rawScore += wMaint * 0.4;
+        }
+
+        // 6. Provenance (4 pts) - Art. 13(5)
+        if (!string.IsNullOrEmpty(pkg.ContentIntegrity))
+            rawScore += wProv * 0.6; // Checksum present
+        if (pkg.Authors.Count > 0)
+            rawScore += wProv * 0.4; // Supplier identified
+
+        // 7. License (2 pts) - Art. 10(9)
+        if (!string.IsNullOrWhiteSpace(pkg.License))
+        {
+            var upper = pkg.License.Trim().ToUpperInvariant();
+            rawScore += IsKnownSpdxLicense(upper) ? wLicense : wLicense * 0.6;
+        }
+
+        // 8. Identifiability (2 pts)
+        if (!string.IsNullOrWhiteSpace(pkg.PackageId) && !string.IsNullOrWhiteSpace(pkg.Version))
+            rawScore += wIdent;
+        else if (!string.IsNullOrWhiteSpace(pkg.PackageId))
+            rawScore += wIdent * 0.6;
+
+        // Normalize: rawScore is out of 64, scale to 0-100
+        const double totalWeight = wVuln + wKev + wPatch + wEpss + wMaint + wProv + wLicense + wIdent;
+        var normalized = (int)Math.Round(rawScore / totalWeight * 100);
+        normalized = Math.Clamp(normalized, 0, 100);
+
+        // KEV override: always cap at 10, NonCompliant
+        if (pkg.HasKevVulnerability)
+        {
+            normalized = Math.Min(normalized, 10);
+            pkg.CraScore = normalized;
+            pkg.CraStatus = CraComplianceStatus.NonCompliant;
+            return;
+        }
+
+        pkg.CraScore = normalized;
+        pkg.CraStatus = normalized switch
+        {
+            >= 90 => CraComplianceStatus.Compliant,
+            >= 70 => CraComplianceStatus.Review,
+            >= 50 => CraComplianceStatus.ActionRequired,
+            _ => CraComplianceStatus.NonCompliant
+        };
+    }
+
+    /// <summary>
     /// Calculate aggregate score for a project.
     /// </summary>
     public static int CalculateProjectScore(IEnumerable<PackageHealth> packages)
