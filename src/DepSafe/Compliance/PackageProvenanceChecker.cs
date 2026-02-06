@@ -28,7 +28,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             };
             _httpClient = new HttpClient(handler);
         }
-        _httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd("DepSafe/1.2");
+        _httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd("DepSafe/1.3");
     }
 
     /// <summary>

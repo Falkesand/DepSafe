@@ -3192,7 +3192,7 @@ public static class CraReportCommand
             .ToList();
 
         var projectName = Path.GetFileNameWithoutExtension(basePath);
-        var sbomGenerator = new SbomGenerator("DepSafe", "1.0.0");
+        var sbomGenerator = new SbomGenerator("DepSafe", "1.3.0");
 
         var outputDir = File.Exists(basePath) ? Path.GetDirectoryName(basePath)! : basePath;
         string fileName;
