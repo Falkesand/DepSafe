@@ -212,7 +212,7 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"[dim]Using: {packageJsonPath}[/]");
 
         using var npmClient = new NpmApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator
         {
             LicenseOverrides = config?.LicenseOverrides
@@ -1000,7 +1000,7 @@ public static class CraReportCommand
         }
 
         using var nugetClient = new NuGetApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator
         {
             LicenseOverrides = config?.LicenseOverrides
@@ -1344,7 +1344,7 @@ public static class CraReportCommand
 
         using var nugetClient = new NuGetApiClient();
         using var npmClient = new NpmApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator
         {
             LicenseOverrides = config?.LicenseOverrides

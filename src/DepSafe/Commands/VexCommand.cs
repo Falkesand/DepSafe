@@ -50,7 +50,7 @@ public static class VexCommand
         }
 
         using var nugetClient = new NuGetApiClient();
-        var githubClient = new GitHubApiClient();
+        using var githubClient = new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
 
         // VEX requires GitHub API for vulnerability data

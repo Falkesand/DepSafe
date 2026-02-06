@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using DepSafe.Models;
 
 namespace DepSafe.DataSources;
@@ -10,8 +11,11 @@ namespace DepSafe.DataSources;
 /// Free, no authentication required.
 /// https://osv.dev/
 /// </summary>
-public sealed class OsvApiClient : IDisposable
+public sealed partial class OsvApiClient : IDisposable
 {
+    [GeneratedRegex(@"CVE-\d{4}-\d+", RegexOptions.IgnoreCase)]
+    private static partial Regex CveRegex();
+
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
     private const string OsvApiUrl = "https://api.osv.dev/v1";
@@ -320,8 +324,7 @@ public sealed class OsvApiClient : IDisposable
                 if (reference.Url?.Contains("cve.org") == true || reference.Url?.Contains("nvd.nist.gov") == true)
                 {
                     // Extract CVE from URL if possible
-                    var match = System.Text.RegularExpressions.Regex.Match(
-                        reference.Url, @"CVE-\d{4}-\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    var match = CveRegex().Match(reference.Url);
                     if (match.Success && !cves.Contains(match.Value, StringComparer.OrdinalIgnoreCase))
                     {
                         cves.Add(match.Value.ToUpperInvariant());

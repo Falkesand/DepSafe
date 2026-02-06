@@ -81,7 +81,7 @@ public static class BadgeCommand
 
         // Analyze health
         using var nugetClient = new NuGetApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
         var packages = new List<PackageHealth>();
         var vulnCount = 0;

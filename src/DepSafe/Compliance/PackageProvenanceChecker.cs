@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using DepSafe.Models;
@@ -37,7 +38,7 @@ public sealed class PackageProvenanceChecker : IDisposable
     public async Task<List<ProvenanceResult>> CheckNuGetProvenanceAsync(
         IReadOnlyList<(string PackageId, string Version)> packages)
     {
-        var results = new List<ProvenanceResult>();
+        var results = new ConcurrentBag<ProvenanceResult>();
         var semaphore = new SemaphoreSlim(5);
 
         var tasks = packages.Select(async pkg =>
@@ -46,10 +47,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             try
             {
                 var result = await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version);
-                lock (results)
-                {
-                    results.Add(result);
-                }
+                results.Add(result);
             }
             finally
             {
@@ -58,7 +56,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         });
 
         await Task.WhenAll(tasks);
-        return results;
+        return results.ToList();
     }
 
     private async Task<ProvenanceResult> CheckSingleNuGetPackageAsync(string packageId, string version)

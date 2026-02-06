@@ -60,7 +60,7 @@ public static class SbomCommand
         }
 
         using var nugetClient = new NuGetApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
 
         // Show GitHub status

@@ -43,7 +43,7 @@ public static class CheckCommand
     private static async Task<int> ExecuteAsync(string packageId, string? version, OutputFormat format, bool skipGitHub)
     {
         using var nugetClient = new NuGetApiClient();
-        var githubClient = skipGitHub ? null : new GitHubApiClient();
+        using var githubClient = skipGitHub ? null : new GitHubApiClient();
         var calculator = new HealthScoreCalculator();
 
         // Show GitHub status
