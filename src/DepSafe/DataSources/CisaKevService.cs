@@ -40,7 +40,7 @@ public sealed class CisaKevService : IDisposable
 
         try
         {
-            var response = await _httpClient.GetAsync(KevUrl, ct);
+            using var response = await _httpClient.GetAsync(KevUrl, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

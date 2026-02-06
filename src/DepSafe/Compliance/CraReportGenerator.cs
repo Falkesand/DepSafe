@@ -3658,6 +3658,24 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
 
     private static readonly string[] LicenseSeparators = [" OR ", " AND ", " WITH "];
 
+    private static readonly FrozenSet<string> s_knownSpdxLicenses = FrozenSet.ToFrozenSet(
+    [
+        "MIT", "MIT-0",
+        "APACHE-2.0", "APACHE 2.0", "APACHE2",
+        "BSD-2-CLAUSE", "BSD-3-CLAUSE", "0BSD",
+        "ISC",
+        "GPL-2.0", "GPL-3.0", "GPL-2.0-ONLY", "GPL-3.0-ONLY", "GPL-2.0-OR-LATER", "GPL-3.0-OR-LATER",
+        "LGPL-2.1", "LGPL-3.0", "LGPL-2.1-ONLY", "LGPL-3.0-ONLY", "LGPL-2.1-OR-LATER", "LGPL-3.0-OR-LATER",
+        "MPL-2.0",
+        "UNLICENSE", "UNLICENSED",
+        "CC0-1.0", "CC-BY-4.0",
+        "BSL-1.0",
+        "WTFPL",
+        "ZLIB",
+        "MS-PL", "MS-RL",
+        "CLASSPATH-EXCEPTION-2.0", "LLVM-EXCEPTION"
+    ], StringComparer.OrdinalIgnoreCase);
+
     private static bool IsKnownSpdxLicense(string license)
     {
         var normalized = license.Trim().TrimStart('(').TrimEnd(')').Trim();
@@ -3665,30 +3683,11 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
 
         if (parts.Length > 1)
         {
-            return parts.All(p => IsKnownSingleLicense(p.Trim().TrimStart('(').TrimEnd(')').Trim().ToUpperInvariant()));
+            return parts.All(p => s_knownSpdxLicenses.Contains(p.Trim().TrimStart('(').TrimEnd(')').Trim()));
         }
 
-        return IsKnownSingleLicense(normalized.ToUpperInvariant());
+        return s_knownSpdxLicenses.Contains(normalized);
     }
-
-    private static bool IsKnownSingleLicense(string license) => license switch
-    {
-        "MIT" or "MIT-0" => true,
-        "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
-        "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
-        "ISC" => true,
-        "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" or "GPL-2.0-OR-LATER" or "GPL-3.0-OR-LATER" => true,
-        "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" or "LGPL-2.1-OR-LATER" or "LGPL-3.0-OR-LATER" => true,
-        "MPL-2.0" => true,
-        "UNLICENSE" or "UNLICENSED" => true,
-        "CC0-1.0" or "CC-BY-4.0" => true,
-        "BSL-1.0" => true,
-        "WTFPL" => true,
-        "ZLIB" => true,
-        "MS-PL" or "MS-RL" => true,
-        "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
-        _ => false
-    };
 
     private static string FormatNumber(long number) => number switch
     {
@@ -3710,7 +3709,7 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     };
 
     // Known SPDX license URLs
-    private static readonly Dictionary<string, string> LicenseUrls = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenDictionary<string, string> LicenseUrls = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["MIT"] = "https://opensource.org/licenses/MIT",
         ["Apache-2.0"] = "https://opensource.org/licenses/Apache-2.0",
@@ -3725,7 +3724,7 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
         ["Unlicense"] = "https://unlicense.org/",
         ["CC0-1.0"] = "https://creativecommons.org/publicdomain/zero/1.0/",
         ["MS-PL"] = "https://opensource.org/licenses/MS-PL",
-    };
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     private static string FormatLicense(string? license)
     {
@@ -3839,36 +3838,50 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
         return JsonSerializer.Serialize(report, JsonDefaults.CamelCase);
     }
 
+    private static readonly FrozenDictionary<string, string> s_licenseUrlMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["MIT"] = "https://spdx.org/licenses/MIT.html",
+        ["APACHE-2.0"] = "https://spdx.org/licenses/Apache-2.0.html",
+        ["APACHE 2.0"] = "https://spdx.org/licenses/Apache-2.0.html",
+        ["APACHE2"] = "https://spdx.org/licenses/Apache-2.0.html",
+        ["BSD-2-CLAUSE"] = "https://spdx.org/licenses/BSD-2-Clause.html",
+        ["BSD 2-CLAUSE"] = "https://spdx.org/licenses/BSD-2-Clause.html",
+        ["BSD-3-CLAUSE"] = "https://spdx.org/licenses/BSD-3-Clause.html",
+        ["BSD 3-CLAUSE"] = "https://spdx.org/licenses/BSD-3-Clause.html",
+        ["GPL-2.0"] = "https://spdx.org/licenses/GPL-2.0-only.html",
+        ["GPL-2.0-ONLY"] = "https://spdx.org/licenses/GPL-2.0-only.html",
+        ["GPL2"] = "https://spdx.org/licenses/GPL-2.0-only.html",
+        ["GPL-3.0"] = "https://spdx.org/licenses/GPL-3.0-only.html",
+        ["GPL-3.0-ONLY"] = "https://spdx.org/licenses/GPL-3.0-only.html",
+        ["GPL3"] = "https://spdx.org/licenses/GPL-3.0-only.html",
+        ["GPL-3.0-OR-LATER"] = "https://spdx.org/licenses/GPL-3.0-or-later.html",
+        ["LGPL-2.1"] = "https://spdx.org/licenses/LGPL-2.1-only.html",
+        ["LGPL-2.1-ONLY"] = "https://spdx.org/licenses/LGPL-2.1-only.html",
+        ["LGPL-3.0"] = "https://spdx.org/licenses/LGPL-3.0-only.html",
+        ["LGPL-3.0-ONLY"] = "https://spdx.org/licenses/LGPL-3.0-only.html",
+        ["ISC"] = "https://spdx.org/licenses/ISC.html",
+        ["MPL-2.0"] = "https://spdx.org/licenses/MPL-2.0.html",
+        ["UNLICENSE"] = "https://spdx.org/licenses/Unlicense.html",
+        ["UNLICENSED"] = "https://spdx.org/licenses/Unlicense.html",
+        ["CC0-1.0"] = "https://spdx.org/licenses/CC0-1.0.html",
+        ["CC0"] = "https://spdx.org/licenses/CC0-1.0.html",
+        ["WTFPL"] = "https://spdx.org/licenses/WTFPL.html",
+        ["0BSD"] = "https://spdx.org/licenses/0BSD.html",
+        ["MS-PL"] = "https://spdx.org/licenses/MS-PL.html",
+        ["MS-RL"] = "https://spdx.org/licenses/MS-RL.html",
+        ["ZLIB"] = "https://spdx.org/licenses/Zlib.html",
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
     private static string? GetLicenseUrl(string license)
     {
-        // Normalize license identifier
         var normalized = license.Trim();
 
-        // Map common license identifiers to SPDX URLs
-        return normalized.ToUpperInvariant() switch
-        {
-            "MIT" => "https://spdx.org/licenses/MIT.html",
-            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => "https://spdx.org/licenses/Apache-2.0.html",
-            "BSD-2-CLAUSE" or "BSD 2-CLAUSE" => "https://spdx.org/licenses/BSD-2-Clause.html",
-            "BSD-3-CLAUSE" or "BSD 3-CLAUSE" => "https://spdx.org/licenses/BSD-3-Clause.html",
-            "GPL-2.0" or "GPL-2.0-ONLY" or "GPL2" => "https://spdx.org/licenses/GPL-2.0-only.html",
-            "GPL-3.0" or "GPL-3.0-ONLY" or "GPL3" => "https://spdx.org/licenses/GPL-3.0-only.html",
-            "GPL-3.0-OR-LATER" => "https://spdx.org/licenses/GPL-3.0-or-later.html",
-            "LGPL-2.1" or "LGPL-2.1-ONLY" => "https://spdx.org/licenses/LGPL-2.1-only.html",
-            "LGPL-3.0" or "LGPL-3.0-ONLY" => "https://spdx.org/licenses/LGPL-3.0-only.html",
-            "ISC" => "https://spdx.org/licenses/ISC.html",
-            "MPL-2.0" => "https://spdx.org/licenses/MPL-2.0.html",
-            "UNLICENSE" or "UNLICENSED" => "https://spdx.org/licenses/Unlicense.html",
-            "CC0-1.0" or "CC0" => "https://spdx.org/licenses/CC0-1.0.html",
-            "WTFPL" => "https://spdx.org/licenses/WTFPL.html",
-            "0BSD" => "https://spdx.org/licenses/0BSD.html",
-            "MS-PL" => "https://spdx.org/licenses/MS-PL.html",
-            "MS-RL" => "https://spdx.org/licenses/MS-RL.html",
-            "ZLIB" => "https://spdx.org/licenses/Zlib.html",
-            _ => normalized.StartsWith("HTTP", StringComparison.OrdinalIgnoreCase)
-                ? normalized  // Already a URL
-                : $"https://spdx.org/licenses/{Uri.EscapeDataString(normalized)}.html"  // Try SPDX lookup
-        };
+        if (s_licenseUrlMap.TryGetValue(normalized, out var url))
+            return url;
+
+        return normalized.StartsWith("HTTP", StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : $"https://spdx.org/licenses/{Uri.EscapeDataString(normalized)}.html";
     }
 
     /// <summary>

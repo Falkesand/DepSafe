@@ -327,10 +327,15 @@ public sealed class HealthScoreCalculator
 
         // Vulnerability assessment (60 points max)
         // CRA Article 11 - Vulnerability handling
-        var criticalVulns = vulnerabilities.Count(v =>
-            v.Severity?.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase) == true);
-        var highVulns = vulnerabilities.Count(v =>
-            v.Severity?.Equals("HIGH", StringComparison.OrdinalIgnoreCase) == true);
+        var criticalVulns = 0;
+        var highVulns = 0;
+        foreach (var v in vulnerabilities)
+        {
+            if (v.Severity?.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase) == true)
+                criticalVulns++;
+            else if (v.Severity?.Equals("HIGH", StringComparison.OrdinalIgnoreCase) == true)
+                highVulns++;
+        }
         var otherVulns = vulnerabilities.Count - criticalVulns - highVulns;
 
         if (vulnerabilities.Count == 0)
@@ -573,47 +578,39 @@ public sealed class HealthScoreCalculator
                 if (part.StartsWith(">="))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current < v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[2..].Trim(), out var v) && current < v)
+                        return false;
                 }
                 else if (part.StartsWith(">"))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current <= v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current <= v)
+                        return false;
                 }
                 else if (part.StartsWith("<="))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current > v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[2..].Trim(), out var v) && current > v)
+                        return false;
                 }
                 else if (part.StartsWith("<"))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current >= v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current >= v)
+                        return false;
                 }
                 else if (part.StartsWith("="))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current != v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current != v)
+                        return false;
                 }
                 else if (!string.IsNullOrWhiteSpace(part))
                 {
                     // Exact version match (e.g., "4.4.2" from OSV's versions list)
-                    try
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part, out var v) && current == v)
                     {
-                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
-                        if (current == v)
-                        {
-                            hasExactMatch = true;
-                        }
-                    }
-                    catch
-                    {
-                        // Not a parseable version, ignore
+                        hasExactMatch = true;
                     }
                 }
             }

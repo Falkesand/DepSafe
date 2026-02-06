@@ -721,18 +721,12 @@ public static class CraReportCommand
             }
 
             // THEN check if version is patched (only matters if we're in the vulnerable range)
-            if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+            if (!string.IsNullOrEmpty(vuln.PatchedVersion) &&
+                NuGet.Versioning.NuGetVersion.TryParse(version, out var current) &&
+                NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                current >= patched)
             {
-                try
-                {
-                    var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                    var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                    if (current >= patched)
-                    {
-                        continue; // Patched, check next vulnerability
-                    }
-                }
-                catch { /* Version parsing failed, assume still vulnerable */ }
+                continue; // Patched, check next vulnerability
             }
 
             // Version is in vulnerable range and not patched
@@ -769,15 +763,12 @@ public static class CraReportCommand
         if (!inVulnerableRange) return false;
 
         // Check if version is patched
-        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion) &&
+            NuGet.Versioning.NuGetVersion.TryParse(version, out var current) &&
+            NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+            current >= patched)
         {
-            try
-            {
-                var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                if (current >= patched) return false; // Patched
-            }
-            catch { /* Version parsing failed, assume still vulnerable */ }
+            return false; // Patched
         }
 
         return true;

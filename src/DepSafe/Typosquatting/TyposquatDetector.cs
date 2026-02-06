@@ -29,6 +29,7 @@ public sealed class TyposquatDetector
 
         var lowerName = packageName.ToLowerInvariant();
         var normalizedCandidateHomoglyph = StringDistance.NormalizeHomoglyphs(lowerName);
+        var normalizedCandidateSeparator = StringDistance.NormalizeSeparatorsCore(lowerName);
 
         // Layers 1-3: Single pass over length-bucketed candidates
         foreach (var candidate in _index.FindCandidates(packageName))
@@ -77,8 +78,9 @@ public sealed class TyposquatDetector
                 });
             }
 
-            // Layer 3: Separator normalization
-            if (StringDistance.IsSeparatorMatchCore(lowerName, candidate.NormalizedName))
+            // Layer 3: Separator normalization (using pre-computed values)
+            if (!string.Equals(lowerName, candidate.NormalizedName, StringComparison.Ordinal) &&
+                normalizedCandidateSeparator == candidate.SeparatorNormalizedName)
             {
                 results.Add(new TyposquatResult
                 {

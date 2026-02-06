@@ -48,7 +48,7 @@ public sealed partial class OsvApiClient : IDisposable
             [(packageName, version, ecosystem)],
             ct);
 
-        return results.GetValueOrDefault(packageName, []);
+        return results.TryGetValue(packageName, out var vulns) ? vulns : [];
     }
 
     /// <summary>
@@ -165,7 +165,7 @@ public sealed partial class OsvApiClient : IDisposable
 
             var request = new OsvBatchRequest { Queries = queries };
 
-            var response = await _httpClient.PostAsJsonAsync(
+            using var response = await _httpClient.PostAsJsonAsync(
                 $"{OsvApiUrl}/querybatch",
                 request,
                 ct);
@@ -247,7 +247,7 @@ public sealed partial class OsvApiClient : IDisposable
             await semaphore.WaitAsync(ct);
             try
             {
-                var response = await _httpClient.GetAsync($"{OsvApiUrl}/vulns/{Uri.EscapeDataString(vulnId)}", ct);
+                using var response = await _httpClient.GetAsync($"{OsvApiUrl}/vulns/{Uri.EscapeDataString(vulnId)}", ct);
                 if (response.IsSuccessStatusCode)
                 {
                     var vuln = await response.Content.ReadFromJsonAsync<OsvVulnerability>(ct);

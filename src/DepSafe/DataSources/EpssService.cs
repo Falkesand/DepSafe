@@ -93,7 +93,7 @@ public sealed class EpssService : IDisposable
             var cveParam = string.Join(",", cveIds);
             var url = $"{EpssApiUrl}?cve={Uri.EscapeDataString(cveParam)}";
 
-            var response = await _httpClient.GetAsync(url, ct);
+            using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
             {
                 Console.Error.WriteLine($"[WARN] EPSS API returned {(int)response.StatusCode} for batch of {cveIds.Count} CVEs");

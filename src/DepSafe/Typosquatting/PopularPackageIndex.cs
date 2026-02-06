@@ -30,13 +30,18 @@ public sealed class PopularPackageIndex
             ? entry.Name.ToLowerInvariant()
             : entry.NormalizedName;
 
-        if (string.IsNullOrEmpty(entry.NormalizedName) || string.IsNullOrEmpty(entry.HomoglyphNormalizedName))
+        if (string.IsNullOrEmpty(entry.NormalizedName) || string.IsNullOrEmpty(entry.HomoglyphNormalizedName) || string.IsNullOrEmpty(entry.SeparatorNormalizedName))
         {
             entry = new PopularPackageEntry
             {
                 Name = entry.Name,
                 NormalizedName = normalized,
-                HomoglyphNormalizedName = StringDistance.NormalizeHomoglyphs(normalized),
+                HomoglyphNormalizedName = string.IsNullOrEmpty(entry.HomoglyphNormalizedName)
+                    ? StringDistance.NormalizeHomoglyphs(normalized)
+                    : entry.HomoglyphNormalizedName,
+                SeparatorNormalizedName = string.IsNullOrEmpty(entry.SeparatorNormalizedName)
+                    ? StringDistance.NormalizeSeparatorsCore(normalized)
+                    : entry.SeparatorNormalizedName,
                 Downloads = entry.Downloads,
                 Ecosystem = entry.Ecosystem
             };

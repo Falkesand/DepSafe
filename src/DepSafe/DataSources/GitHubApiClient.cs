@@ -78,7 +78,7 @@ public sealed partial class GitHubApiClient : IDisposable
         var urlsToFetch = new List<(string url, string owner, string repo)>();
 
         // Parse URLs and check cache
-        foreach (var url in repoUrls.Where(u => !string.IsNullOrEmpty(u)).Distinct())
+        foreach (var url in repoUrls.Where(u => !string.IsNullOrEmpty(u)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var (owner, repo) = ParseGitHubUrl(url!);
             if (owner is null || repo is null)
@@ -183,7 +183,7 @@ public sealed partial class GitHubApiClient : IDisposable
             queryBuilder.Append(" }");
             var query = queryBuilder.ToString();
 
-            var response = await _httpClient.PostAsJsonAsync(
+            using var response = await _httpClient.PostAsJsonAsync(
                 "https://api.github.com/graphql",
                 new { query },
                 ct);
@@ -390,7 +390,7 @@ public sealed partial class GitHubApiClient : IDisposable
         var results = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
         var packagesToFetch = new List<string>();
 
-        foreach (var packageId in packageIds.Distinct())
+        foreach (var packageId in packageIds.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var cacheKey = $"vuln:{packageId}:all";
             var cached = await _cache.GetAsync<List<VulnerabilityInfo>>(cacheKey, ct);
@@ -465,7 +465,7 @@ public sealed partial class GitHubApiClient : IDisposable
             queryBuilder.Append(" }");
             var query = queryBuilder.ToString();
 
-            var response = await _httpClient.PostAsJsonAsync(
+            using var response = await _httpClient.PostAsJsonAsync(
                 "https://api.github.com/graphql",
                 new { query },
                 ct);
@@ -573,7 +573,7 @@ public sealed partial class GitHubApiClient : IDisposable
         CancellationToken ct = default)
     {
         var results = await GetVulnerabilitiesBatchAsync([packageId], ct);
-        return results.GetValueOrDefault(packageId, []);
+        return results.TryGetValue(packageId, out var vulns) ? vulns : [];
     }
 
     private void UpdateRateLimitFromResponse(HttpResponseMessage response)

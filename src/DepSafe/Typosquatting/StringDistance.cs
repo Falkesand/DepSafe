@@ -106,7 +106,7 @@ public static class StringDistance
     /// <summary>
     /// Normalize separators on an already-lowered string.
     /// </summary>
-    internal static string NormalizeSeparatorsCore(string lowerInput)
+    public static string NormalizeSeparatorsCore(string lowerInput)
     {
         return lowerInput
             .Replace('.', '-')
@@ -138,7 +138,7 @@ public static class StringDistance
     /// <summary>
     /// Check if two already-lowered package names match after separator normalization.
     /// </summary>
-    internal static bool IsSeparatorMatchCore(string lowerCandidate, string lowerPopular)
+    public static bool IsSeparatorMatchCore(string lowerCandidate, string lowerPopular)
     {
         if (string.Equals(lowerCandidate, lowerPopular, StringComparison.Ordinal))
             return false;
