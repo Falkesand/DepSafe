@@ -1042,11 +1042,11 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"        <span class=\"dep-type-badge direct\" title=\"Direct dependency - referenced in your project file\">direct</span>");
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <div class=\"package-scores\">");
-            sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness, activity, and maintenance\">");
+            sb.AppendLine($"        <div class=\"package-score-item score-clickable\" onclick=\"showScorePopover(event, '{EscapeHtml(pkgName)}', 'health')\" title=\"Health Score - freshness, activity, and maintenance — click for breakdown\">");
             sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
             sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
             sb.AppendLine($"        </div>");
-            sb.AppendLine($"        <div class=\"package-score-item\" title=\"{EscapeHtml(craTooltip)}\">");
+            sb.AppendLine($"        <div class=\"package-score-item score-clickable\" onclick=\"showScorePopover(event, '{EscapeHtml(pkgName)}', 'cra')\" title=\"{EscapeHtml(craTooltip)} — click for breakdown\">");
             sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
             sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
             sb.AppendLine($"        </div>");
@@ -1119,7 +1119,7 @@ public sealed partial class CraReportGenerator
                 sb.AppendLine($"      <div class=\"package-scores\">");
                 if (hasRealHealthData)
                 {
-                    sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score - freshness &amp; activity\">");
+                    sb.AppendLine($"        <div class=\"package-score-item score-clickable\" onclick=\"showScorePopover(event, '{EscapeHtml(pkgName)}', 'health')\" title=\"Health Score - freshness &amp; activity — click for breakdown\">");
                     sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
                     sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
                     sb.AppendLine($"        </div>");
@@ -1131,7 +1131,7 @@ public sealed partial class CraReportGenerator
                     sb.AppendLine($"          <span class=\"score-value na\">—</span>");
                     sb.AppendLine($"        </div>");
                 }
-                sb.AppendLine($"        <div class=\"package-score-item\" title=\"{EscapeHtml(craTooltipTrans)}\">");
+                sb.AppendLine($"        <div class=\"package-score-item score-clickable\" onclick=\"showScorePopover(event, '{EscapeHtml(pkgName)}', 'cra')\" title=\"{EscapeHtml(craTooltipTrans)} — click for breakdown\">");
                 sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
                 sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScoreTrans)}\">{craScoreTrans}</span>");
                 sb.AppendLine($"        </div>");
@@ -4688,6 +4688,50 @@ public sealed partial class CraReportGenerator
       border: 1px solid var(--border);
       background: var(--bg-primary);
     }
+
+    /* Score Breakdown Popovers */
+    .package-score-item.score-clickable { cursor: pointer; }
+    .package-score-item.score-clickable:hover .score-value { box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+
+    .score-popover {
+      position: fixed;
+      z-index: 10000;
+      width: 360px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      padding: 16px;
+    }
+
+    .score-popover-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .score-popover-criterion {
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+    .score-popover-criterion:last-child { border-bottom: none; }
+
+    .score-popover-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .score-popover-row-icon { width: 18px; text-align: center; flex-shrink: 0; font-size: 0.85rem; }
+    .score-popover-row-name { flex: 1; color: var(--text-primary); font-weight: 500; }
+    .score-popover-row-pts { width: 42px; text-align: right; font-size: 0.7rem; color: var(--text-muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .score-popover-row-ref { font-size: 0.65rem; color: var(--text-muted); flex-shrink: 0; width: 56px; text-align: right; }
+
+    .score-popover-row-fix { font-size: 0.7rem; color: var(--warning); margin-top: 3px; padding-left: 26px; }
   </style>";
     }
 
@@ -5211,6 +5255,225 @@ function filterTreeByEcosystem(ecosystem) {{
     }}
   }});
 }}
+
+// CRA Score Breakdown Popover
+var _activePopover = null;
+
+function renderCraBreakdown(pkg) {{
+  var wVuln=15, wKev=15, wPatch=8, wEpss=7, wMaint=11, wProv=4, wLic=2, wIdent=2;
+  var total = wVuln+wKev+wPatch+wEpss+wMaint+wProv+wLic+wIdent;
+
+  // 1. Vulnerabilities
+  var vulnPts = pkg.vulnCount === 0 ? wVuln : pkg.vulnCount === 1 ? wVuln*0.3 : pkg.vulnCount === 2 ? wVuln*0.1 : 0;
+
+  // 2. KEV
+  var kevPts = pkg.hasKev ? 0 : wKev;
+
+  // 3. Patch timeliness
+  var patchPts = wPatch;
+  if (pkg.patchPendingCount > 0) {{
+    var d = pkg.oldestUnpatchedDays || 0;
+    patchPts = d <= 7 ? wPatch*0.7 : d <= 30 ? wPatch*0.4 : d <= 90 ? wPatch*0.15 : 0;
+  }}
+
+  // 4. EPSS
+  var epss = pkg.maxEpss || 0;
+  var epssPts = epss === 0 ? wEpss : epss < 0.01 ? wEpss*0.8 : epss < 0.1 ? wEpss*0.4 : epss < 0.5 ? wEpss*0.15 : 0;
+
+  // 5. Maintenance
+  var actDays = pkg.daysSinceLastCommit != null ? pkg.daysSinceLastCommit : pkg.daysSinceLastRelease;
+  var maintPts;
+  if (actDays != null) {{
+    maintPts = actDays <= 90 ? wMaint : actDays <= 180 ? wMaint*0.8 : actDays <= 365 ? wMaint*0.6 : actDays <= 730 ? wMaint*0.3 : 0;
+  }} else {{
+    maintPts = wMaint * 0.4;
+  }}
+
+  // 6. Provenance
+  var provPts = 0;
+  if (pkg.hasIntegrity) provPts += wProv * 0.6;
+  if (pkg.authorCount > 0) provPts += wProv * 0.4;
+
+  // 7. License
+  var licPts = 0;
+  if (pkg.license && pkg.license.trim()) {{
+    licPts = wLic * 0.6;
+    var upper = pkg.license.trim().toUpperCase();
+    var spdx = ['MIT','APACHE-2.0','ISC','BSD-2-CLAUSE','BSD-3-CLAUSE','GPL-2.0','GPL-3.0','LGPL-2.1','LGPL-3.0','MPL-2.0','0BSD','UNLICENSE','CC0-1.0','WTFPL','ZLIB','ARTISTIC-2.0','CDDL-1.0','EPL-2.0','EUPL-1.2','AFL-3.0','BSL-1.0','POSTGRESQL','BLUEOAK-1.0.0','MIT-0'];
+    for (var s = 0; s < spdx.length; s++) {{
+      if (upper === spdx[s] || upper.indexOf(spdx[s]) >= 0) {{ licPts = wLic; break; }}
+    }}
+  }}
+
+  // Provenance fix text based on what's actually missing
+  var provFix = [];
+  if (!pkg.hasIntegrity) provFix.push('No content checksum available');
+  if (pkg.authorCount === 0) provFix.push('No supplier/author info');
+  var provFixText = provFix.length > 0 ? provFix.join('; ') : 'Verify package source';
+
+  var criteria = [
+    {{ name: 'Vulnerabilities', pts: vulnPts, max: wVuln, ref: 'Art. 11', tip: 'Known security vulnerabilities in this package version. Update to patched versions to resolve.', fix: 'Update to patched versions' }},
+    {{ name: 'Known Exploits (KEV)', pts: kevPts, max: wKev, ref: 'Art. 10(4)', tip: 'Whether this package has CVEs listed in CISA Known Exploited Vulnerabilities catalog. These are actively exploited in the wild.', fix: 'Replace or patch immediately' }},
+    {{ name: 'Patch Timeliness', pts: patchPts, max: wPatch, ref: 'Art. 11(4)', tip: 'How quickly available security patches have been applied. Measures days since patch became available.', fix: 'Apply available patches' }},
+    {{ name: 'Exploit Probability', pts: epssPts, max: wEpss, ref: 'Art. 10(4)', tip: 'EPSS score \u2014 the probability this package\u2019s vulnerabilities will be exploited within 30 days. Lower is better.', fix: 'Prioritize high-EPSS packages' }},
+    {{ name: 'Maintenance', pts: maintPts, max: wMaint, ref: 'Art. 13(8)', tip: 'How recently the package was maintained, based on last commit or release. Stale packages may not receive security fixes.', fix: 'Consider alternatives if stale' }},
+    {{ name: 'Provenance', pts: provPts, max: wProv, ref: 'Art. 13(5)', tip: 'Supply chain integrity \u2014 whether the package has a content checksum (integrity hash) and identified supplier/author.', fix: provFixText }},
+    {{ name: 'License', pts: licPts, max: wLic, ref: 'Art. 10(9)', tip: 'Whether the package declares a recognized SPDX license. Needed for legal compliance and CRA documentation.', fix: 'Add license info' }}
+  ];
+
+  var html = '<div class=""score-popover-title"">CRA Readiness Breakdown &mdash; ' + pkg.craScore + '/100</div>';
+  for (var i = 0; i < criteria.length; i++) {{
+    var c = criteria[i];
+    var pct = c.max > 0 ? Math.round(c.pts / c.max * 100) : 0;
+    var full = pct >= 95;
+    var icon = full ? '<span style=""color:#28a745"">&#10003;</span>' : '<span style=""color:#ffc107"">&#9888;</span>';
+    var ptsStr = c.pts % 1 === 0 ? c.pts.toString() : c.pts.toFixed(1);
+    html += '<div class=""score-popover-criterion"" title=""' + (c.tip || '') + '"">';
+    html += '<div class=""score-popover-row"">';
+    html += '<span class=""score-popover-row-icon"">' + icon + '</span>';
+    html += '<span class=""score-popover-row-name"">' + c.name + '</span>';
+    html += '<span class=""score-popover-row-pts"">' + ptsStr + '/' + c.max + '</span>';
+    html += '<span class=""score-popover-row-ref"">' + c.ref + '</span>';
+    html += '</div>';
+    if (!full) {{
+      html += '<div class=""score-popover-row-fix"">' + c.fix + '</div>';
+    }}
+    html += '</div>';
+  }}
+  return html;
+}}
+
+function renderHealthBreakdown(pkg) {{
+  var wFresh=25, wCadence=15, wTrend=20, wActivity=25, wVuln=15;
+
+  // 1. Freshness (daysSinceLastRelease)
+  var freshRaw;
+  if (pkg.daysSinceLastRelease == null) {{ freshRaw = 60; }}
+  else if (pkg.daysSinceLastRelease <= 30) {{ freshRaw = 100; }}
+  else if (pkg.daysSinceLastRelease <= 90) {{ freshRaw = 90; }}
+  else if (pkg.daysSinceLastRelease <= 180) {{ freshRaw = 80; }}
+  else if (pkg.daysSinceLastRelease <= 365) {{ freshRaw = 70; }}
+  else if (pkg.daysSinceLastRelease <= 730) {{ freshRaw = 50; }}
+  else if (pkg.daysSinceLastRelease <= 1095) {{ freshRaw = 30; }}
+  else {{ freshRaw = 10; }}
+  var freshPts = freshRaw / 100 * wFresh;
+
+  // 2. Release Cadence (releasesPerYear)
+  var cadRaw;
+  var rpy = pkg.releasesPerYear || 0;
+  if (rpy >= 2 && rpy <= 12) {{ cadRaw = 100; }}
+  else if (rpy >= 1 && rpy < 2) {{ cadRaw = 70; }}
+  else if (rpy > 12 && rpy <= 24) {{ cadRaw = 80; }}
+  else if (rpy > 24) {{ cadRaw = 60; }}
+  else {{ cadRaw = 40; }}
+  var cadPts = cadRaw / 100 * wCadence;
+
+  // 3. Download Trend
+  var trend = pkg.downloadTrend || 0;
+  var trendRaw = (trend + 1.0) * 50.0;
+  var trendPts = Math.min(Math.max(trendRaw, 0), 100) / 100 * wTrend;
+
+  // 4. Repository Activity (daysSinceLastCommit, stars, openIssues)
+  var actRaw;
+  if (pkg.daysSinceLastCommit == null) {{ actRaw = 50; }}
+  else {{
+    var dsc = pkg.daysSinceLastCommit;
+    if (dsc <= 7) {{ actRaw = 100; }}
+    else if (dsc <= 30) {{ actRaw = 90; }}
+    else if (dsc <= 90) {{ actRaw = 80; }}
+    else if (dsc <= 180) {{ actRaw = 60; }}
+    else if (dsc <= 365) {{ actRaw = 40; }}
+    else {{ actRaw = 20; }}
+    var starBonus = (pkg.stars || 0) >= 10000 ? 10 : (pkg.stars || 0) >= 1000 ? 5 : (pkg.stars || 0) >= 100 ? 2 : 0;
+    var issuePenalty = 0;
+    if ((pkg.stars || 0) > 0 && (pkg.openIssues || 0) > 0) {{
+      var ratio = pkg.openIssues / pkg.stars;
+      issuePenalty = ratio > 0.5 ? 10 : ratio > 0.2 ? 5 : 0;
+    }}
+    actRaw = Math.min(Math.max(actRaw + starBonus - issuePenalty, 0), 100);
+  }}
+  var actPts = actRaw / 100 * wActivity;
+
+  // 5. Vulnerabilities
+  var vulnRaw = pkg.vulnCount === 0 ? 100 : pkg.vulnCount === 1 ? 50 : pkg.vulnCount === 2 ? 25 : 0;
+  var vulnPts = vulnRaw / 100 * wVuln;
+
+  var criteria = [
+    {{ name: 'Freshness', pts: freshPts, max: wFresh, weight: '25%', tip: 'How recently the package was released. Packages not updated in years may lack security fixes.', fix: 'Update to latest version' }},
+    {{ name: 'Release Cadence', pts: cadPts, max: wCadence, weight: '15%', tip: 'How often new versions are published. Ideal: 2\u201312 releases/year. Too few suggests abandonment, too many may indicate instability.', fix: 'Consider more active alternatives' }},
+    {{ name: 'Download Trend', pts: trendPts, max: wTrend, weight: '20%', tip: 'Whether download volume is growing, stable, or declining. Declining adoption may signal the community is moving away.', fix: 'Check for declining adoption' }},
+    {{ name: 'Repository Activity', pts: actPts, max: wActivity, weight: '25%', tip: 'Recent commits, star count, and issue-to-star ratio. Active repos are more likely to receive timely security patches.', fix: 'Check repository status' }},
+    {{ name: 'Vulnerabilities', pts: vulnPts, max: wVuln, weight: '15%', tip: 'Known security vulnerabilities (CVEs) in this package version. Zero is ideal.', fix: 'Update to patched versions' }}
+  ];
+
+  var html = '<div class=""score-popover-title"">Health Score Breakdown &mdash; ' + pkg.score + '/100</div>';
+  for (var i = 0; i < criteria.length; i++) {{
+    var c = criteria[i];
+    var pct = c.max > 0 ? Math.round(c.pts / c.max * 100) : 0;
+    var full = pct >= 95;
+    var icon = full ? '<span style=""color:#28a745"">&#10003;</span>' : '<span style=""color:#ffc107"">&#9888;</span>';
+    var ptsStr = c.pts % 1 === 0 ? c.pts.toString() : c.pts.toFixed(1);
+    html += '<div class=""score-popover-criterion"" title=""' + (c.tip || '') + '"">';
+    html += '<div class=""score-popover-row"">';
+    html += '<span class=""score-popover-row-icon"">' + icon + '</span>';
+    html += '<span class=""score-popover-row-name"">' + c.name + '</span>';
+    html += '<span class=""score-popover-row-pts"">' + ptsStr + '/' + c.max + '</span>';
+    html += '<span class=""score-popover-row-ref"">' + c.weight + '</span>';
+    html += '</div>';
+    if (!full) {{
+      html += '<div class=""score-popover-row-fix"">' + c.fix + '</div>';
+    }}
+    html += '</div>';
+  }}
+  return html;
+}}
+
+function showScorePopover(event, pkgId, type) {{
+  event.stopPropagation();
+  event.preventDefault();
+
+  // Close existing popover
+  if (_activePopover) {{
+    _activePopover.remove();
+    var wasSame = _activePopover.dataset.pkgId === pkgId && _activePopover.dataset.popType === type;
+    _activePopover = null;
+    if (wasSame) return;
+  }}
+
+  var pkg = packageData[pkgId] || packageData[pkgId.toLowerCase()];
+  if (!pkg) return;
+
+  var el = event.currentTarget;
+  var rect = el.getBoundingClientRect();
+  var popover = document.createElement('div');
+  popover.className = 'score-popover';
+  popover.dataset.pkgId = pkgId;
+  popover.dataset.popType = type;
+  popover.innerHTML = type === 'health' ? renderHealthBreakdown(pkg) : renderCraBreakdown(pkg);
+  popover.addEventListener('click', function(e) {{ e.stopPropagation(); }});
+  document.body.appendChild(popover);
+
+  // Position below the badge, right-aligned
+  var popW = 360;
+  var left = rect.right - popW;
+  if (left < 8) left = 8;
+  var top = rect.bottom + 6;
+  // If it would go off the bottom, show above instead
+  if (top + popover.offsetHeight > window.innerHeight - 8) {{
+    top = rect.top - popover.offsetHeight - 6;
+  }}
+  popover.style.left = left + 'px';
+  popover.style.top = top + 'px';
+
+  _activePopover = popover;
+}}
+
+document.addEventListener('click', function() {{
+  if (_activePopover) {{
+    _activePopover.remove();
+    _activePopover = null;
+  }}
+}});
 </script>";
     }
 
@@ -5532,6 +5795,8 @@ function filterTreeByEcosystem(ecosystem) {{
             downloads = pkg.Metrics.TotalDownloads,
             stars = pkg.Metrics.Stars,
             daysSinceLastCommit = pkg.Metrics.DaysSinceLastCommit,
+            downloadTrend = pkg.Metrics.DownloadTrend,
+            openIssues = pkg.Metrics.OpenIssues ?? 0,
             repoUrl = pkg.RepositoryUrl,
             registryUrl,
             recommendations = pkg.Recommendations,
@@ -5541,7 +5806,13 @@ function filterTreeByEcosystem(ecosystem) {{
             latestVersion = pkg.LatestVersion,
             peerDependencies = pkg.PeerDependencies.Select(p => new { id = p.Key, range = p.Value }).ToList(),
             craScore = pkg.CraScore,
-            craStatus = pkg.CraStatus.ToString()
+            craStatus = pkg.CraStatus.ToString(),
+            hasKev = pkg.HasKevVulnerability,
+            maxEpss = pkg.MaxEpssProbability,
+            patchPendingCount = pkg.PatchAvailableNotAppliedCount,
+            oldestUnpatchedDays = pkg.OldestUnpatchedVulnDays,
+            hasIntegrity = !string.IsNullOrEmpty(pkg.ContentIntegrity),
+            authorCount = pkg.Authors.Count
         };
     }
 

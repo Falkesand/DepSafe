@@ -495,7 +495,8 @@ public static class CraReportCommand
                     License = node.License,
                     DependencyType = DependencyType.Transitive,
                     Ecosystem = node.Ecosystem,
-                    Vulnerabilities = activeVulns.Select(v => v.Id).ToList()
+                    Vulnerabilities = activeVulns.Select(v => v.Id).ToList(),
+                    Authors = ExtractNpmScopeAuthor(node.PackageId)
                 };
 
                 if (integrityLookup?.TryGetValue(node.PackageId, out var integrity) == true)
@@ -603,7 +604,8 @@ public static class CraReportCommand
                         License = node.License,
                         DependencyType = DependencyType.Transitive,
                         Ecosystem = node.Ecosystem,
-                        Vulnerabilities = activeVulns.Select(v => v.Id).ToList()
+                        Vulnerabilities = activeVulns.Select(v => v.Id).ToList(),
+                        Authors = ExtractNpmScopeAuthor(node.PackageId)
                     };
 
                     if (integrityLookup?.TryGetValue(node.PackageId, out var integFb) == true)
@@ -879,6 +881,20 @@ public static class CraReportCommand
 
         // Couldn't extract a version
         return versionRange;
+    }
+
+    /// <summary>
+    /// Extract author from npm scoped package name (e.g., @tanstack/router → tanstack).
+    /// Returns empty list for non-scoped packages.
+    /// </summary>
+    private static List<string> ExtractNpmScopeAuthor(string packageId)
+    {
+        if (packageId.StartsWith('@') && packageId.Contains('/'))
+        {
+            var scope = packageId[1..packageId.IndexOf('/')];
+            return [scope];
+        }
+        return [];
     }
 
     /// <summary>
