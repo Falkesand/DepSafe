@@ -37,7 +37,7 @@ public sealed class TyposquatDetector
 
             var distance = StringDistance.DamerauLevenshtein(
                 lowerName.AsSpan(),
-                candidate.Name.ToLowerInvariant().AsSpan(),
+                candidate.NormalizedName.AsSpan(),
                 maxDistance: 2);
 
             if (distance <= 2)
@@ -64,7 +64,7 @@ public sealed class TyposquatDetector
             if (StringDistance.IsHomoglyphMatch(packageName, candidate.Name))
             {
                 // Determine which homoglyph was used
-                var detail = DetectHomoglyphDetail(packageName, candidate.Name);
+                var detail = DetectHomoglyphDetail(lowerName, candidate.NormalizedName);
 
                 results.Add(new TyposquatResult
                 {
@@ -162,10 +162,8 @@ public sealed class TyposquatDetector
         return _index.AllEntries;
     }
 
-    private static string DetectHomoglyphDetail(string candidate, string popular)
+    private static string DetectHomoglyphDetail(string lowerCandidate, string lowerPopular)
     {
-        var lowerCandidate = candidate.ToLowerInvariant();
-        var lowerPopular = popular.ToLowerInvariant();
 
         // Check each known homoglyph pair
         if (lowerCandidate.Contains('0') && lowerPopular.Contains('o'))

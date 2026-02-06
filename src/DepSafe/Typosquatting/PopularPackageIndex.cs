@@ -21,6 +21,19 @@ public sealed class PopularPackageIndex
             return;
 
         _allNames.Add(entry.Name);
+
+        // Ensure NormalizedName is set (avoid per-comparison ToLowerInvariant allocations)
+        if (string.IsNullOrEmpty(entry.NormalizedName))
+        {
+            entry = new PopularPackageEntry
+            {
+                Name = entry.Name,
+                NormalizedName = entry.Name.ToLowerInvariant(),
+                Downloads = entry.Downloads,
+                Ecosystem = entry.Ecosystem
+            };
+        }
+
         var len = entry.Name.Length;
 
         if (!_buckets.TryGetValue(len, out var bucket))
