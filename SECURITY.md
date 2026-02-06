@@ -111,7 +111,7 @@ DepSafe helps you maintain security in your projects:
 | **SBOM Validation** | Validates SBOM completeness per BSI TR-03183-2 |
 | **VEX Documents** | Documents vulnerability status for compliance |
 | **Health Scoring** | Identifies potentially abandoned packages |
-| **Package Provenance** | Verifies NuGet repository signatures |
+| **Package Provenance** | Verifies NuGet and npm registry signatures |
 | **Attack Surface Analysis** | Evaluates dependency tree depth and transitive ratio |
 | **Remediation Tracking** | Monitors unpatched vulnerabilities with available fixes |
 | **Typosquatting Detection** | Supply chain integrity verification |

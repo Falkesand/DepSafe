@@ -60,7 +60,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 - **Article 11 - Vulnerability Handling** - VEX document generation with OSV vulnerability data
 - **Article 11(4) - Remediation Timeliness** - Tracks unpatched vulnerabilities with available fixes
 - **Article 11(5) - Security Policy** - GitHub security policy detection
-- **Article 13(5) - Package Provenance** - NuGet repository signature verification
+- **Article 13(5) - Package Provenance** - NuGet and npm registry signature verification
 - **Article 13(8) - Support Period** - Detects unmaintained packages lacking ongoing support
 - **Annex I Part I(1) - Release Readiness** - Verifies no known exploitable vulnerabilities at release
 - **Annex I Part I(10) - Attack Surface** - Dependency tree depth and transitive ratio analysis
@@ -428,7 +428,7 @@ The HTML report includes comprehensive compliance information:
 | 10 | Remediation Timeliness | Art. 11(4) | Patches applied without delay (NonCompliant if >30 days) |
 | 11 | Security Policy | Art. 11(5) | Coordinated vulnerability disclosure (SECURITY.md) |
 | 12 | Support Period | Art. 13(8) | Components have ongoing active maintenance |
-| 13 | Package Provenance | Art. 13(5) | NuGet repository signature verification |
+| 13 | Package Provenance | Art. 13(5) | NuGet and npm registry signature verification |
 | 14 | Release Readiness | Annex I Part I(1) | No known exploitable vulnerabilities at release |
 | 15 | Attack Surface | Annex I Part I(10) | Dependency tree depth and transitive ratio analysis |
 | 16 | SBOM Completeness | Annex I Part II(1) | BSI TR-03183-2 field validation (supplier, PURL, checksum) |
@@ -733,7 +733,7 @@ DepSafe integrates with multiple data sources:
 | Source | Data | Authentication |
 |--------|------|----------------|
 | **NuGet API** | Package metadata, versions, downloads, provenance | None required |
-| **npm Registry** | Package metadata, versions, dependencies | None required |
+| **npm Registry** | Package metadata, versions, dependencies, provenance | None required |
 | **OSV Database** | Vulnerability data for all ecosystems | None required |
 | **CISA KEV** | Actively exploited vulnerabilities | None required |
 | **FIRST EPSS** | Exploit prediction probability scores | None required |
