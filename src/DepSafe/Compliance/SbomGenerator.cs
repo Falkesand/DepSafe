@@ -13,7 +13,8 @@ public sealed class SbomGenerator
     public SbomGenerator(string? toolName = null, string? toolVersion = null)
     {
         _toolName = toolName ?? "DepSafe";
-        _toolVersion = toolVersion ?? "1.0.0";
+        var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        _toolVersion = toolVersion ?? (asmVersion is not null ? $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}" : "1.0.0");
     }
 
     /// <summary>
