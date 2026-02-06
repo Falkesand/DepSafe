@@ -37,6 +37,11 @@
     <EmbeddedResource Include="Typosquatting\EmbeddedData\npm-popular.json" />
   </ItemGroup>
 
+  <!-- Embedded report assets -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\report-styles.css" />
+  </ItemGroup>
+
   <!-- MSBuild integration files -->
   <ItemGroup>
     <None Include="build\**\*" Pack="true" PackagePath="build\" />
