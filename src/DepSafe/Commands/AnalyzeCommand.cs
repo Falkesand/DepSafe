@@ -82,6 +82,19 @@ public static class AnalyzeCommand
             _ => HealthStatus.Critical
         };
 
+        int healthyCount = 0, watchCount = 0, warningCount = 0, criticalCount = 0, vulnerableCount = 0;
+        foreach (var p in packages)
+        {
+            switch (p.Status)
+            {
+                case HealthStatus.Healthy: healthyCount++; break;
+                case HealthStatus.Watch: watchCount++; break;
+                case HealthStatus.Warning: warningCount++; break;
+                case HealthStatus.Critical: criticalCount++; break;
+            }
+            if (p.Vulnerabilities.Count > 0) vulnerableCount++;
+        }
+
         var report = new ProjectReport
         {
             ProjectPath = path,
@@ -92,11 +105,11 @@ public static class AnalyzeCommand
             Summary = new ProjectSummary
             {
                 TotalPackages = packages.Count,
-                HealthyCount = packages.Count(p => p.Status == HealthStatus.Healthy),
-                WatchCount = packages.Count(p => p.Status == HealthStatus.Watch),
-                WarningCount = packages.Count(p => p.Status == HealthStatus.Warning),
-                CriticalCount = packages.Count(p => p.Status == HealthStatus.Critical),
-                VulnerableCount = packages.Count(p => p.Vulnerabilities.Count > 0)
+                HealthyCount = healthyCount,
+                WatchCount = watchCount,
+                WarningCount = warningCount,
+                CriticalCount = criticalCount,
+                VulnerableCount = vulnerableCount
             }
         };
 

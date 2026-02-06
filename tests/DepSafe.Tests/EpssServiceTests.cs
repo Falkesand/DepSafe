@@ -101,7 +101,7 @@ public class EpssServiceTests
     }
 
     [Fact]
-    public void ParseResponse_NormalizesToUpperCase()
+    public void ParseResponse_PreservesOriginalCasing()
     {
         var json = JsonSerializer.Deserialize<JsonElement>("""
         {
@@ -113,7 +113,8 @@ public class EpssServiceTests
 
         var scores = EpssService.ParseResponse(json);
 
-        Assert.Equal("CVE-2024-0001", scores[0].Cve);
+        // CVE IDs are preserved as-is; lookups use OrdinalIgnoreCase
+        Assert.Equal("cve-2024-0001", scores[0].Cve);
     }
 
     [Fact]

@@ -13,8 +13,6 @@ namespace DepSafe.DataSources;
 /// </summary>
 public sealed partial class GitHubApiClient : IDisposable
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new() { PropertyNameCaseInsensitive = true };
-
     private readonly GitHubClient _client;
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
@@ -203,7 +201,7 @@ public sealed partial class GitHubApiClient : IDisposable
                 return results;
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(s_jsonOptions, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonDefaults.CaseInsensitive, ct);
 
             if (json.TryGetProperty("data", out var data))
             {
@@ -484,7 +482,7 @@ public sealed partial class GitHubApiClient : IDisposable
                 return results;
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(s_jsonOptions, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonDefaults.CaseInsensitive, ct);
 
             if (json.TryGetProperty("data", out var data))
             {

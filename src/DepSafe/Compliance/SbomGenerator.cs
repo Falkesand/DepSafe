@@ -8,7 +8,7 @@ namespace DepSafe.Compliance;
 /// </summary>
 public sealed class SbomGenerator
 {
-    private static readonly FrozenDictionary<string, string> SpdxLicenseMap = new Dictionary<string, string>(StringComparer.Ordinal)
+    private static readonly FrozenDictionary<string, string> SpdxLicenseMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["MIT"] = "MIT",
         ["APACHE-2.0"] = "Apache-2.0",
@@ -33,7 +33,7 @@ public sealed class SbomGenerator
         ["ISC"] = "ISC",
         ["UNLICENSE"] = "Unlicense",
         ["CC0-1.0"] = "CC0-1.0"
-    }.ToFrozenDictionary(StringComparer.Ordinal);
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _toolName;
     private readonly string _toolVersion;
@@ -41,7 +41,7 @@ public sealed class SbomGenerator
     public SbomGenerator(string? toolName = null, string? toolVersion = null)
     {
         _toolName = toolName ?? "DepSafe";
-        var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var asmVersion = typeof(SbomGenerator).Assembly.GetName().Version;
         _toolVersion = toolVersion ?? (asmVersion is not null ? $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}" : "1.0.0");
     }
 
@@ -200,7 +200,20 @@ public sealed class SbomGenerator
 
     private static string SanitizeId(string input)
     {
-        return new string(input.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '.').ToArray());
+        foreach (var c in input)
+        {
+            if (!char.IsLetterOrDigit(c) && c != '-' && c != '.')
+            {
+                var sb = new System.Text.StringBuilder(input.Length);
+                foreach (var ch in input)
+                {
+                    if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '.')
+                        sb.Append(ch);
+                }
+                return sb.ToString();
+            }
+        }
+        return input;
     }
 
     private static string GetDownloadLocation(PackageHealth pkg)
@@ -229,8 +242,7 @@ public sealed class SbomGenerator
     {
         if (string.IsNullOrEmpty(license)) return "NOASSERTION";
 
-        var upper = license.ToUpperInvariant();
-        if (SpdxLicenseMap.TryGetValue(upper, out var spdx))
+        if (SpdxLicenseMap.TryGetValue(license, out var spdx))
             return spdx;
 
         return license.Contains("http") ? "NOASSERTION" : license;

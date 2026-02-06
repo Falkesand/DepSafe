@@ -7,7 +7,6 @@ using NuGet.Configuration;
 using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
 using NuGet.Frameworks;
-using NuGet.Versioning;
 using DepSafe.Models;
 
 namespace DepSafe.DataSources;
@@ -56,10 +55,11 @@ public sealed class NuGetApiClient : IDisposable
 
             var latest = packageList
                 .Where(p => !p.Identity.Version.IsPrerelease)
-                .OrderByDescending(p => p.Identity.Version)
-                .FirstOrDefault() ?? packageList.OrderByDescending(p => p.Identity.Version).First();
+                .MaxBy(p => p.Identity.Version)
+                ?? packageList.MaxBy(p => p.Identity.Version)!;
 
             var versions = packageList
+                .OrderByDescending(p => p.Identity.Version)
                 .Select(p => new Models.VersionInfo
                 {
                     Version = p.Identity.Version.ToNormalizedString(),
@@ -68,7 +68,6 @@ public sealed class NuGetApiClient : IDisposable
                     IsPrerelease = p.Identity.Version.IsPrerelease,
                     IsListed = true
                 })
-                .OrderByDescending(v => NuGetVersion.Parse(v.Version))
                 .ToList();
 
             // Fetch deprecation info once (async)
@@ -171,6 +170,16 @@ public sealed class NuGetApiClient : IDisposable
     /// <summary>
     /// Get package dependencies using DependencyInfoResource.
     /// </summary>
+    private static readonly NuGetFramework[] s_preferredFrameworks =
+    [
+        NuGetFramework.Parse("net10.0"),
+        NuGetFramework.Parse("net8.0"),
+        NuGetFramework.Parse("net6.0"),
+        NuGetFramework.Parse("netstandard2.1"),
+        NuGetFramework.Parse("netstandard2.0"),
+        NuGetFramework.AnyFramework
+    ];
+
     private async Task<List<PackageDependency>> GetPackageDependenciesAsync(
         NuGet.Packaging.Core.PackageIdentity packageIdentity, CancellationToken ct)
     {
@@ -181,18 +190,7 @@ public sealed class NuGetApiClient : IDisposable
             var dependencyInfoResource = await _repository.GetResourceAsync<DependencyInfoResource>(ct);
             if (dependencyInfoResource == null) return dependencies;
 
-            // Try different frameworks in preference order
-            var frameworks = new[]
-            {
-                NuGetFramework.Parse("net10.0"),
-                NuGetFramework.Parse("net8.0"),
-                NuGetFramework.Parse("net6.0"),
-                NuGetFramework.Parse("netstandard2.1"),
-                NuGetFramework.Parse("netstandard2.0"),
-                NuGetFramework.AnyFramework
-            };
-
-            foreach (var framework in frameworks)
+            foreach (var framework in s_preferredFrameworks)
             {
                 var dependencyInfo = await dependencyInfoResource.ResolvePackage(
                     packageIdentity,
@@ -201,7 +199,7 @@ public sealed class NuGetApiClient : IDisposable
                     _logger,
                     ct);
 
-                if (dependencyInfo?.Dependencies != null && dependencyInfo.Dependencies.Any())
+                if (dependencyInfo?.Dependencies != null)
                 {
                     foreach (var dep in dependencyInfo.Dependencies)
                     {
@@ -212,7 +210,9 @@ public sealed class NuGetApiClient : IDisposable
                             TargetFramework = framework.GetShortFolderName()
                         });
                     }
-                    break; // Found dependencies, stop trying other frameworks
+
+                    if (dependencies.Count > 0)
+                        break; // Found dependencies, stop trying other frameworks
                 }
             }
         }

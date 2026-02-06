@@ -5,6 +5,9 @@ namespace DepSafe.Models;
 /// </summary>
 public sealed class PackageHealth
 {
+    private static readonly IReadOnlyDictionary<string, string> s_emptyPeerDeps =
+        new Dictionary<string, string>();
+
     public required string PackageId { get; init; }
     public required string Version { get; init; }
 
@@ -29,7 +32,7 @@ public sealed class PackageHealth
     public string? LatestVersion { get; init; }
 
     /// <summary>Peer dependencies (npm only) - packages that must be installed alongside.</summary>
-    public IReadOnlyDictionary<string, string> PeerDependencies { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> PeerDependencies { get; init; } = s_emptyPeerDeps;
 
     /// <summary>True if this package has a vulnerability in the CISA KEV catalog (actively exploited).</summary>
     public bool HasKevVulnerability { get; set; }

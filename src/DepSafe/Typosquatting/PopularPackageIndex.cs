@@ -22,18 +22,21 @@ public sealed class PopularPackageIndex
     /// </summary>
     public void Add(PopularPackageEntry entry)
     {
-        if (_allNames.Contains(entry.Name))
+        if (!_allNames.Add(entry.Name))
             return;
 
-        _allNames.Add(entry.Name);
+        // Ensure NormalizedName and HomoglyphNormalizedName are set
+        var normalized = string.IsNullOrEmpty(entry.NormalizedName)
+            ? entry.Name.ToLowerInvariant()
+            : entry.NormalizedName;
 
-        // Ensure NormalizedName is set (avoid per-comparison ToLowerInvariant allocations)
-        if (string.IsNullOrEmpty(entry.NormalizedName))
+        if (string.IsNullOrEmpty(entry.NormalizedName) || string.IsNullOrEmpty(entry.HomoglyphNormalizedName))
         {
             entry = new PopularPackageEntry
             {
                 Name = entry.Name,
-                NormalizedName = entry.Name.ToLowerInvariant(),
+                NormalizedName = normalized,
+                HomoglyphNormalizedName = StringDistance.NormalizeHomoglyphs(normalized),
                 Downloads = entry.Downloads,
                 Ecosystem = entry.Ecosystem
             };

@@ -12,7 +12,7 @@ public sealed class CisaKevService : IDisposable
     private const string KevUrl = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
-    private HashSet<string>? _kevCves;
+    private HashSet<string>? _kevCves; // Uses OrdinalIgnoreCase comparer
 
     public CisaKevService(ResponseCache? cache = null)
     {
@@ -43,12 +43,12 @@ public sealed class CisaKevService : IDisposable
             var response = await _httpClient.GetAsync(KevUrl, ct);
             if (!response.IsSuccessStatusCode)
             {
-                _kevCves = [];
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 return;
             }
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-            _kevCves = [];
+            _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (json.TryGetProperty("vulnerabilities", out var vulns))
             {
@@ -59,7 +59,7 @@ public sealed class CisaKevService : IDisposable
                         var cve = cveId.GetString();
                         if (!string.IsNullOrEmpty(cve))
                         {
-                            _kevCves.Add(cve.ToUpperInvariant());
+                            _kevCves.Add(cve);
                         }
                     }
                 }
@@ -70,7 +70,7 @@ public sealed class CisaKevService : IDisposable
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
-            _kevCves = [];
+            _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
     }
 
@@ -80,7 +80,7 @@ public sealed class CisaKevService : IDisposable
     public bool IsKnownExploited(string cveId)
     {
         if (_kevCves is null || string.IsNullOrEmpty(cveId)) return false;
-        return _kevCves.Contains(cveId.ToUpperInvariant());
+        return _kevCves.Contains(cveId);
     }
 
     /// <summary>
@@ -89,7 +89,7 @@ public sealed class CisaKevService : IDisposable
     public List<string> GetKnownExploitedCves(IEnumerable<string> cves)
     {
         if (_kevCves is null) return [];
-        return cves.Where(cve => _kevCves.Contains(cve.ToUpperInvariant())).ToList();
+        return cves.Where(cve => _kevCves.Contains(cve)).ToList();
     }
 
     /// <summary>

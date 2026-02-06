@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -514,36 +515,35 @@ public sealed partial class CraReportGenerator
     /// <summary>
     /// Calculate weighted CRA readiness score (0-100) across all compliance items.
     /// </summary>
+    private static readonly FrozenDictionary<string, int> s_craWeights = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CRA Art. 10(4) - Exploited Vulnerabilities (CISA KEV)"] = 15,
+        ["CRA Art. 11 - Vulnerability Handling"] = 15,
+        ["CRA Art. 10 - Software Bill of Materials"] = 10,
+        ["CRA Annex I Part I(1) - Release Readiness"] = 10,
+        ["CRA Art. 11(4) - Remediation Timeliness"] = 8,
+        ["CRA Art. 10(4) - Exploit Probability (EPSS)"] = 7,
+        ["CRA Art. 10(6) - Security Updates"] = 6,
+        ["CRA Art. 13(8) - Support Period"] = 5,
+        ["CRA Annex I Part I(10) - Attack Surface"] = 5,
+        ["CRA Annex I Part II(1) - SBOM Completeness"] = 5,
+        ["CRA Art. 13(5) - Package Provenance"] = 4,
+        ["CRA Annex II - Documentation"] = 3,
+        ["CRA Art. 10(9) - License Information"] = 2,
+        ["CRA Art. 11(5) - Security Policy"] = 2,
+        ["CRA Art. 10 - No Deprecated Components"] = 1,
+        ["CRA Art. 10 - Cryptographic Compliance"] = 1,
+        ["CRA Art. 10 - Supply Chain Integrity"] = 1,
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
     public static int CalculateCraReadinessScore(List<CraComplianceItem> items)
     {
-        // Weights by CRA importance (should sum to 100)
-        var weights = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["CRA Art. 10(4) - Exploited Vulnerabilities (CISA KEV)"] = 15,
-            ["CRA Art. 11 - Vulnerability Handling"] = 15,
-            ["CRA Art. 10 - Software Bill of Materials"] = 10,
-            ["CRA Annex I Part I(1) - Release Readiness"] = 10,
-            ["CRA Art. 11(4) - Remediation Timeliness"] = 8,
-            ["CRA Art. 10(4) - Exploit Probability (EPSS)"] = 7,
-            ["CRA Art. 10(6) - Security Updates"] = 6,
-            ["CRA Art. 13(8) - Support Period"] = 5,
-            ["CRA Annex I Part I(10) - Attack Surface"] = 5,
-            ["CRA Annex I Part II(1) - SBOM Completeness"] = 5,
-            ["CRA Art. 13(5) - Package Provenance"] = 4,
-            ["CRA Annex II - Documentation"] = 3,
-            ["CRA Art. 10(9) - License Information"] = 2,
-            ["CRA Art. 11(5) - Security Policy"] = 2,
-            ["CRA Art. 10 - No Deprecated Components"] = 1,
-            ["CRA Art. 10 - Cryptographic Compliance"] = 1,
-            ["CRA Art. 10 - Supply Chain Integrity"] = 1,
-        };
-
         double totalWeight = 0;
         double earnedWeight = 0;
 
         foreach (var item in items)
         {
-            var weight = weights.GetValueOrDefault(item.Requirement, 2); // default weight for unknown items
+            var weight = s_craWeights.GetValueOrDefault(item.Requirement, 2); // default weight for unknown items
             totalWeight += weight;
             var multiplier = item.Status switch
             {
@@ -576,7 +576,7 @@ public sealed partial class CraReportGenerator
         var sb = new StringBuilder(262144); // 256KB initial capacity to reduce reallocations
         var packages = report.Sbom.Packages.Skip(1).ToList(); // Skip root package
         var licenseFileName = licenseFilePath is not null ? Path.GetFileName(licenseFilePath) : null;
-        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var version = typeof(CraReportGenerator).Assembly.GetName().Version;
         var versionString = version is not null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
         var totalPackages = report.PackageCount + report.TransitivePackageCount;
 
@@ -590,8 +590,18 @@ public sealed partial class CraReportGenerator
                 _healthLookup.TryAdd(h.PackageId, h);
 
         // Cache filtered transitive list and sub-dependencies separately
-        _actualTransitives = _transitiveDataCache?.Where(h => h.DependencyType == DependencyType.Transitive).ToList() ?? [];
-        _subDependencies = _transitiveDataCache?.Where(h => h.DependencyType == DependencyType.SubDependency).ToList() ?? [];
+        _actualTransitives = [];
+        _subDependencies = [];
+        if (_transitiveDataCache is not null)
+        {
+            foreach (var h in _transitiveDataCache)
+            {
+                if (h.DependencyType == DependencyType.Transitive)
+                    _actualTransitives.Add(h);
+                else if (h.DependencyType == DependencyType.SubDependency)
+                    _subDependencies.Add(h);
+            }
+        }
 
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine(darkMode ? "<html lang=\"en\" data-theme=\"dark\">" : "<html lang=\"en\">");
@@ -934,7 +944,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("  </div>");
 
         // License Summary Card (using cached license data)
-        var licenseReport = LicenseCompatibility.AnalyzeLicenses(GetPackageLicenses());
+        var licenseReport = _licenseReportCache ??= LicenseCompatibility.AnalyzeLicenses(GetPackageLicenses());
         var licenseStatusClass = licenseReport.OverallStatus switch
         {
             "Compatible" => "healthy",
@@ -1050,7 +1060,7 @@ public sealed partial class CraReportGenerator
             if (healthData != null)
             {
                 score = healthData.Score;
-                status = healthData.Status.ToString().ToLowerInvariant();
+                status = StatusToLower(healthData.Status);
                 ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
             }
 
@@ -1117,7 +1127,7 @@ public sealed partial class CraReportGenerator
                 var pkgNameLower = pkgName.ToLowerInvariant();
                 var version = healthData.Version;
                 var score = healthData.Score;
-                var status = healthData.Status.ToString().ToLowerInvariant();
+                var status = StatusToLower(healthData.Status);
 
                 var ecosystemName = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
                 var depTypeBadge = $"<span class=\"dep-type-badge transitive\" title=\"Transitive dependency - pulled in by {ecosystemName} dependency resolution\">transitive</span>";
@@ -1204,7 +1214,7 @@ public sealed partial class CraReportGenerator
                 var pkgNameLower = pkgName.ToLowerInvariant();
                 var version = healthData.Version;
                 var score = healthData.Score;
-                var status = healthData.Status.ToString().ToLowerInvariant();
+                var status = StatusToLower(healthData.Status);
 
                 var ecosystemName = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
                 var depTypeBadge = $"<span class=\"dep-type-badge transitive\" title=\"Sub-dependency - indirect dependency pulled in through the {ecosystemName} dependency tree\">sub-dep</span>";
@@ -1335,7 +1345,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("</div>");
 
         // Use cached license data
-        var licenseReport = LicenseCompatibility.AnalyzeLicenses(GetPackageLicenses());
+        var licenseReport = _licenseReportCache ??= LicenseCompatibility.AnalyzeLicenses(GetPackageLicenses());
 
         // Status banner
         var statusClass = licenseReport.OverallStatus switch
@@ -1435,6 +1445,9 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("  </table>");
         sb.AppendLine("</div>");
 
+        // Compatibility matrix
+        GenerateCompatibilityMatrix(sb, licenseReport);
+
         // Compatibility issues
         if (licenseReport.CompatibilityResults.Count > 0)
         {
@@ -1473,6 +1486,67 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("  </ul>");
             sb.AppendLine("</div>");
         }
+    }
+
+    private static void GenerateCompatibilityMatrix(StringBuilder sb, LicenseReport licenseReport)
+    {
+        // Determine the project license category for row highlighting
+        var projectLicenseInfo = LicenseCompatibility.GetLicenseInfo(licenseReport.ProjectLicense);
+        var projectCategory = projectLicenseInfo?.Category;
+
+        sb.AppendLine("<div class=\"compatibility-matrix\">");
+        sb.AppendLine("  <h3>Compatibility Matrix</h3>");
+        sb.AppendLine("  <p>Reference guide showing which dependency license categories are compatible with your project license. ");
+        if (licenseReport.ProjectLicense is not null)
+            sb.AppendLine($"Your project license (<strong>{EscapeHtml(licenseReport.ProjectLicense)}</strong>) is highlighted.");
+        sb.AppendLine("</p>");
+
+        sb.AppendLine("  <table class=\"matrix-table\">");
+        sb.AppendLine("    <thead>");
+        sb.AppendLine("      <tr>");
+        sb.AppendLine("        <th>Your Project License</th>");
+        sb.AppendLine("        <th>Public Domain</th>");
+        sb.AppendLine("        <th>Permissive</th>");
+        sb.AppendLine("        <th>Weak Copyleft</th>");
+        sb.AppendLine("        <th>Strong Copyleft</th>");
+        sb.AppendLine("      </tr>");
+        sb.AppendLine("    </thead>");
+        sb.AppendLine("    <tbody>");
+
+        // Row: Permissive (MIT, Apache-2.0, BSD, ISC)
+        var permActive = projectCategory is LicenseCompatibility.LicenseCategory.Permissive
+            or LicenseCompatibility.LicenseCategory.PublicDomain;
+        sb.AppendLine($"      <tr{(permActive ? " class=\"active-row\"" : "")}>");
+        sb.AppendLine("        <td>Permissive<span class=\"matrix-label\">MIT, Apache-2.0, BSD, ISC</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-warn\">\u26A0</span><span class=\"matrix-label\">Modifications must be shared</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-no\">\u2716</span><span class=\"matrix-label\">Requires relicensing</span></td>");
+        sb.AppendLine("      </tr>");
+
+        // Row: Weak Copyleft (LGPL, MPL, EPL)
+        var weakActive = projectCategory == LicenseCompatibility.LicenseCategory.WeakCopyleft;
+        sb.AppendLine($"      <tr{(weakActive ? " class=\"active-row\"" : "")}>");
+        sb.AppendLine("        <td>Weak Copyleft<span class=\"matrix-label\">LGPL, MPL, EPL</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-warn\">\u26A0</span><span class=\"matrix-label\">Modifications must be shared</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-no\">\u2716</span><span class=\"matrix-label\">Requires relicensing</span></td>");
+        sb.AppendLine("      </tr>");
+
+        // Row: Strong Copyleft (GPL)
+        var strongActive = projectCategory == LicenseCompatibility.LicenseCategory.StrongCopyleft;
+        sb.AppendLine($"      <tr{(strongActive ? " class=\"active-row\"" : "")}>");
+        sb.AppendLine("        <td>Strong Copyleft<span class=\"matrix-label\">GPL-2.0, GPL-3.0, AGPL-3.0</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
+        sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span><span class=\"matrix-label\">Compatible copyleft</span></td>");
+        sb.AppendLine("      </tr>");
+
+        sb.AppendLine("    </tbody>");
+        sb.AppendLine("  </table>");
+        sb.AppendLine("</div>");
     }
 
     private void GenerateVulnerabilitiesSection(StringBuilder sb, CraReport report)
@@ -1618,11 +1692,13 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"    <div class=\"vuln-aliases\"><strong>CVEs:</strong> {string.Join(", ", stmt.Vulnerability.Aliases.Select(EscapeHtml))}</div>");
 
             // EPSS scores for each CVE
-            var cveEpssEntries = stmt.Vulnerability.Aliases
-                .Where(cve => _epssScores.ContainsKey(cve) && _epssScores[cve].Probability > 0)
-                .Select(cve => _epssScores[cve])
-                .OrderByDescending(s => s.Probability)
-                .ToList();
+            var cveEpssEntries = new List<EpssScore>();
+            foreach (var cve in stmt.Vulnerability.Aliases)
+            {
+                if (_epssScores.TryGetValue(cve, out var score) && score.Probability > 0)
+                    cveEpssEntries.Add(score);
+            }
+            cveEpssEntries.Sort((a, b) => b.Probability.CompareTo(a.Probability));
 
             if (cveEpssEntries.Count > 0)
             {
@@ -1858,7 +1934,15 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Why it matters:</strong> Supply chain attacks work by injecting malicious code into packages. Signed packages are harder to tamper with. Unsigned packages aren't necessarily dangerous, but they lack this verification layer.</p>");
         sb.AppendLine("</div>");
 
-        var verified = _provenanceResults.Count(r => r.IsVerified);
+        // Single pass to partition verified/unverified
+        var unsigned = new List<ProvenanceResult>();
+        var signed = new List<ProvenanceResult>();
+        foreach (var r in _provenanceResults)
+            (r.IsVerified ? signed : unsigned).Add(r);
+        unsigned.Sort((a, b) => string.Compare(a.PackageId, b.PackageId, StringComparison.OrdinalIgnoreCase));
+        signed.Sort((a, b) => string.Compare(a.PackageId, b.PackageId, StringComparison.OrdinalIgnoreCase));
+
+        var verified = signed.Count;
         var total = _provenanceResults.Count;
         var pct = total > 0 ? (int)Math.Round(100.0 * verified / total) : 0;
 
@@ -1873,10 +1957,6 @@ public sealed partial class CraReportGenerator
         sb.AppendLine($"    <div class=\"progress-bar-fill {barClass}\" style=\"width: {pct}%\">{pct}% signed</div>");
         sb.AppendLine("  </div>");
         sb.AppendLine("</div>");
-
-        // Show unsigned packages first (they need attention)
-        var unsigned = _provenanceResults.Where(r => !r.IsVerified).OrderBy(r => r.PackageId).ToList();
-        var signed = _provenanceResults.Where(r => r.IsVerified).OrderBy(r => r.PackageId).ToList();
 
         if (unsigned.Count > 0)
         {
@@ -2060,11 +2140,18 @@ public sealed partial class CraReportGenerator
             return;
         }
 
-        // Summary stats
-        var criticalCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.Critical);
-        var highCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.High);
-        var mediumCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.Medium);
-        var lowCount = _typosquatResults.Count(r => r.RiskLevel == TyposquatRiskLevel.Low);
+        // Summary stats (single pass)
+        int criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
+        foreach (var r in _typosquatResults)
+        {
+            switch (r.RiskLevel)
+            {
+                case TyposquatRiskLevel.Critical: criticalCount++; break;
+                case TyposquatRiskLevel.High: highCount++; break;
+                case TyposquatRiskLevel.Medium: mediumCount++; break;
+                case TyposquatRiskLevel.Low: lowCount++; break;
+            }
+        }
 
         sb.AppendLine("<div class=\"typosquat-summary\">");
         sb.AppendLine($"  <div class=\"typosquat-stat-card\"><span class=\"typosquat-stat-count\">{_typosquatResults.Count}</span><span class=\"typosquat-stat-label\">Total Warnings</span></div>");
@@ -2218,7 +2305,7 @@ public sealed partial class CraReportGenerator
     private void GenerateTreeNode(StringBuilder sb, DependencyTreeNode node, int indent)
     {
         var hasChildren = node.Children.Count > 0;
-        var indentStr = new string(' ', indent * 2);
+        var indentStr = indent < IndentStrings.Length ? IndentStrings[indent] : new string(' ', indent * 2);
 
         var nodeClasses = new List<string> { "tree-node" };
         if (node.IsDuplicate) nodeClasses.Add("duplicate");
@@ -2269,10 +2356,9 @@ public sealed partial class CraReportGenerator
             var dupTooltip = "Appears elsewhere in the tree";
             if (_parentLookup.TryGetValue(node.PackageId, out var parents) && parents.Count > 0)
             {
-                var distinctParents = parents.Distinct().ToList();
-                dupTooltip = $"Required by: {string.Join(", ", distinctParents.Take(5))}";
-                if (distinctParents.Count > 5)
-                    dupTooltip += $" (+{distinctParents.Count - 5} more)";
+                dupTooltip = $"Required by: {string.Join(", ", parents.Take(5))}";
+                if (parents.Count > 5)
+                    dupTooltip += $" (+{parents.Count - 5} more)";
             }
             sb.AppendLine($"{indentStr}  <span class=\"node-badge duplicate\" title=\"{EscapeHtml(dupTooltip)}\">dup</span>");
         }
@@ -3163,18 +3249,32 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
 </script>";
     }
 
+    // Pre-computed indent strings to avoid per-node allocations in tree rendering
+    private static readonly string[] IndentStrings = Enumerable.Range(0, 32)
+        .Select(i => new string(' ', i * 2)).ToArray();
+
+    private static string StatusToLower(HealthStatus status) => status switch
+    {
+        HealthStatus.Healthy => "healthy",
+        HealthStatus.Watch => "watch",
+        HealthStatus.Warning => "warning",
+        HealthStatus.Critical => "critical",
+        _ => "unknown"
+    };
+
     private List<PackageHealth>? _healthDataCache;
     private List<PackageHealth>? _transitiveDataCache;
     private Dictionary<string, PackageHealth> _healthLookup = new(StringComparer.OrdinalIgnoreCase);
     private List<PackageHealth> _actualTransitives = [];
     private List<PackageHealth> _subDependencies = [];
     private List<DependencyTree> _dependencyTrees = [];
-    private Dictionary<string, List<string>> _parentLookup = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, HashSet<string>> _parentLookup = new(StringComparer.OrdinalIgnoreCase);
     private bool _hasIncompleteTransitive;
     private bool _hasUnresolvedVersions;
 
     // Cached license data (computed once on first access)
     private List<(string PackageId, string? License)>? _packageLicensesCache;
+    private LicenseReport? _licenseReportCache;
 
     // Additional CRA compliance data
     private int _deprecatedPackageCount;
@@ -3409,13 +3509,10 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
         {
             if (!_parentLookup.TryGetValue(node.PackageId, out var parents))
             {
-                parents = [];
+                parents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 _parentLookup[node.PackageId] = parents;
             }
-            if (!parents.Contains(parentId, StringComparer.OrdinalIgnoreCase))
-            {
-                parents.Add(parentId);
-            }
+            parents.Add(parentId);
         }
 
         // Process children
@@ -3490,7 +3587,7 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
             name = pkg.PackageId,
             version = pkg.Version,
             score = pkg.Score,
-            status = pkg.Status.ToString().ToLowerInvariant(),
+            status = StatusToLower(pkg.Status),
             ecosystem,
             isDirect,
             hasData,
@@ -3559,11 +3656,12 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
         _ => "epss-low"
     };
 
+    private static readonly string[] LicenseSeparators = [" OR ", " AND ", " WITH "];
+
     private static bool IsKnownSpdxLicense(string license)
     {
         var normalized = license.Trim().TrimStart('(').TrimEnd(')').Trim();
-        var separators = new[] { " OR ", " AND ", " WITH " };
-        var parts = normalized.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+        var parts = normalized.Split(LicenseSeparators, StringSplitOptions.RemoveEmptyEntries);
 
         if (parts.Length > 1)
         {
@@ -3792,21 +3890,21 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
         // Check for compound expressions
         if (text.Contains(" OR ", StringComparison.OrdinalIgnoreCase))
         {
-            var parts = text.Split(new[] { " OR " }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = text.Split(" OR ", StringSplitOptions.RemoveEmptyEntries);
             var linkedParts = parts.Select(p => FormatSingleLicenseLink(p.Trim()));
             return "(" + string.Join(" OR ", linkedParts) + ")";
         }
 
         if (text.Contains(" AND ", StringComparison.OrdinalIgnoreCase))
         {
-            var parts = text.Split(new[] { " AND " }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = text.Split(" AND ", StringSplitOptions.RemoveEmptyEntries);
             var linkedParts = parts.Select(p => FormatSingleLicenseLink(p.Trim()));
             return "(" + string.Join(" AND ", linkedParts) + ")";
         }
 
         if (text.Contains(" WITH ", StringComparison.OrdinalIgnoreCase))
         {
-            var parts = text.Split(new[] { " WITH " }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = text.Split(" WITH ", StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2)
             {
                 return FormatSingleLicenseLink(parts[0].Trim()) + " WITH " + EscapeHtml(parts[1].Trim());

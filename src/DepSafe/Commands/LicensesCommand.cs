@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Text.Json;
 using DepSafe.Compliance;
@@ -88,12 +89,24 @@ public static class LicensesCommand
             {
                 var task = ctx.AddTask("Fetching license information", maxValue: allPackages.Count);
 
-                foreach (var pkg in allPackages)
+                using var semaphore = new SemaphoreSlim(10);
+                var results = new ConcurrentBag<(string PackageId, string? License)>();
+                var tasks = allPackages.Select(async pkg =>
                 {
-                    var info = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
-                    packageLicenses.Add((pkg.PackageId, info?.License));
-                    task.Increment(1);
-                }
+                    await semaphore.WaitAsync();
+                    try
+                    {
+                        var info = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
+                        results.Add((pkg.PackageId, info?.License));
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        task.Increment(1);
+                    }
+                });
+                await Task.WhenAll(tasks);
+                packageLicenses.AddRange(results);
             });
 
         // Analyze compatibility

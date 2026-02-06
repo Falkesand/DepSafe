@@ -34,7 +34,7 @@ public sealed class EpssService : IDisposable
     {
         var uniqueCves = cveIds
             .Where(c => !string.IsNullOrWhiteSpace(c))
-            .Select(c => c.Trim().ToUpperInvariant())
+            .Select(c => c.Trim())
             .Distinct()
             .ToList();
 
@@ -74,10 +74,9 @@ public sealed class EpssService : IDisposable
             // Cache misses as zero scores so we don't re-fetch
             foreach (var cve in batch)
             {
-                if (!result.ContainsKey(cve))
+                var missing = new EpssScore { Cve = cve, Probability = 0, Percentile = 0 };
+                if (result.TryAdd(cve, missing))
                 {
-                    var missing = new EpssScore { Cve = cve, Probability = 0, Percentile = 0 };
-                    result[cve] = missing;
                     await _cache.SetAsync($"epss:{cve}", missing, TimeSpan.FromHours(24), ct);
                 }
             }
@@ -132,7 +131,7 @@ public sealed class EpssService : IDisposable
 
             scores.Add(new EpssScore
             {
-                Cve = cve.ToUpperInvariant(),
+                Cve = cve,
                 Probability = probability,
                 Percentile = percentile
             });

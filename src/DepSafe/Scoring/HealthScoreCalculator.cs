@@ -8,6 +8,10 @@ namespace DepSafe.Scoring;
 /// </summary>
 public sealed class HealthScoreCalculator
 {
+    private static readonly string[] SpdxExpressionSeparators = [" OR ", " AND ", " WITH "];
+    private static readonly char[] s_licenseTrimChars = ['(', ')', ' '];
+    private static readonly Dictionary<string, string> s_emptyDict = new();
+
     private static readonly FrozenSet<string> KnownSpdxLicenses = FrozenSet.ToFrozenSet(
     [
         "MIT", "MIT-0",
@@ -24,7 +28,7 @@ public sealed class HealthScoreCalculator
         "ZLIB",
         "MS-PL", "MS-RL",
         "CLASSPATH-EXCEPTION-2.0", "LLVM-EXCEPTION"
-    ], StringComparer.Ordinal);
+    ], StringComparer.OrdinalIgnoreCase);
 
     private readonly ScoreWeights _weights;
 
@@ -105,7 +109,7 @@ public sealed class HealthScoreCalculator
             Dependencies = nugetInfo.Dependencies,
             DependencyType = dependencyType,
             LatestVersion = nugetInfo.LatestVersion,
-            PeerDependencies = new Dictionary<string, string>() // NuGet doesn't have peer dependencies concept
+            PeerDependencies = s_emptyDict // NuGet doesn't have peer dependencies concept
         };
     }
 
@@ -350,7 +354,7 @@ public sealed class HealthScoreCalculator
         // CRA Article 10(9) - License information
         if (!string.IsNullOrWhiteSpace(license))
         {
-            var normalizedLicense = license.Trim().ToUpperInvariant();
+            var normalizedLicense = license.Trim();
             // Well-known SPDX licenses get full credit
             if (IsKnownSpdxLicense(normalizedLicense))
             {
@@ -393,16 +397,19 @@ public sealed class HealthScoreCalculator
     {
         // Handle SPDX expressions with OR/AND/WITH operators
         // e.g., "(MIT OR Apache-2.0)", "GPL-3.0 WITH Classpath-exception-2.0"
-        var normalized = license.Trim().TrimStart('(').TrimEnd(')').Trim();
+        var normalized = license.Trim(s_licenseTrimChars);
+
+        // Fast path: most licenses are single identifiers
+        if (!normalized.Contains(" OR ") && !normalized.Contains(" AND ") && !normalized.Contains(" WITH "))
+            return IsKnownSingleLicense(normalized);
 
         // Split on OR, AND, WITH and check each part
-        var separators = new[] { " OR ", " AND ", " WITH " };
-        var parts = normalized.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+        var parts = normalized.Split(SpdxExpressionSeparators, StringSplitOptions.RemoveEmptyEntries);
 
         // If we have multiple parts, check if all license parts are known
         if (parts.Length > 1)
         {
-            return parts.All(p => IsKnownSingleLicense(p.Trim().TrimStart('(').TrimEnd(')').Trim().ToUpperInvariant()));
+            return parts.All(p => IsKnownSingleLicense(p.Trim(s_licenseTrimChars)));
         }
 
         return IsKnownSingleLicense(normalized);
@@ -494,6 +501,10 @@ public sealed class HealthScoreCalculator
     {
         if (vulnerabilities.Count == 0) return [];
 
+        // Parse the version ONCE for all vulnerability checks
+        if (!NuGet.Versioning.NuGetVersion.TryParse(version, out var parsedVersion))
+            return vulnerabilities; // can't filter without valid version
+
         var active = new List<VulnerabilityInfo>();
         foreach (var vuln in vulnerabilities)
         {
@@ -501,7 +512,7 @@ public sealed class HealthScoreCalculator
             bool inVulnerableRange;
             if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
             {
-                inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+                inVulnerableRange = IsVersionInVulnerableRange(parsedVersion, vuln.VulnerableVersionRange);
             }
             else
             {
@@ -517,16 +528,11 @@ public sealed class HealthScoreCalculator
             // THEN check if version is patched (only matters if we're in the vulnerable range)
             if (!string.IsNullOrEmpty(vuln.PatchedVersion))
             {
-                try
+                if (NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                    parsedVersion >= patched)
                 {
-                    var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                    var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                    if (current >= patched)
-                    {
-                        continue; // Patched in current version
-                    }
+                    continue; // Patched in current version
                 }
-                catch { /* Version parsing failed, assume still vulnerable */ }
             }
 
             // Version is in vulnerable range and not patched
@@ -542,17 +548,28 @@ public sealed class HealthScoreCalculator
     /// </summary>
     internal static bool IsVersionInVulnerableRange(string version, string range)
     {
+        if (!NuGet.Versioning.NuGetVersion.TryParse(version, out var parsedVersion))
+            return true; // can't parse, assume affected (conservative)
+
+        return IsVersionInVulnerableRange(parsedVersion, range);
+    }
+
+    /// <summary>
+    /// Check if a pre-parsed version falls within a vulnerable version range string.
+    /// </summary>
+    private static bool IsVersionInVulnerableRange(NuGet.Versioning.NuGetVersion current, string range)
+    {
         try
         {
-            var current = NuGet.Versioning.NuGetVersion.Parse(version);
-            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
+            var parts = range.Split(',');
 
             // Track whether we have any range constraints
             bool hasRangeConstraint = false;
             bool hasExactMatch = false;
 
-            foreach (var part in parts)
+            foreach (var rawPart in parts)
             {
+                var part = rawPart.Trim();
                 if (part.StartsWith(">="))
                 {
                     hasRangeConstraint = true;
@@ -823,8 +840,7 @@ public sealed class HealthScoreCalculator
         // 7. License (2 pts) - Art. 10(9)
         if (!string.IsNullOrWhiteSpace(pkg.License))
         {
-            var upper = pkg.License.Trim().ToUpperInvariant();
-            rawScore += IsKnownSpdxLicense(upper) ? wLicense : wLicense * 0.6;
+            rawScore += IsKnownSpdxLicense(pkg.License.Trim()) ? wLicense : wLicense * 0.6;
         }
 
         // 8. Identifiability (2 pts)
@@ -860,16 +876,15 @@ public sealed class HealthScoreCalculator
     /// <summary>
     /// Calculate aggregate score for a project.
     /// </summary>
-    public static int CalculateProjectScore(IEnumerable<PackageHealth> packages)
+    public static int CalculateProjectScore(IReadOnlyList<PackageHealth> packages)
     {
-        var packageList = packages.ToList();
-        if (packageList.Count == 0) return 100;
+        if (packages.Count == 0) return 100;
 
         // Weight critical packages more heavily
         var weightedSum = 0.0;
         var totalWeight = 0.0;
 
-        foreach (var pkg in packageList)
+        foreach (var pkg in packages)
         {
             var weight = pkg.Status switch
             {

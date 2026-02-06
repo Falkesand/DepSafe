@@ -107,10 +107,9 @@ public static class CheckCommand
                 foreach (var vuln in vulnerabilities)
                 {
                     var maxEpss = vuln.Cves
-                        .Where(c => epssScores.ContainsKey(c))
-                        .Select(c => epssScores[c])
-                        .OrderByDescending(s => s.Probability)
-                        .FirstOrDefault();
+                        .Select(c => epssScores.TryGetValue(c, out var score) ? score : null)
+                        .Where(s => s is not null)
+                        .MaxBy(s => s!.Probability);
 
                     if (maxEpss is not null)
                     {
@@ -122,8 +121,7 @@ public static class CheckCommand
                 // Enrich PackageHealth with max EPSS
                 var maxPkgEpss = vulnerabilities
                     .Where(v => v.EpssProbability.HasValue)
-                    .OrderByDescending(v => v.EpssProbability)
-                    .FirstOrDefault();
+                    .MaxBy(v => v.EpssProbability);
 
                 if (maxPkgEpss is not null)
                 {

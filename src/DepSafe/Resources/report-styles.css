@@ -1045,6 +1045,60 @@
       margin: 4px 0;
     }
 
+    .compatibility-matrix {
+      background: var(--bg-card);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .compatibility-matrix p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 16px;
+    }
+
+    .matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .matrix-table th, .matrix-table td {
+      padding: 12px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .matrix-table th {
+      background: var(--bg-tertiary);
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+
+    .matrix-table th:first-child, .matrix-table td:first-child {
+      text-align: left;
+    }
+
+    .matrix-table tr.active-row {
+      background: var(--info-light, rgba(23, 162, 184, 0.08));
+    }
+
+    .matrix-table tr.active-row td:first-child {
+      font-weight: 600;
+    }
+
+    .matrix-cell-ok { color: #28a745; font-size: 1.2rem; }
+    .matrix-cell-warn { color: #e8a317; font-size: 1.2rem; }
+    .matrix-cell-no { color: #dc3545; font-size: 1.2rem; }
+
+    .matrix-label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
     .package-dependencies {
       margin-top: 15px;
       padding: 15px;

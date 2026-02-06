@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.CommandLine;
 using System.CommandLine.Binding;
 using System.Text.Json;
@@ -130,14 +131,15 @@ public static class CraReportCommand
             return 1;
         }
 
-        // Validate output path to prevent directory traversal (security)
-        if (!string.IsNullOrEmpty(outputPath))
+        // Validate output path: block relative path traversal (e.g., ../../etc/passwd)
+        // but allow absolute paths since the user explicitly chose them.
+        if (!string.IsNullOrEmpty(outputPath) && !Path.IsPathRooted(outputPath))
         {
             var fullOutputPath = Path.GetFullPath(outputPath);
             var workingDir = Path.GetFullPath(Directory.GetCurrentDirectory());
             if (!fullOutputPath.StartsWith(workingDir, StringComparison.OrdinalIgnoreCase))
             {
-                AnsiConsole.MarkupLine("[red]Error: Output path must be within the current working directory.[/]");
+                AnsiConsole.MarkupLine("[red]Error: Relative output path must not traverse outside the working directory.[/]");
                 return 1;
             }
         }
@@ -350,7 +352,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageName, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageName, []);
+            if (!allVulnerabilities.TryGetValue(packageName, out var vulnerabilities))
+                vulnerabilities = [];
 
             // Use installed version from lock file, fall back to latest if not found
             var installedVersion = installedVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
@@ -469,7 +472,8 @@ public static class CraReportCommand
                 var vulnId = !string.IsNullOrEmpty(node.VulnerabilitySummary) ? node.VulnerabilitySummary : null;
 
                 // Also check the vulnerabilities dict for additional context
-                var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
+                if (!vulnerabilities.TryGetValue(node.PackageId, out var pkgVulns))
+                    pkgVulns = [];
                 var activeVulns = hasVulns
                     ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
@@ -553,7 +557,8 @@ public static class CraReportCommand
                 var hasVulns = node.HasVulnerabilities;
                 var vulnId = !string.IsNullOrEmpty(node.VulnerabilitySummary) ? node.VulnerabilitySummary : null;
 
-                var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
+                if (!vulnerabilities.TryGetValue(node.PackageId, out var pkgVulns))
+                    pkgVulns = [];
                 var activeVulns = hasVulns
                     ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
@@ -872,7 +877,7 @@ public static class CraReportCommand
         // License identification (25 points max)
         if (!string.IsNullOrWhiteSpace(license))
         {
-            var normalizedLicense = license.Trim().ToUpperInvariant();
+            var normalizedLicense = license.Trim();
             if (IsKnownSpdxLicense(normalizedLicense))
             {
                 score += 25;
@@ -906,26 +911,24 @@ public static class CraReportCommand
         return (score, status);
     }
 
-    private static bool IsKnownSpdxLicense(string license)
-    {
-        return license switch
-        {
-            "MIT" or "MIT-0" => true,
-            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
-            "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
-            "ISC" => true,
-            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" => true,
-            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" => true,
-            "MPL-2.0" => true,
-            "UNLICENSE" or "UNLICENSED" => true,
-            "CC0-1.0" or "CC-BY-4.0" => true,
-            "BSL-1.0" => true,
-            "WTFPL" => true,
-            "ZLIB" => true,
-            "MS-PL" or "MS-RL" => true,
-            _ => false
-        };
-    }
+    private static readonly FrozenSet<string> KnownSpdxLicenses = FrozenSet.ToFrozenSet(
+    [
+        "MIT", "MIT-0",
+        "APACHE-2.0", "APACHE 2.0", "APACHE2",
+        "BSD-2-CLAUSE", "BSD-3-CLAUSE", "0BSD",
+        "ISC",
+        "GPL-2.0", "GPL-3.0", "GPL-2.0-ONLY", "GPL-3.0-ONLY",
+        "LGPL-2.1", "LGPL-3.0", "LGPL-2.1-ONLY", "LGPL-3.0-ONLY",
+        "MPL-2.0",
+        "UNLICENSE", "UNLICENSED",
+        "CC0-1.0", "CC-BY-4.0",
+        "BSL-1.0",
+        "WTFPL",
+        "ZLIB",
+        "MS-PL", "MS-RL"
+    ], StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
     private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
     {
@@ -962,18 +965,13 @@ public static class CraReportCommand
                 {
                     foreach (var r in topLevel)
                     {
-                        if (!allReferences.ContainsKey(r.PackageId))
-                        {
-                            allReferences[r.PackageId] = r;
-                            if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                        }
+                        if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                            hasUnresolvedVersions = true;
                     }
                     foreach (var r in transitive)
                     {
-                        if (!transitiveReferences.ContainsKey(r.PackageId) && !allReferences.ContainsKey(r.PackageId))
-                        {
-                            transitiveReferences[r.PackageId] = r;
-                        }
+                        if (!allReferences.ContainsKey(r.PackageId))
+                            transitiveReferences.TryAdd(r.PackageId, r);
                     }
                 }
                 else
@@ -986,11 +984,8 @@ public static class CraReportCommand
                         var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
                         foreach (var r in refs)
                         {
-                            if (!allReferences.ContainsKey(r.PackageId))
-                            {
-                                allReferences[r.PackageId] = r;
-                                if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                            }
+                            if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                                hasUnresolvedVersions = true;
                         }
                     }
                 }
@@ -1166,7 +1161,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+            if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                vulnerabilities = [];
 
             var health = calculator.Calculate(
                 packageId,
@@ -1185,7 +1181,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+            if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                vulnerabilities = [];
 
             var health = calculator.Calculate(
                 packageId,
@@ -1211,7 +1208,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+            if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                vulnerabilities = [];
 
             var health = calculator.Calculate(
                 packageId,
@@ -1316,18 +1314,13 @@ public static class CraReportCommand
                     {
                         foreach (var r in topLevel)
                         {
-                            if (!allReferences.ContainsKey(r.PackageId))
-                            {
-                                allReferences[r.PackageId] = r;
-                                if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                            }
+                            if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                                hasUnresolvedVersions = true;
                         }
                         foreach (var r in transitive)
                         {
-                            if (!transitiveReferences.ContainsKey(r.PackageId) && !allReferences.ContainsKey(r.PackageId))
-                            {
-                                transitiveReferences[r.PackageId] = r;
-                            }
+                            if (!allReferences.ContainsKey(r.PackageId))
+                                transitiveReferences.TryAdd(r.PackageId, r);
                         }
                     }
                     else
@@ -1339,11 +1332,8 @@ public static class CraReportCommand
                             var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
                             foreach (var r in refs)
                             {
-                                if (!allReferences.ContainsKey(r.PackageId))
-                                {
-                                    allReferences[r.PackageId] = r;
-                                    if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                                }
+                                if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                                    hasUnresolvedVersions = true;
                             }
                         }
                     }
@@ -1478,7 +1468,8 @@ public static class CraReportCommand
                 {
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+                    if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                        vulnerabilities = [];
                     allPackages.Add(calculator.Calculate(packageId, reference.Version, nugetInfo, repoInfo, vulnerabilities));
                 }
 
@@ -1486,7 +1477,8 @@ public static class CraReportCommand
                 {
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+                    if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                        vulnerabilities = [];
                     allTransitivePackages.Add(calculator.Calculate(packageId, reference.Version, nugetInfo, repoInfo, vulnerabilities, DependencyType.Transitive));
                 }
 
@@ -1500,7 +1492,8 @@ public static class CraReportCommand
                     if (transitivePackageIds.Contains(packageId)) continue;
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+                    if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                        vulnerabilities = [];
                     allTransitivePackages.Add(calculator.Calculate(packageId, nugetInfo.LatestVersion, nugetInfo, repoInfo, vulnerabilities, DependencyType.SubDependency));
                     transitivePackageIds.Add(packageId); // Keep in sync for subsequent iterations
                 }
@@ -1553,20 +1546,29 @@ public static class CraReportCommand
                     var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     var npmPackagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
 
-                    // Fetch npm info (include transitive if deep scan)
-                    var npmInfoMap = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
+                    // Fetch npm info in parallel (include transitive if deep scan)
+                    var npmInfoMap = new ConcurrentDictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
 
                     await AnsiConsole.Progress()
                         .StartAsync(async ctx =>
                         {
                             var task = ctx.AddTask($"Fetching npm info for {npmPackagesToFetch.Count} packages", maxValue: npmPackagesToFetch.Count);
-                            foreach (var packageName in npmPackagesToFetch)
+                            using var semaphore = new SemaphoreSlim(10);
+                            var tasks = npmPackagesToFetch.Select(async packageName =>
                             {
-                                task.Description = $"npm: {packageName}";
-                                var info = await npmClient.GetPackageInfoAsync(packageName);
-                                if (info is not null) npmInfoMap[packageName] = info;
-                                task.Increment(1);
-                            }
+                                await semaphore.WaitAsync();
+                                try
+                                {
+                                    var info = await npmClient.GetPackageInfoAsync(packageName);
+                                    if (info is not null) npmInfoMap[packageName] = info;
+                                }
+                                finally
+                                {
+                                    semaphore.Release();
+                                    task.Increment(1);
+                                }
+                            });
+                            await Task.WhenAll(tasks);
                         });
 
                     // Check npm vulnerabilities via OSV (free, no auth required)
@@ -1577,8 +1579,7 @@ public static class CraReportCommand
                             var vulns = await osvNpmClient.QueryNpmPackagesAsync(allNpmPackageIds);
                             foreach (var (name, v) in vulns)
                             {
-                                if (!allVulnerabilities.ContainsKey(name))
-                                    allVulnerabilities[name] = v;
+                                allVulnerabilities.TryAdd(name, v);
                             }
                         });
 
@@ -1636,7 +1637,8 @@ public static class CraReportCommand
                     {
                         if (!npmInfoMap.TryGetValue(packageName, out var npmInfo)) continue;
                         npmRepoInfoMap.TryGetValue(packageName, out var repoInfo);
-                        var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageName, []);
+                        if (!allVulnerabilities.TryGetValue(packageName, out var vulnerabilities))
+                            vulnerabilities = [];
 
                         // Use installed version from lock file, fall back to latest if not found
                         var installedVersion = npmInstalledVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
@@ -1730,6 +1732,16 @@ public static class CraReportCommand
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
         CraConfig? config = null)
     {
+        // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
+        var allPackages = packages.Concat(transitivePackages).ToList();
+        var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var p in allPackages)
+        {
+            packageVersionLookup.TryAdd(p.PackageId, p.Version);
+            packageLookup.TryAdd(p.PackageId, p);
+        }
+
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
         {
@@ -1827,12 +1839,10 @@ public static class CraReportCommand
         // Set remediation data (F5) - cross-reference vulnerabilities with patches
         {
             var remediationData = new List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)>();
-            var packageVersions2 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
 
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions2.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 foreach (var vuln in vulns)
@@ -1860,17 +1870,12 @@ public static class CraReportCommand
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
 
-        // Build lookup of package versions for version range checking
-        var packageVersions = packages.Concat(transitivePackages)
-            .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
         var kevCvePackages = allVulnerabilities
             .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
             .Where(x => kevService.IsKnownExploited(x.Cve))
             .Where(x =>
             {
-                // Only flag if installed version is actually in the vulnerable range
-                if (!packageVersions.TryGetValue(x.PackageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(x.PackageId, out var installedVersion))
                     return false;
                 return IsVersionInVulnerableRange(installedVersion, x.Vuln);
             })
@@ -1882,7 +1887,7 @@ public static class CraReportCommand
         // Mark packages with KEV vulnerabilities
         var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
         var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
-        foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
+        foreach (var pkg in allPackages.Where(p => kevPackageIds.Contains(p.PackageId)))
         {
             pkg.HasKevVulnerability = true;
 
@@ -1913,12 +1918,9 @@ public static class CraReportCommand
 
         // Populate patch timeliness data from remediation info for enhanced CRA scoring
         {
-            var packageVersions3 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions3.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 var patchCount = 0;
@@ -1937,27 +1939,22 @@ public static class CraReportCommand
                         oldestDays = days;
                 }
 
-                if (patchCount > 0)
+                if (patchCount > 0 && packageLookup.TryGetValue(packageId, out var target))
                 {
-                    var target = packages.Concat(transitivePackages)
-                        .FirstOrDefault(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
-                    if (target is not null)
-                    {
-                        target.PatchAvailableNotAppliedCount = patchCount;
-                        target.OldestUnpatchedVulnDays = oldestDays;
-                    }
+                    target.PatchAvailableNotAppliedCount = patchCount;
+                    target.OldestUnpatchedVulnDays = oldestDays;
                 }
             }
         }
 
         // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
-        foreach (var pkg in packages.Concat(transitivePackages))
+        foreach (var pkg in allPackages)
         {
             HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
         }
 
         // Crypto compliance check
-        var allPackageTuples = packages.Concat(transitivePackages)
+        var allPackageTuples = allPackages
             .Select(p => (p.PackageId, p.Version))
             .ToList();
         var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
@@ -1970,7 +1967,7 @@ public static class CraReportCommand
             using var provenanceChecker = new PackageProvenanceChecker();
             var allProvenanceResults = new List<ProvenanceResult>();
 
-            var nugetPackages = packages.Concat(transitivePackages)
+            var nugetPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -1982,7 +1979,7 @@ public static class CraReportCommand
                 allProvenanceResults.AddRange(nugetResults);
             }
 
-            var npmPackages = packages.Concat(transitivePackages)
+            var npmPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.Npm)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -2145,7 +2142,8 @@ public static class CraReportCommand
         var isDuplicate = !seen.Add(key);
 
         healthLookup.TryGetValue(packageId, out var health);
-        var vulnList = vulnerabilities.GetValueOrDefault(packageId, []);
+        if (!vulnerabilities.TryGetValue(packageId, out var vulnList))
+            vulnList = [];
         var activeVuln = vulnList.Count > 0 ? GetFirstActiveVulnerability(version, vulnList) : null;
         var hasVuln = activeVuln is not null;
 
@@ -2375,11 +2373,12 @@ public static class CraReportCommand
         {
             foreach (var vuln in vulns)
             {
-                var maxEpss = vuln.Cves
-                    .Where(c => epssScores.ContainsKey(c))
-                    .Select(c => epssScores[c])
-                    .OrderByDescending(s => s.Probability)
-                    .FirstOrDefault();
+                EpssScore? maxEpss = null;
+                foreach (var c in vuln.Cves)
+                {
+                    if (epssScores.TryGetValue(c, out var score) && (maxEpss is null || score.Probability > maxEpss.Probability))
+                        maxEpss = score;
+                }
 
                 if (maxEpss is not null)
                 {
@@ -2400,8 +2399,7 @@ public static class CraReportCommand
             var activeVulnIds = new HashSet<string>(pkg.Vulnerabilities, StringComparer.OrdinalIgnoreCase);
             var maxPkgEpss = pkgVulns
                 .Where(v => v.EpssProbability.HasValue && activeVulnIds.Contains(v.Id))
-                .OrderByDescending(v => v.EpssProbability)
-                .FirstOrDefault();
+                .MaxBy(v => v.EpssProbability);
 
             if (maxPkgEpss is not null)
             {
@@ -2544,6 +2542,16 @@ public static class CraReportCommand
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
         CraConfig? config = null)
     {
+        // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
+        var allPackages = packages.Concat(transitivePackages).ToList();
+        var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var p in allPackages)
+        {
+            packageVersionLookup.TryAdd(p.PackageId, p.Version);
+            packageLookup.TryAdd(p.PackageId, p);
+        }
+
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
@@ -2637,12 +2645,10 @@ public static class CraReportCommand
         // Set remediation data (F5) - cross-reference vulnerabilities with patches
         {
             var remediationData = new List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)>();
-            var packageVersions2 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
 
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions2.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 foreach (var vuln in vulns)
@@ -2672,17 +2678,13 @@ public static class CraReportCommand
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
 
-        // Build lookup of package versions for version range checking
-        var packageVersions = packages.Concat(transitivePackages)
-            .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
         var kevCvePackages = allVulnerabilities
             .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
             .Where(x => kevService.IsKnownExploited(x.Cve))
             .Where(x =>
             {
                 // Only flag if installed version is actually in the vulnerable range
-                if (!packageVersions.TryGetValue(x.PackageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(x.PackageId, out var installedVersion))
                     return false;
                 return IsVersionInVulnerableRange(installedVersion, x.Vuln);
             })
@@ -2694,7 +2696,7 @@ public static class CraReportCommand
         // Mark packages with KEV vulnerabilities
         var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
         var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
-        foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
+        foreach (var pkg in allPackages.Where(p => kevPackageIds.Contains(p.PackageId)))
         {
             pkg.HasKevVulnerability = true;
 
@@ -2725,12 +2727,9 @@ public static class CraReportCommand
 
         // Populate patch timeliness data from remediation info for enhanced CRA scoring
         {
-            var packageVersions3 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions3.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 var patchCount = 0;
@@ -2749,27 +2748,22 @@ public static class CraReportCommand
                         oldestDays = days;
                 }
 
-                if (patchCount > 0)
+                if (patchCount > 0 && packageLookup.TryGetValue(packageId, out var target))
                 {
-                    var target = packages.Concat(transitivePackages)
-                        .FirstOrDefault(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
-                    if (target is not null)
-                    {
-                        target.PatchAvailableNotAppliedCount = patchCount;
-                        target.OldestUnpatchedVulnDays = oldestDays;
-                    }
+                    target.PatchAvailableNotAppliedCount = patchCount;
+                    target.OldestUnpatchedVulnDays = oldestDays;
                 }
             }
         }
 
         // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
-        foreach (var pkg in packages.Concat(transitivePackages))
+        foreach (var pkg in allPackages)
         {
             HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
         }
 
         // 4. Crypto compliance check
-        var allPackageTuples = packages.Concat(transitivePackages)
+        var allPackageTuples = allPackages
             .Select(p => (p.PackageId, p.Version))
             .ToList();
         var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
@@ -2782,7 +2776,7 @@ public static class CraReportCommand
             using var provenanceChecker = new PackageProvenanceChecker();
             var allProvenanceResults = new List<ProvenanceResult>();
 
-            var nugetPackages = packages.Concat(transitivePackages)
+            var nugetPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -2794,7 +2788,7 @@ public static class CraReportCommand
                 allProvenanceResults.AddRange(nugetResults);
             }
 
-            var npmPackages = packages.Concat(transitivePackages)
+            var npmPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.Npm)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();

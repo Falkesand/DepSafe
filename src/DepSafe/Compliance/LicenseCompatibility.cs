@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace DepSafe.Compliance;
 
 /// <summary>
@@ -50,7 +52,7 @@ public static class LicenseCompatibility
         public string? Recommendation { get; init; }
     }
 
-    private static readonly Dictionary<string, LicenseInfo> KnownLicenses = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenDictionary<string, LicenseInfo> KnownLicenses = new Dictionary<string, LicenseInfo>(StringComparer.OrdinalIgnoreCase)
     {
         // Permissive licenses
         ["MIT"] = new LicenseInfo { Identifier = "MIT", Name = "MIT License", Category = LicenseCategory.Permissive, RequiresAttribution = true, RequiresSourceDisclosure = false, AllowsCommercialUse = true, SpdxId = "MIT" },
@@ -78,10 +80,10 @@ public static class LicenseCompatibility
         ["GPL-2.0"] = new LicenseInfo { Identifier = "GPL-2.0", Name = "GNU GPL v2.0", Category = LicenseCategory.StrongCopyleft, RequiresAttribution = true, RequiresSourceDisclosure = true, AllowsCommercialUse = true, SpdxId = "GPL-2.0-only" },
         ["GPL-3.0"] = new LicenseInfo { Identifier = "GPL-3.0", Name = "GNU GPL v3.0", Category = LicenseCategory.StrongCopyleft, RequiresAttribution = true, RequiresSourceDisclosure = true, AllowsCommercialUse = true, SpdxId = "GPL-3.0-only" },
         ["AGPL-3.0"] = new LicenseInfo { Identifier = "AGPL-3.0", Name = "GNU Affero GPL v3.0", Category = LicenseCategory.StrongCopyleft, RequiresAttribution = true, RequiresSourceDisclosure = true, AllowsCommercialUse = true, SpdxId = "AGPL-3.0-only" },
-    };
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     // Aliases for common license variations
-    private static readonly Dictionary<string, string> LicenseAliases = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenDictionary<string, string> LicenseAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["MIT License"] = "MIT",
         ["The MIT License"] = "MIT",
@@ -102,7 +104,7 @@ public static class LicenseCompatibility
         ["EPL"] = "EPL-2.0",
         ["MS-PL License"] = "MS-PL",
         ["Microsoft Public License (Ms-PL)"] = "MS-PL",
-    };
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Get license information by identifier or name.
@@ -169,6 +171,10 @@ public static class LicenseCompatibility
     /// For OR expressions, returns the most permissive license (user can choose).
     /// For AND expressions, returns the most restrictive license (all apply).
     /// </summary>
+    private static readonly string[] s_orSeparator = [" OR "];
+    private static readonly string[] s_andSeparator = [" AND "];
+    private static readonly string[] s_withSeparator = [" WITH "];
+
     private static LicenseInfo? ParseSpdxExpression(string expression)
     {
         // Remove outer parentheses
@@ -181,7 +187,7 @@ public static class LicenseCompatibility
         // Check for OR expression (dual-licensing - user can choose)
         if (text.Contains(" OR ", StringComparison.OrdinalIgnoreCase))
         {
-            var parts = text.Split(new[] { " OR " }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = text.Split(s_orSeparator, StringSplitOptions.RemoveEmptyEntries);
             var licenses = parts
                 .Select(p => GetLicenseInfoDirect(p.Trim()))
                 .Where(l => l is not null)
@@ -218,7 +224,7 @@ public static class LicenseCompatibility
         // Check for AND expression (all licenses apply)
         if (text.Contains(" AND ", StringComparison.OrdinalIgnoreCase))
         {
-            var parts = text.Split(new[] { " AND " }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = text.Split(s_andSeparator, StringSplitOptions.RemoveEmptyEntries);
             var licenses = parts
                 .Select(p => GetLicenseInfoDirect(p.Trim()))
                 .Where(l => l is not null)
@@ -252,7 +258,7 @@ public static class LicenseCompatibility
         // Check for WITH exception (e.g., "Apache-2.0 WITH LLVM-exception")
         if (text.Contains(" WITH ", StringComparison.OrdinalIgnoreCase))
         {
-            var baseLicense = text.Split(new[] { " WITH " }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            var baseLicense = text.Split(s_withSeparator, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
             var baseInfo = GetLicenseInfoDirect(baseLicense);
             if (baseInfo is not null)
             {
@@ -380,27 +386,32 @@ public static class LicenseCompatibility
         var categoryDistribution = new Dictionary<LicenseCategory, int>();
         var unknownLicenses = new List<string>();
 
+        var errorCount = 0;
+        var warningCount = 0;
+
         foreach (var (packageId, license) in packages)
         {
             var result = CheckCompatibility(projectLicense, license, packageId);
             results.Add(result);
 
+            if (result.Severity == "Error") errorCount++;
+            else if (result.Severity == "Warning") warningCount++;
+
             var info = GetLicenseInfo(license);
             if (info != null)
             {
-                var key = info.Identifier;
-                licenseDistribution[key] = licenseDistribution.GetValueOrDefault(key) + 1;
-                categoryDistribution[info.Category] = categoryDistribution.GetValueOrDefault(info.Category) + 1;
+                ref var licCount = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(licenseDistribution, info.Identifier, out _);
+                licCount++;
+                ref var catCount = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(categoryDistribution, info.Category, out _);
+                catCount++;
             }
             else
             {
                 unknownLicenses.Add($"{packageId}: {license ?? "not specified"}");
-                categoryDistribution[LicenseCategory.Unknown] = categoryDistribution.GetValueOrDefault(LicenseCategory.Unknown) + 1;
+                ref var catCount = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(categoryDistribution, LicenseCategory.Unknown, out _);
+                catCount++;
             }
         }
-
-        var hasErrors = results.Any(r => r.Severity == "Error");
-        var hasWarnings = results.Any(r => r.Severity == "Warning");
 
         return new LicenseReport
         {
@@ -410,9 +421,9 @@ public static class LicenseCompatibility
             LicenseDistribution = licenseDistribution,
             CategoryDistribution = categoryDistribution,
             UnknownLicenses = unknownLicenses,
-            OverallStatus = hasErrors ? "Incompatible" : hasWarnings ? "Review Required" : "Compatible",
-            ErrorCount = results.Count(r => r.Severity == "Error"),
-            WarningCount = results.Count(r => r.Severity == "Warning")
+            OverallStatus = errorCount > 0 ? "Incompatible" : warningCount > 0 ? "Review Required" : "Compatible",
+            ErrorCount = errorCount,
+            WarningCount = warningCount
         };
     }
 }

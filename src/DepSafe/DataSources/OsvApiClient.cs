@@ -88,17 +88,20 @@ public sealed partial class OsvApiClient : IDisposable
         {
             int take = Math.Min(BatchSize, packagesToFetch.Count - i);
             var batch = packagesToFetch.GetRange(i, take);
+            var batchLookup = batch.ToDictionary(p => p.Name, p => p, StringComparer.OrdinalIgnoreCase);
             var batchResults = await QueryBatchInternalAsync(batch, ct);
 
             foreach (var (name, vulns) in batchResults)
             {
-                if (!results.ContainsKey(name))
-                    results[name] = [];
-                results[name].AddRange(vulns);
+                if (!results.TryGetValue(name, out var existingList))
+                {
+                    existingList = [];
+                    results[name] = existingList;
+                }
+                existingList.AddRange(vulns);
 
                 // Cache individual results
-                var pkg = batch.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-                if (pkg != default)
+                if (batchLookup.TryGetValue(name, out var pkg))
                 {
                     var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
                     await _cache.SetAsync(cacheKey, vulns, TimeSpan.FromHours(6), ct);
@@ -108,9 +111,8 @@ public sealed partial class OsvApiClient : IDisposable
             // Also cache empty results for packages with no vulnerabilities
             foreach (var pkg in batch)
             {
-                if (!results.ContainsKey(pkg.Name))
+                if (results.TryAdd(pkg.Name, []))
                 {
-                    results[pkg.Name] = [];
                     var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
                     await _cache.SetAsync(cacheKey, new List<VulnerabilityInfo>(), TimeSpan.FromHours(6), ct);
                 }
@@ -188,9 +190,12 @@ public sealed partial class OsvApiClient : IDisposable
 
                 foreach (var vulnId in vulnIds)
                 {
-                    if (!vulnIdToPackages.ContainsKey(vulnId!))
-                        vulnIdToPackages[vulnId!] = [];
-                    vulnIdToPackages[vulnId!].Add(packageName);
+                    if (!vulnIdToPackages.TryGetValue(vulnId!, out var affectedList))
+                    {
+                        affectedList = [];
+                        vulnIdToPackages[vulnId!] = affectedList;
+                    }
+                    affectedList.Add(packageName);
                 }
             }
 
@@ -208,10 +213,12 @@ public sealed partial class OsvApiClient : IDisposable
 
                 foreach (var packageName in affectedPackages)
                 {
-                    if (!results.ContainsKey(packageName))
-                        results[packageName] = [];
-
-                    results[packageName].Add(MapToVulnerabilityInfo(vuln, packageName));
+                    if (!results.TryGetValue(packageName, out var vulnList))
+                    {
+                        vulnList = [];
+                        results[packageName] = vulnList;
+                    }
+                    vulnList.Add(MapToVulnerabilityInfo(vuln, packageName));
                 }
             }
         }
@@ -288,7 +295,8 @@ public sealed partial class OsvApiClient : IDisposable
         {
             // Use first paragraph of details, truncated if needed
             var details = vuln.Details;
-            var firstPara = details.Split('\n')[0];
+            var nlIndex = details.IndexOf('\n');
+            var firstPara = nlIndex >= 0 ? details[..nlIndex] : details;
             summary = firstPara.Length > 300 ? firstPara[..297] + "..." : firstPara;
         }
 
@@ -331,7 +339,7 @@ public sealed partial class OsvApiClient : IDisposable
                     var match = CveRegex().Match(reference.Url);
                     if (match.Success)
                     {
-                        cves.Add(match.Value.ToUpperInvariant());
+                        cves.Add(match.Value);
                     }
                 }
             }
@@ -407,10 +415,10 @@ public sealed partial class OsvApiClient : IDisposable
 
     private static List<string> ExtractAffectedVersions(OsvVulnerability vuln)
     {
-        var versions = new List<string>();
+        var versions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         if (vuln.Affected is null)
-            return versions;
+            return [];
 
         foreach (var affected in vuln.Affected)
         {
@@ -443,19 +451,20 @@ public sealed partial class OsvApiClient : IDisposable
             // Also add specific versions if listed
             if (affected.Versions is not null)
             {
-                versions.AddRange(affected.Versions.Take(5)); // Limit to avoid huge lists
+                foreach (var v in affected.Versions.Take(5))
+                    versions.Add(v);
             }
         }
 
-        return versions.Distinct().ToList();
+        return [.. versions];
     }
 
     private static List<string> ExtractFixedVersions(OsvVulnerability vuln)
     {
-        var versions = new List<string>();
+        var versions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         if (vuln.Affected is null)
-            return versions;
+            return [];
 
         foreach (var affected in vuln.Affected)
         {
@@ -473,7 +482,7 @@ public sealed partial class OsvApiClient : IDisposable
             }
         }
 
-        return versions.Distinct().ToList();
+        return [.. versions];
     }
 
     public void Dispose()

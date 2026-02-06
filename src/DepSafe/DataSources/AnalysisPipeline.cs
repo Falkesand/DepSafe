@@ -155,7 +155,8 @@ public sealed class AnalysisPipeline : IDisposable
                 continue;
 
             RepoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = VulnerabilityMap.GetValueOrDefault(packageId, []);
+            VulnerabilityMap.TryGetValue(packageId, out var vulnerabilities);
+            vulnerabilities ??= [];
 
             var health = _calculator.Calculate(
                 packageId,
@@ -173,11 +174,13 @@ public sealed class AnalysisPipeline : IDisposable
     /// </summary>
     public async Task EnrichWithEpssAsync()
     {
-        var allCves = VulnerabilityMap.Values
-            .SelectMany(v => v.SelectMany(vi => vi.Cves))
-            .Where(c => !string.IsNullOrEmpty(c))
-            .Distinct()
-            .ToList();
+        var allCveSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var vulnList in VulnerabilityMap.Values)
+            foreach (var vi in vulnList)
+                foreach (var c in vi.Cves)
+                    if (!string.IsNullOrEmpty(c))
+                        allCveSet.Add(c);
+        var allCves = allCveSet.ToList();
 
         if (allCves.Count == 0) return;
 
@@ -186,15 +189,22 @@ public sealed class AnalysisPipeline : IDisposable
             .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
                 await epssService.GetScoresAsync(allCves));
 
+        // Build O(1) lookup for Packages by PackageId
+        var packageLookup = new Dictionary<string, PackageHealth>(Packages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var p in Packages)
+            packageLookup.TryAdd(p.PackageId, p);
+
         foreach (var (packageId, vulns) in VulnerabilityMap)
         {
             foreach (var vuln in vulns)
             {
-                var maxEpss = vuln.Cves
-                    .Where(c => epssScores.ContainsKey(c))
-                    .Select(c => epssScores[c])
-                    .OrderByDescending(s => s.Probability)
-                    .FirstOrDefault();
+                EpssScore? maxEpss = null;
+                foreach (var c in vuln.Cves)
+                {
+                    if (epssScores.TryGetValue(c, out var score) &&
+                        (maxEpss is null || score.Probability > maxEpss.Probability))
+                        maxEpss = score;
+                }
 
                 if (maxEpss is not null)
                 {
@@ -203,9 +213,7 @@ public sealed class AnalysisPipeline : IDisposable
                 }
             }
 
-            var pkg = Packages.FirstOrDefault(p =>
-                string.Equals(p.PackageId, packageId, StringComparison.OrdinalIgnoreCase));
-            if (pkg is not null)
+            if (packageLookup.TryGetValue(packageId, out var pkg))
             {
                 var maxPkgEpss = vulns
                     .Where(v => v.EpssProbability.HasValue)
