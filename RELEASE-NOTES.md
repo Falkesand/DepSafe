@@ -1,5 +1,47 @@
 # DepSafe Release Notes
 
+## v1.5.0
+
+### CRA Art. 14 — Reporting Obligation Detection
+
+DepSafe now detects vulnerabilities that trigger mandatory CSIRT notification under EU CRA Article 14. A vulnerability is flagged as reportable if it appears in the CISA KEV catalog (confirmed active exploitation) or has an EPSS probability >= 0.5 (high likelihood of exploitation within 30 days). The report displays computed deadlines for each obligation:
+
+- **24 hours** — Early warning to CSIRT (Art. 14(2)(a))
+- **72 hours** — Full vulnerability notification with details and mitigations (Art. 14(2)(b))
+- **14 days** — Final report including root cause and corrective measures (Art. 14(2)(c))
+
+This is compliance item #18, weighted at 12 in the CRA readiness score. When no reportable vulnerabilities exist, the section displays a success card confirming no CSIRT notification is required.
+
+### Remediation Roadmap
+
+A new prioritized update plan ranks vulnerable dependencies by their impact on CRA compliance. Packages are sorted by: actively exploited (CISA KEV) first, then high EPSS probability, then by vulnerability severity and estimated CRA readiness score improvement. Each entry shows:
+
+- **Score Lift** — Estimated CRA readiness score improvement if the package is updated
+- **Effort** — Whether the update is a Patch (low risk), Minor (new features), or Major (potential breaking changes) version bump
+- **Version recommendation** — Current vs recommended version with CVE count
+
+The roadmap displays the top 20 most impactful updates. Both the reporting obligations and remediation roadmap use version-aware filtering, only considering vulnerabilities that actually affect the installed package version.
+
+### Expanded CI/CD Policy Thresholds
+
+Five new build gate thresholds in `.cra-config.json`, bringing the total to nine:
+
+| Threshold | CRA Reference | Description |
+|-----------|---------------|-------------|
+| `failOnReportableVulnerabilities` | Art. 14 | Fail if any CSIRT-reportable vulnerabilities exist |
+| `failOnUnpatchedDaysOver` | Art. 11(4) | Fail if any vulnerability unpatched longer than N days |
+| `failOnUnmaintainedPackages` | Art. 13(8) | Fail if any dependency has no activity for 2+ years |
+| `failOnSbomCompletenessBelow` | Annex I Part II(1) | Fail if SBOM completeness below N% |
+| `failOnAttackSurfaceDepthOver` | Annex I Part I(10) | Fail if dependency tree depth exceeds N |
+
+All thresholds return exit code 2 for CI/CD integration.
+
+### Always-Visible Report Sections
+
+Art. 14 Reporting and Remediation Roadmap sections are now always visible in the sidebar navigation, even when no data is present. Empty sections display a success card explaining why the view is empty and what the section monitors.
+
+---
+
 ## v1.4.0
 
 ### .NET 10 and .NET Framework Support
@@ -52,7 +94,7 @@ Article 10(6) was reworked to be data-driven, detecting archived and stale depen
 
 ### CRA Readiness Score
 
-Introduced a weighted compliance gauge (0-100) that aggregates all 17 CRA items into a single actionable score, shown as an interactive gauge in HTML reports.
+Introduced a weighted compliance gauge (0-100) that aggregates all CRA compliance items into a single actionable score, shown as an interactive gauge in HTML reports.
 
 ### CI/CD Policy Enforcement
 

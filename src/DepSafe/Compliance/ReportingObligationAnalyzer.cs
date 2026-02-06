@@ -1,0 +1,141 @@
+using DepSafe.DataSources;
+using DepSafe.Models;
+using DepSafe.Scoring;
+using NuGet.Versioning;
+
+namespace DepSafe.Compliance;
+
+/// <summary>
+/// Analyzes vulnerabilities for CRA Art. 14 reporting obligations.
+/// Detects vulnerabilities requiring CSIRT notification based on active exploitation
+/// (CISA KEV) or high exploitation probability (EPSS >= 0.5).
+/// Only considers vulnerabilities that actually affect the installed package version.
+/// </summary>
+public static class ReportingObligationAnalyzer
+{
+    private const double EpssReportingThreshold = 0.5;
+
+    private static readonly string[] s_severityOrder = ["CRITICAL", "HIGH", "MODERATE", "MEDIUM", "LOW"];
+
+    /// <summary>
+    /// Analyze packages for CRA Art. 14 reporting obligations.
+    /// </summary>
+    /// <param name="allPackages">All packages (direct + transitive) with health data.</param>
+    /// <param name="allVulnerabilities">Vulnerability data keyed by package ID.</param>
+    /// <param name="kevCves">Set of CVE IDs in the CISA KEV catalog.</param>
+    /// <param name="epssScores">EPSS scores keyed by CVE ID.</param>
+    /// <returns>Reportable obligations sorted by severity (critical first).</returns>
+    public static List<ReportingObligation> Analyze(
+        IReadOnlyList<PackageHealth> allPackages,
+        IReadOnlyDictionary<string, List<VulnerabilityInfo>> allVulnerabilities,
+        IReadOnlySet<string> kevCves,
+        IReadOnlyDictionary<string, EpssScore> epssScores)
+    {
+        var obligations = new List<ReportingObligation>();
+
+        foreach (var pkg in allPackages)
+        {
+            if (!allVulnerabilities.TryGetValue(pkg.PackageId, out var vulns))
+                continue;
+
+            // Collect CVEs that trigger reporting for this package
+            var reportableCves = new List<string>();
+            bool hasKev = false;
+            double maxEpss = 0.0;
+            string highestSeverity = "LOW";
+            DateTime? earliestPublished = null;
+
+            foreach (var vuln in vulns)
+            {
+                // Skip vulnerabilities that don't affect the installed version
+                if (!IsAffected(pkg.Version, vuln))
+                    continue;
+
+                foreach (var cve in vuln.Cves)
+                {
+                    bool cveIsKev = kevCves.Contains(cve);
+                    double cveEpss = epssScores.TryGetValue(cve, out var score) ? score.Probability : 0.0;
+
+                    if (!cveIsKev && cveEpss < EpssReportingThreshold)
+                        continue;
+
+                    reportableCves.Add(cve);
+                    if (cveIsKev) hasKev = true;
+                    if (cveEpss > maxEpss) maxEpss = cveEpss;
+
+                    // Track highest severity
+                    int currentRank = Array.IndexOf(s_severityOrder, highestSeverity.ToUpperInvariant());
+                    int vulnRank = Array.IndexOf(s_severityOrder, vuln.Severity.ToUpperInvariant());
+                    if (vulnRank >= 0 && (currentRank < 0 || vulnRank < currentRank))
+                        highestSeverity = vuln.Severity;
+                }
+
+                // Track earliest published date (only for affected vulns)
+                if (vuln.PublishedAt.HasValue && (!earliestPublished.HasValue || vuln.PublishedAt.Value < earliestPublished.Value))
+                    earliestPublished = vuln.PublishedAt;
+            }
+
+            if (reportableCves.Count == 0)
+                continue;
+
+            var trigger = (hasKev, maxEpss >= EpssReportingThreshold) switch
+            {
+                (true, true) => ReportingTrigger.Both,
+                (true, false) => ReportingTrigger.KevExploitation,
+                _ => ReportingTrigger.HighEpss
+            };
+
+            obligations.Add(new ReportingObligation
+            {
+                PackageId = pkg.PackageId,
+                Version = pkg.Version,
+                CveIds = reportableCves.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                Severity = highestSeverity,
+                Trigger = trigger,
+                DiscoveryDate = earliestPublished ?? DateTime.UtcNow,
+                EpssProbability = maxEpss > 0 ? maxEpss : null,
+                IsKevVulnerability = hasKev
+            });
+        }
+
+        // Sort by severity: Critical > High > Medium > Low, then by trigger (Both > KEV > EPSS)
+        obligations.Sort((a, b) =>
+        {
+            int aSev = Array.IndexOf(s_severityOrder, a.Severity.ToUpperInvariant());
+            int bSev = Array.IndexOf(s_severityOrder, b.Severity.ToUpperInvariant());
+            if (aSev < 0) aSev = s_severityOrder.Length;
+            if (bSev < 0) bSev = s_severityOrder.Length;
+            int cmp = aSev.CompareTo(bSev);
+            if (cmp != 0) return cmp;
+            return b.Trigger.CompareTo(a.Trigger); // Both > KEV > EPSS
+        });
+
+        return obligations;
+    }
+
+    /// <summary>
+    /// Check if the installed version is actually affected by the vulnerability.
+    /// Uses the same logic as VEX generation: version must be in vulnerable range
+    /// and below the patched version (if one exists).
+    /// </summary>
+    private static bool IsAffected(string installedVersion, VulnerabilityInfo vuln)
+    {
+        // Check if installed version is >= patched version (already fixed)
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        {
+            if (NuGetVersion.TryParse(installedVersion, out var current) &&
+                NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                current >= patched)
+                return false;
+        }
+
+        // Check if installed version is in the vulnerable range
+        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+        {
+            return HealthScoreCalculator.IsVersionInVulnerableRange(installedVersion, vuln.VulnerableVersionRange);
+        }
+
+        // Conservative: if no range specified, assume affected
+        return true;
+    }
+}

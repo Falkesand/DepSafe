@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using DepSafe.DataSources;
 using DepSafe.Models;
+using DepSafe.Scoring;
 
 namespace DepSafe.Compliance;
 
@@ -471,12 +472,43 @@ public sealed partial class CraReportGenerator
             });
         }
 
+        // Art. 14 - Incident Reporting Obligations
+        {
+            var reportableCount = _reportingObligations.Count;
+            var art14Status = reportableCount == 0 ? CraComplianceStatus.Compliant : CraComplianceStatus.NonCompliant;
+            var art14KevCount = _reportingObligations.Count(r => r.IsKevVulnerability);
+            var highEpssCount = _reportingObligations.Count(r => r.Trigger is ReportingTrigger.HighEpss or ReportingTrigger.Both);
+
+            var evidence = reportableCount == 0
+                ? "No vulnerabilities requiring CSIRT notification detected"
+                : $"{reportableCount} reportable vulnerability(ies) found: {art14KevCount} CISA KEV, {highEpssCount} high EPSS (\u2265 0.5). " +
+                  string.Join("; ", _reportingObligations.Take(3)
+                      .Select(r => $"{r.PackageId} ({string.Join(", ", r.CveIds.Take(2))})"));
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 14 - Incident Reporting",
+                Description = "Report actively exploited vulnerabilities to CSIRT within 24 hours (Art. 14(2))",
+                Status = art14Status,
+                Evidence = evidence,
+                Recommendation = reportableCount > 0
+                    ? "Notify your designated CSIRT immediately. Early warning within 24h, full notification within 72h, final report within 14 days."
+                    : null
+            });
+        }
+
         // Calculate CRA Readiness Score
         var craReadinessScore = CalculateCraReadinessScore(complianceItems);
 
         // Collect dependency issues from all trees
         var versionConflictCount = _dependencyTrees.Sum(t => t.VersionConflictCount);
         var allDependencyIssues = _dependencyTrees.SelectMany(t => t.Issues).ToList();
+
+        // Compute structured CI/CD policy fields from existing data
+        var maxUnpatchedDays = _remediationData.Count > 0 ? (int?)_remediationData.Max(r => r.DaysSince) : null;
+        var sbomCompleteness = _sbomValidation?.CompletenessPercent;
+        var maxDepth = _dependencyTrees.Count > 0 ? (int?)_dependencyTrees.Max(t => t.MaxDepth) : null;
+        var hasUnmaintained = _unmaintainedPackageNames.Count > 0;
 
         return new CraReport
         {
@@ -495,7 +527,12 @@ public sealed partial class CraReportGenerator
             CriticalPackageCount = healthReport.Summary.CriticalCount,
             VersionConflictCount = versionConflictCount,
             DependencyIssues = allDependencyIssues,
-            CraReadinessScore = craReadinessScore
+            CraReadinessScore = craReadinessScore,
+            MaxUnpatchedVulnerabilityDays = maxUnpatchedDays,
+            SbomCompletenessPercentage = sbomCompleteness,
+            MaxDependencyDepth = maxDepth,
+            HasUnmaintainedPackages = hasUnmaintained,
+            ReportableVulnerabilityCount = _reportingObligations.Count
         };
     }
 
@@ -534,6 +571,7 @@ public sealed partial class CraReportGenerator
         ["CRA Art. 10 - No Deprecated Components"] = 1,
         ["CRA Art. 10 - Cryptographic Compliance"] = 1,
         ["CRA Art. 10 - Supply Chain Integrity"] = 1,
+        ["CRA Art. 14 - Incident Reporting"] = 12,
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     public static int CalculateCraReadinessScore(List<CraComplianceItem> items)
@@ -685,6 +723,22 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("    <div class=\"nav-section\">");
         sb.AppendLine("      <div class=\"nav-label\">CRA Details</div>");
         sb.AppendLine("      <ul class=\"nav-links\">");
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('reporting-obligations')\" data-section=\"reporting-obligations\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z\"/><line x1=\"12\" y1=\"9\" x2=\"12\" y2=\"13\"/><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"/></svg>");
+            var art14Badge = _reportingObligations.Count > 0
+                ? $"<span class=\"nav-badge critical\">{_reportingObligations.Count}</span>"
+                : "";
+            sb.AppendLine($"          Art. 14 Reporting{art14Badge}</a></li>");
+        }
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation-roadmap')\" data-section=\"remediation-roadmap\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/></svg>");
+            var roadmapBadge = _remediationRoadmap.Count > 0
+                ? $"<span class=\"nav-badge\">{_remediationRoadmap.Count}</span>"
+                : "";
+            sb.AppendLine($"          Remediation Roadmap{roadmapBadge}</a></li>");
+        }
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
@@ -795,7 +849,15 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</section>");
         }
 
-        // CRA Detail Sections (v1.2)
+        // CRA Detail Sections (v1.2+)
+        sb.AppendLine("<section id=\"reporting-obligations\" class=\"section\">");
+        GenerateReportingObligationsSection(sb);
+        sb.AppendLine("</section>");
+
+        sb.AppendLine("<section id=\"remediation-roadmap\" class=\"section\">");
+        GenerateRemediationRoadmapSection(sb);
+        sb.AppendLine("</section>");
+
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("<section id=\"remediation\" class=\"section\">");
@@ -1752,6 +1814,168 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"      <td><a href=\"https://osv.dev/vulnerability/{EscapeHtml(item.VulnId)}\" target=\"_blank\" style=\"color:var(--accent);text-decoration:none;\"><code>{EscapeHtml(item.VulnId)}</code></a></td>");
             sb.AppendLine($"      <td><code>{EscapeHtml(item.PatchVersion)}</code></td>");
             sb.AppendLine($"      <td><span class=\"days-overdue {urgencyClass}\">{item.DaysSince} days</span></td>");
+            sb.AppendLine("    </tr>");
+        }
+
+        sb.AppendLine("  </tbody>");
+        sb.AppendLine("</table>");
+    }
+
+    private void GenerateReportingObligationsSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>CRA Art. 14 \u2014 Reporting Obligations</h2>");
+        sb.AppendLine("</div>");
+
+        if (_reportingObligations.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2713</div>");
+            sb.AppendLine("  <h3>No Reportable Vulnerabilities Detected</h3>");
+            sb.AppendLine("  <p>None of your dependencies contain vulnerabilities that trigger CRA Art. 14 reporting obligations. Reporting is required when a vulnerability appears in the <strong>CISA KEV catalog</strong> (confirmed active exploitation) or has an <strong>EPSS probability \u2265 0.5</strong> (high likelihood of exploitation within 30 days).</p>");
+            sb.AppendLine("  <p style=\"margin-top:8px;\">This is a positive finding \u2014 no CSIRT notification is currently required under Art. 14.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        sb.AppendLine("<div class=\"info-box\" style=\"border-left-color:var(--danger);\">");
+        sb.AppendLine("  <div class=\"info-box-title\" style=\"color:var(--danger);\">Urgent: CSIRT Notification Required</div>");
+        sb.AppendLine("  <p>EU Cyber Resilience Act <strong>Article 14</strong> requires manufacturers to notify their designated CSIRT when they become aware of an actively exploited vulnerability in their product. The timeline is:</p>");
+        sb.AppendLine("  <ul style=\"margin:8px 0 0 16px;line-height:1.8;\">");
+        sb.AppendLine("    <li><strong>24 hours</strong> \u2014 Early warning to CSIRT (Art. 14(2)(a))</li>");
+        sb.AppendLine("    <li><strong>72 hours</strong> \u2014 Full vulnerability notification with details and mitigations (Art. 14(2)(b))</li>");
+        sb.AppendLine("    <li><strong>14 days</strong> \u2014 Final report including root cause and corrective measures (Art. 14(2)(c))</li>");
+        sb.AppendLine("  </ul>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Detection criteria:</strong> A vulnerability is flagged as reportable if it appears in the <strong>CISA KEV catalog</strong> (confirmed active exploitation) or has an <strong>EPSS probability \u2265 0.5</strong> (high likelihood of exploitation within 30 days).</p>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<table class=\"detail-table\">");
+        sb.AppendLine("  <thead><tr>");
+        sb.AppendLine("    <th>Package</th>");
+        sb.AppendLine("    <th>CVE(s)</th>");
+        sb.AppendLine("    <th>Trigger</th>");
+        sb.AppendLine("    <th>Severity</th>");
+        sb.AppendLine("    <th title=\"Art. 14(2)(a) \u2014 Early warning deadline\">24h Deadline</th>");
+        sb.AppendLine("    <th title=\"Art. 14(2)(b) \u2014 Full notification deadline\">72h Deadline</th>");
+        sb.AppendLine("    <th title=\"Art. 14(2)(c) \u2014 Final report deadline\">14d Deadline</th>");
+        sb.AppendLine("  </tr></thead>");
+        sb.AppendLine("  <tbody>");
+
+        foreach (var item in _reportingObligations)
+        {
+            var triggerBadge = item.Trigger switch
+            {
+                ReportingTrigger.Both => "<span class=\"reporting-obligation-badge both\">KEV + EPSS</span>",
+                ReportingTrigger.KevExploitation => "<span class=\"reporting-obligation-badge kev\">KEV</span>",
+                _ => "<span class=\"reporting-obligation-badge epss\">EPSS \u2265 0.5</span>"
+            };
+
+            var severityClass = item.Severity.ToUpperInvariant() switch
+            {
+                "CRITICAL" => "critical",
+                "HIGH" => "warning",
+                _ => "ok"
+            };
+
+            var now = DateTime.UtcNow;
+            string FormatDeadline(DateTime deadline)
+            {
+                var overdue = now > deadline;
+                var cls = overdue ? "reporting-deadline urgent" : "reporting-deadline";
+                var label = overdue ? $"{(int)(now - deadline).TotalDays}d OVERDUE" : deadline.ToString("yyyy-MM-dd HH:mm");
+                return $"<span class=\"{cls}\">{label}</span>";
+            }
+
+            var cveLinks = string.Join(", ", item.CveIds.Take(3).Select(cve =>
+                $"<a href=\"https://nvd.nist.gov/vuln/detail/{EscapeHtml(cve)}\" target=\"_blank\" style=\"color:var(--accent);text-decoration:none;\"><code>{EscapeHtml(cve)}</code></a>"));
+            if (item.CveIds.Count > 3)
+                cveLinks += $" <span class=\"text-secondary\">+{item.CveIds.Count - 3} more</span>";
+
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td><strong>{EscapeHtml(item.PackageId)}</strong><br/><span style=\"font-size:0.85em;color:var(--text-secondary);\">{EscapeHtml(item.Version)}</span></td>");
+            sb.AppendLine($"      <td>{cveLinks}</td>");
+            sb.AppendLine($"      <td>{triggerBadge}</td>");
+            sb.AppendLine($"      <td><span class=\"days-overdue {severityClass}\">{EscapeHtml(item.Severity)}</span></td>");
+            sb.AppendLine($"      <td>{FormatDeadline(item.EarlyWarningDeadline)}</td>");
+            sb.AppendLine($"      <td>{FormatDeadline(item.FullNotificationDeadline)}</td>");
+            sb.AppendLine($"      <td>{FormatDeadline(item.FinalReportDeadline)}</td>");
+            sb.AppendLine("    </tr>");
+        }
+
+        sb.AppendLine("  </tbody>");
+        sb.AppendLine("</table>");
+    }
+
+    private void GenerateRemediationRoadmapSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Remediation Roadmap</h2>");
+        sb.AppendLine("</div>");
+
+        if (_remediationRoadmap.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2713</div>");
+            sb.AppendLine("  <h3>No Remediation Actions Required</h3>");
+            sb.AppendLine("  <p>None of your dependencies have known vulnerabilities that affect the installed versions. There are no package updates needed to improve your CRA compliance posture at this time.</p>");
+            sb.AppendLine("  <p style=\"margin-top:8px;\">The remediation roadmap will display prioritized update recommendations when vulnerable packages are detected, ranked by their impact on your CRA readiness score.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">Prioritized Update Plan</div>");
+        sb.AppendLine("  <p>This roadmap ranks your vulnerable dependencies by their <strong>impact on CRA compliance</strong>. Packages are prioritized by: actively exploited (CISA KEV) first, then high EPSS probability, then by vulnerability severity and estimated CRA score improvement.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Score Lift</strong> estimates how much your CRA readiness score would improve if you fix that package. <strong>Effort</strong> indicates whether the update is a patch (low risk), minor (new features), or major (potential breaking changes) version bump.</p>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<table class=\"detail-table\">");
+        sb.AppendLine("  <thead><tr>");
+        sb.AppendLine("    <th>#</th>");
+        sb.AppendLine("    <th>Package</th>");
+        sb.AppendLine("    <th>Current \u2192 Recommended</th>");
+        sb.AppendLine("    <th>CVEs Fixed</th>");
+        sb.AppendLine("    <th title=\"Estimated CRA readiness score improvement\">Score Lift</th>");
+        sb.AppendLine("    <th title=\"Patch = safe, Minor = new features, Major = possible breaking changes\">Effort</th>");
+        sb.AppendLine("  </tr></thead>");
+        sb.AppendLine("  <tbody>");
+
+        int rank = 0;
+        foreach (var item in _remediationRoadmap)
+        {
+            rank++;
+
+            var priorityClass = item.HasKevVulnerability ? "critical" :
+                item.MaxEpssProbability >= 0.5 ? "critical" :
+                item.PriorityScore >= 250 ? "warning" : "ok";
+
+            var priorityLabel = item.HasKevVulnerability ? "CRITICAL" :
+                item.MaxEpssProbability >= 0.5 ? "CRITICAL" :
+                item.PriorityScore >= 250 ? "HIGH" : "MEDIUM";
+
+            var effortClass = item.Effort switch
+            {
+                UpgradeEffort.Patch => "patch",
+                UpgradeEffort.Minor => "minor",
+                _ => "major"
+            };
+
+            var effortLabel = item.Effort switch
+            {
+                UpgradeEffort.Patch => "Patch",
+                UpgradeEffort.Minor => "Minor",
+                _ => "Major"
+            };
+
+            var cveText = item.CveCount == 1 ? "1 CVE" : $"{item.CveCount} CVEs";
+
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td><span class=\"remediation-priority-badge {priorityClass}\">{rank}</span></td>");
+            sb.AppendLine($"      <td><strong>{EscapeHtml(item.PackageId)}</strong></td>");
+            sb.AppendLine($"      <td><code>{EscapeHtml(item.CurrentVersion)}</code> <span style=\"color:var(--text-secondary);\">\u2192</span> <code>{EscapeHtml(item.RecommendedVersion)}</code></td>");
+            sb.AppendLine($"      <td>{cveText}</td>");
+            sb.AppendLine($"      <td><span class=\"score-lift\">+{item.ScoreLift} pts</span></td>");
+            sb.AppendLine($"      <td><span class=\"upgrade-effort {effortClass}\">{effortLabel}</span></td>");
             sb.AppendLine("    </tr>");
         }
 
@@ -3310,6 +3534,10 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     // Phase 4: Provenance (F9)
     private List<ProvenanceResult> _provenanceResults = [];
 
+    // Phase 5: Art. 14 Reporting Obligations and Remediation Roadmap (v1.5)
+    private List<ReportingObligation> _reportingObligations = [];
+    private List<Scoring.RemediationRoadmapItem> _remediationRoadmap = [];
+
     /// <summary>
     /// Get cached list of package licenses (computed once from health and transitive data).
     /// </summary>
@@ -3483,6 +3711,22 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
         {
             _dependencyTrees.Add(tree);
         }
+    }
+
+    /// <summary>
+    /// Set CRA Art. 14 reporting obligation analysis results.
+    /// </summary>
+    public void SetReportingObligations(List<ReportingObligation> obligations)
+    {
+        _reportingObligations = obligations;
+    }
+
+    /// <summary>
+    /// Set the prioritized remediation roadmap for the report.
+    /// </summary>
+    public void SetRemediationRoadmap(List<RemediationRoadmapItem> roadmap)
+    {
+        _remediationRoadmap = roadmap;
     }
 
     /// <summary>
@@ -4085,6 +4329,18 @@ public sealed class CraReport
     public int VersionConflictCount { get; init; }
     public List<DependencyIssue> DependencyIssues { get; init; } = [];
     public int CraReadinessScore { get; init; }
+
+    // Structured CI/CD policy fields (v1.5)
+    /// <summary>Days since the oldest unpatched vulnerability was published.</summary>
+    public int? MaxUnpatchedVulnerabilityDays { get; init; }
+    /// <summary>SBOM completeness percentage (0-100).</summary>
+    public int? SbomCompletenessPercentage { get; init; }
+    /// <summary>Maximum dependency tree depth.</summary>
+    public int? MaxDependencyDepth { get; init; }
+    /// <summary>Whether any dependency is unmaintained (no activity 2+ years).</summary>
+    public bool HasUnmaintainedPackages { get; init; }
+    /// <summary>Count of vulnerabilities triggering CRA Art. 14 reporting obligations.</summary>
+    public int ReportableVulnerabilityCount { get; init; }
 }
 
 public sealed class CraComplianceItem

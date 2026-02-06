@@ -1986,10 +1986,29 @@ public static class CraReportCommand
                 reportGenerator.SetProvenanceResults(allProvenanceResults);
         }
 
+        // Art. 14 Reporting Obligation Analysis
+        {
+            var kevCveSet = new HashSet<string>(kevCvePackages.Select(k => k.Cve), StringComparer.OrdinalIgnoreCase);
+            var epssLookup = allVulnerabilities.Values
+                .SelectMany(v => v.SelectMany(vi => vi.Cves.Where(c => vi.EpssProbability.HasValue)
+                    .Select(c => new EpssScore { Cve = c, Probability = vi.EpssProbability!.Value, Percentile = vi.EpssPercentile ?? 0.0 })))
+                .GroupBy(s => s.Cve, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Probability).First(), StringComparer.OrdinalIgnoreCase);
+
+            var reportingObligations = ReportingObligationAnalyzer.Analyze(allPackages, allVulnerabilities, kevCveSet, epssLookup);
+            reportGenerator.SetReportingObligations(reportingObligations);
+        }
+
         // Generate SBOM/VEX once, validate SBOM, then build final report
         var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
         reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
+
+        // Remediation Roadmap (needs CRA score from report for prioritization)
+        {
+            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            reportGenerator.SetRemediationRoadmap(roadmap);
+        }
 
         if (string.IsNullOrEmpty(outputPath))
         {
@@ -2795,10 +2814,29 @@ public static class CraReportCommand
                 reportGenerator.SetProvenanceResults(allProvenanceResults);
         }
 
+        // Art. 14 Reporting Obligation Analysis
+        {
+            var kevCveSet = new HashSet<string>(kevCvePackages.Select(k => k.Cve), StringComparer.OrdinalIgnoreCase);
+            var epssLookup = allVulnerabilities.Values
+                .SelectMany(v => v.SelectMany(vi => vi.Cves.Where(c => vi.EpssProbability.HasValue)
+                    .Select(c => new EpssScore { Cve = c, Probability = vi.EpssProbability!.Value, Percentile = vi.EpssPercentile ?? 0.0 })))
+                .GroupBy(s => s.Cve, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Probability).First(), StringComparer.OrdinalIgnoreCase);
+
+            var reportingObligations = ReportingObligationAnalyzer.Analyze(allPackages, allVulnerabilities, kevCveSet, epssLookup);
+            reportGenerator.SetReportingObligations(reportingObligations);
+        }
+
         // Generate SBOM/VEX once, validate SBOM, then build final report
         var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
         reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
+
+        // Remediation Roadmap (needs CRA score from report for prioritization)
+        {
+            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            reportGenerator.SetRemediationRoadmap(roadmap);
+        }
 
         // Determine output path
         if (string.IsNullOrEmpty(outputPath))
@@ -2920,6 +2958,24 @@ public static class CraReportCommand
 
             if (config.FailOnCraReadinessBelow.HasValue && report.CraReadinessScore < config.FailOnCraReadinessBelow.Value)
                 violations.Add($"CRA readiness score {report.CraReadinessScore} below threshold {config.FailOnCraReadinessBelow.Value}");
+
+            if (config.FailOnReportableVulnerabilities && report.ReportableVulnerabilityCount > 0)
+                violations.Add($"CRA Art. 14 reportable vulnerabilities detected ({report.ReportableVulnerabilityCount})");
+
+            if (config.FailOnUnpatchedDaysOver.HasValue && report.MaxUnpatchedVulnerabilityDays.HasValue
+                && report.MaxUnpatchedVulnerabilityDays.Value > config.FailOnUnpatchedDaysOver.Value)
+                violations.Add($"Unpatched vulnerability age {report.MaxUnpatchedVulnerabilityDays.Value} days exceeds threshold {config.FailOnUnpatchedDaysOver.Value}");
+
+            if (config.FailOnUnmaintainedPackages && report.HasUnmaintainedPackages)
+                violations.Add("Unmaintained packages detected (no activity 2+ years)");
+
+            if (config.FailOnSbomCompletenessBelow.HasValue && report.SbomCompletenessPercentage.HasValue
+                && report.SbomCompletenessPercentage.Value < config.FailOnSbomCompletenessBelow.Value)
+                violations.Add($"SBOM completeness {report.SbomCompletenessPercentage.Value}% below threshold {config.FailOnSbomCompletenessBelow.Value}%");
+
+            if (config.FailOnAttackSurfaceDepthOver.HasValue && report.MaxDependencyDepth.HasValue
+                && report.MaxDependencyDepth.Value > config.FailOnAttackSurfaceDepthOver.Value)
+                violations.Add($"Dependency tree depth {report.MaxDependencyDepth.Value} exceeds threshold {config.FailOnAttackSurfaceDepthOver.Value}");
 
             if (violations.Count > 0)
             {

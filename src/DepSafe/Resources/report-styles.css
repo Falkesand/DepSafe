@@ -2560,3 +2560,92 @@
     .score-popover-row-ref { font-size: 0.65rem; color: var(--text-muted); flex-shrink: 0; width: 56px; text-align: right; }
 
     .score-popover-row-fix { font-size: 0.7rem; color: var(--warning); margin-top: 3px; padding-left: 26px; }
+
+    /* v1.5 — Reporting Obligations (Art. 14) */
+    .reporting-obligation-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .reporting-obligation-badge.kev {
+      background: var(--danger-light);
+      color: var(--danger);
+    }
+    .reporting-obligation-badge.epss {
+      background: var(--warning-light);
+      color: var(--warning);
+    }
+    .reporting-obligation-badge.both {
+      background: var(--danger-light);
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .reporting-deadline {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+    }
+    .reporting-deadline.urgent {
+      background: var(--danger-light);
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    /* v1.5 — Remediation Roadmap */
+    .remediation-priority-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .remediation-priority-badge.critical { background: var(--danger); }
+    .remediation-priority-badge.warning { background: var(--warning); color: #1a1a2e; }
+    .remediation-priority-badge.ok { background: var(--text-muted); }
+
+    .score-lift {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      background: var(--success-light);
+      color: var(--success);
+    }
+
+    .upgrade-effort {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .upgrade-effort.patch {
+      background: var(--success-light);
+      color: var(--success);
+    }
+    .upgrade-effort.minor {
+      background: var(--warning-light);
+      color: var(--warning);
+    }
+    .upgrade-effort.major {
+      background: var(--danger-light);
+      color: var(--danger);
+    }
+
+    .nav-badge.critical {
+      background: var(--danger);
+      color: #fff;
+    }
