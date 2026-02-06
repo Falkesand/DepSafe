@@ -589,8 +589,9 @@ public sealed partial class CraReportGenerator
             foreach (var h in _transitiveDataCache)
                 _healthLookup.TryAdd(h.PackageId, h);
 
-        // Cache filtered transitive list (excluding sub-dependencies used only for tree navigation)
-        _actualTransitives = _transitiveDataCache?.Where(h => h.DependencyType != DependencyType.SubDependency).ToList() ?? [];
+        // Cache filtered transitive list and sub-dependencies separately
+        _actualTransitives = _transitiveDataCache?.Where(h => h.DependencyType == DependencyType.Transitive).ToList() ?? [];
+        _subDependencies = _transitiveDataCache?.Where(h => h.DependencyType == DependencyType.SubDependency).ToList() ?? [];
 
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine(darkMode ? "<html lang=\"en\" data-theme=\"dark\">" : "<html lang=\"en\">");
@@ -1179,6 +1180,91 @@ public sealed partial class CraReportGenerator
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");
                 // Empty details container - content loaded lazily via JavaScript from packageData
+                sb.AppendLine("    <div class=\"package-details\"></div>");
+                sb.AppendLine("  </div>");
+            }
+
+            sb.AppendLine("  </div>");
+            sb.AppendLine("</div>");
+        }
+
+        // Sub-Dependencies Section
+        if (_subDependencies.Count > 0)
+        {
+            sb.AppendLine("<div class=\"transitive-section\">");
+            sb.AppendLine("  <div class=\"transitive-header\" onclick=\"toggleSubDeps()\">");
+            sb.AppendLine($"    <h3>Sub-Dependencies ({_subDependencies.Count})</h3>");
+            sb.AppendLine("    <span class=\"transitive-toggle\" id=\"subdeps-toggle\">Show</span>");
+            sb.AppendLine("  </div>");
+            sb.AppendLine("  <div id=\"subdeps-list\" class=\"packages-list transitive-list\" style=\"display: none;\">");
+
+            foreach (var healthData in _subDependencies.OrderBy(h => h.PackageId, StringComparer.OrdinalIgnoreCase))
+            {
+                var pkgName = healthData.PackageId;
+                var pkgNameLower = pkgName.ToLowerInvariant();
+                var version = healthData.Version;
+                var score = healthData.Score;
+                var status = healthData.Status.ToString().ToLowerInvariant();
+
+                var ecosystemName = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
+                var depTypeBadge = $"<span class=\"dep-type-badge transitive\" title=\"Sub-dependency - indirect dependency pulled in through the {ecosystemName} dependency tree\">sub-dep</span>";
+
+                var ecosystemAttr = healthData.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget";
+
+                var hasRealHealthData = healthData.Metrics.TotalDownloads > 0 ||
+                                        healthData.Metrics.DaysSinceLastRelease.HasValue ||
+                                        healthData.Metrics.ReleasesPerYear > 0;
+
+                var hasKevSub = _kevPackageIds.Contains(pkgName);
+                var kevClassSub = hasKevSub ? " has-kev" : "";
+                var craScoreSub = healthData.CraScore;
+                var craTooltipSub = GetCraBadgeTooltip(healthData);
+                sb.AppendLine($"  <div class=\"package-card transitive{kevClassSub}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgNameLower)}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScoreSub}\">");
+                sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
+                sb.AppendLine($"      <div class=\"package-info\">");
+                sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
+                if (hasKevSub && healthData.KevCves.Count > 0)
+                {
+                    var kevCve = healthData.KevCves[0];
+                    var kevUrl = $"https://osv.dev/vulnerability/{Uri.EscapeDataString(kevCve)}";
+                    var kevTooltip = $"{kevCve} - Known Exploited Vulnerability (click for details)";
+                    sb.AppendLine($"        <a href=\"{EscapeHtml(kevUrl)}\" target=\"_blank\" class=\"kev-badge\" title=\"{EscapeHtml(kevTooltip)}\" onclick=\"event.stopPropagation()\">{EscapeHtml(kevCve)}</a>");
+                }
+                else if (hasKevSub)
+                {
+                    sb.AppendLine($"        <span class=\"kev-badge\" title=\"Known Exploited Vulnerability - actively exploited in the wild\">KEV</span>");
+                }
+                if (healthData.MaxEpssProbability is > 0 and var epssSub)
+                {
+                    var epssClass = GetEpssBadgeClass(epssSub);
+                    var epssPct = (epssSub * 100).ToString("F1");
+                    sb.AppendLine($"        <span class=\"epss-badge {epssClass}\" title=\"EPSS: {epssPct}% probability of exploitation in 30 days\">EPSS {epssPct}%</span>");
+                }
+                sb.AppendLine($"        <span class=\"package-version\">{FormatVersion(version, pkgName)}</span>");
+                sb.AppendLine($"        {depTypeBadge}");
+                sb.AppendLine($"      </div>");
+                sb.AppendLine($"      <div class=\"package-scores\">");
+                if (hasRealHealthData)
+                {
+                    sb.AppendLine($"        <div class=\"package-score-item score-clickable\" onclick=\"showScorePopover(event, '{EscapeHtml(pkgName)}', 'health')\" title=\"Health Score - freshness &amp; activity \u2014 click for breakdown\">");
+                    sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
+                    sb.AppendLine($"          <span class=\"score-value {GetScoreClass(score)}\">{score}</span>");
+                    sb.AppendLine($"        </div>");
+                }
+                else
+                {
+                    sb.AppendLine($"        <div class=\"package-score-item\" title=\"Health Score not available - use --deep for full analysis\">");
+                    sb.AppendLine($"          <span class=\"score-label\">HEALTH</span>");
+                    sb.AppendLine($"          <span class=\"score-value na\">\u2014</span>");
+                    sb.AppendLine($"        </div>");
+                }
+                sb.AppendLine($"        <div class=\"package-score-item score-clickable\" onclick=\"showScorePopover(event, '{EscapeHtml(pkgName)}', 'cra')\" title=\"{EscapeHtml(craTooltipSub)} \u2014 click for breakdown\">");
+                sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
+                sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScoreSub)}\">{craScoreSub}</span>");
+                sb.AppendLine($"        </div>");
+                sb.AppendLine($"      </div>");
+                sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
+                sb.AppendLine("    </div>");
                 sb.AppendLine("    <div class=\"package-details\"></div>");
                 sb.AppendLine("  </div>");
             }
@@ -2654,6 +2740,14 @@ function sortPackages(sortBy, isInitial) {{
     transitiveCards.sort(compare);
     transitiveCards.forEach(card => transitiveList.appendChild(card));
   }}
+
+  // Sort sub-dependency packages
+  const subdepsList = document.getElementById('subdeps-list');
+  if (subdepsList) {{
+    const subdepsCards = Array.from(subdepsList.querySelectorAll('.package-card.transitive'));
+    subdepsCards.sort(compare);
+    subdepsCards.forEach(card => subdepsList.appendChild(card));
+  }}
 }}
 
 // Apply default sort on page load
@@ -2678,6 +2772,18 @@ function filterSbom() {{
 function toggleTransitive() {{
   const list = document.getElementById('transitive-list');
   const toggle = document.getElementById('transitive-toggle');
+  if (list.style.display === 'none') {{
+    list.style.display = '';
+    toggle.textContent = 'Hide';
+  }} else {{
+    list.style.display = 'none';
+    toggle.textContent = 'Show';
+  }}
+}}
+
+function toggleSubDeps() {{
+  const list = document.getElementById('subdeps-list');
+  const toggle = document.getElementById('subdeps-toggle');
   if (list.style.display === 'none') {{
     list.style.display = '';
     toggle.textContent = 'Hide';
@@ -3061,6 +3167,7 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     private List<PackageHealth>? _transitiveDataCache;
     private Dictionary<string, PackageHealth> _healthLookup = new(StringComparer.OrdinalIgnoreCase);
     private List<PackageHealth> _actualTransitives = [];
+    private List<PackageHealth> _subDependencies = [];
     private List<DependencyTree> _dependencyTrees = [];
     private Dictionary<string, List<string>> _parentLookup = new(StringComparer.OrdinalIgnoreCase);
     private bool _hasIncompleteTransitive;
@@ -3334,10 +3441,10 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
             }
         }
 
-        // Add transitive packages (excluding sub-dependencies)
+        // Add transitive and sub-dependency packages
         if (_transitiveDataCache is not null)
         {
-            foreach (var pkg in _transitiveDataCache.Where(p => p.DependencyType != DependencyType.SubDependency))
+            foreach (var pkg in _transitiveDataCache)
             {
                 if (!packages.ContainsKey(pkg.PackageId))
                 {
