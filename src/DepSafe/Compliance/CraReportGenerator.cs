@@ -547,6 +547,18 @@ public sealed partial class CraReportGenerator
         var versionString = version is not null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
         var totalPackages = report.PackageCount + report.TransitivePackageCount;
 
+        // Build lookup dictionaries for O(1) health data access (used by sub-methods)
+        _healthLookup.Clear();
+        if (_healthDataCache is not null)
+            foreach (var h in _healthDataCache)
+                _healthLookup.TryAdd(h.PackageId, h);
+        if (_transitiveDataCache is not null)
+            foreach (var h in _transitiveDataCache)
+                _healthLookup.TryAdd(h.PackageId, h);
+
+        // Cache filtered transitive list (excluding sub-dependencies used only for tree navigation)
+        _actualTransitives = _transitiveDataCache?.Where(h => h.DependencyType != DependencyType.SubDependency).ToList() ?? [];
+
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine(darkMode ? "<html lang=\"en\" data-theme=\"dark\">" : "<html lang=\"en\">");
         sb.AppendLine("<head>");
@@ -998,7 +1010,7 @@ public sealed partial class CraReportGenerator
             var status = "watch";
 
             // Find matching health data
-            var healthData = _healthDataCache?.FirstOrDefault(h => h.PackageId == pkgName);
+            var healthData = _healthDataCache is not null ? _healthLookup.GetValueOrDefault(pkgName) : null;
             var ecosystemAttr = "nuget"; // Default for data attribute
             if (healthData != null)
             {
@@ -1054,18 +1066,17 @@ public sealed partial class CraReportGenerator
 
         sb.AppendLine("</div>");
 
-        // Transitive Dependencies Section (exclude sub-dependencies - they're only for tree navigation)
-        var actualTransitives = _transitiveDataCache?.Where(h => h.DependencyType != DependencyType.SubDependency).ToList() ?? [];
-        if (actualTransitives.Count > 0)
+        // Transitive Dependencies Section (uses cached _actualTransitives, excluding sub-dependencies)
+        if (_actualTransitives.Count > 0)
         {
             sb.AppendLine("<div class=\"transitive-section\">");
             sb.AppendLine("  <div class=\"transitive-header\" onclick=\"toggleTransitive()\">");
-            sb.AppendLine($"    <h3>Transitive Dependencies ({actualTransitives.Count})</h3>");
+            sb.AppendLine($"    <h3>Transitive Dependencies ({_actualTransitives.Count})</h3>");
             sb.AppendLine("    <span class=\"transitive-toggle\" id=\"transitive-toggle\">Show</span>");
             sb.AppendLine("  </div>");
             sb.AppendLine("  <div id=\"transitive-list\" class=\"packages-list transitive-list\" style=\"display: none;\">");
 
-            foreach (var healthData in actualTransitives.OrderBy(h => h.PackageId, StringComparer.OrdinalIgnoreCase))
+            foreach (var healthData in _actualTransitives.OrderBy(h => h.PackageId, StringComparer.OrdinalIgnoreCase))
             {
                 var pkgName = healthData.PackageId;
                 var version = healthData.Version;
@@ -2116,8 +2127,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine($"{indentStr}  <span class=\"node-version\">{EscapeHtml(node.Version)}</span>");
 
         // Look up package health data for CRA score
-        var healthData = _healthDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase))
-                      ?? _transitiveDataCache?.FirstOrDefault(p => p.PackageId.Equals(node.PackageId, StringComparison.OrdinalIgnoreCase));
+        var healthData = _healthLookup.GetValueOrDefault(node.PackageId);
 
         if (healthData is not null)
         {
@@ -5524,6 +5534,8 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
 
     private List<PackageHealth>? _healthDataCache;
     private List<PackageHealth>? _transitiveDataCache;
+    private Dictionary<string, PackageHealth> _healthLookup = new(StringComparer.OrdinalIgnoreCase);
+    private List<PackageHealth> _actualTransitives = [];
     private List<DependencyTree> _dependencyTrees = [];
     private Dictionary<string, List<string>> _parentLookup = new(StringComparer.OrdinalIgnoreCase);
     private bool _hasIncompleteTransitive;
@@ -6193,19 +6205,18 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        // Single pass with StringBuilder to avoid 5 intermediate string allocations
         var sb = new StringBuilder(input.Length + 16);
         foreach (var c in input)
         {
-            sb.Append(c switch
+            switch (c)
             {
-                '&' => "&amp;",
-                '<' => "&lt;",
-                '>' => "&gt;",
-                '"' => "&quot;",
-                '\'' => "&#39;",
-                _ => c.ToString()
-            });
+                case '&': sb.Append("&amp;"); break;
+                case '<': sb.Append("&lt;"); break;
+                case '>': sb.Append("&gt;"); break;
+                case '"': sb.Append("&quot;"); break;
+                case '\'': sb.Append("&#39;"); break;
+                default: sb.Append(c); break;
+            }
         }
         return sb.ToString();
     }
@@ -6214,19 +6225,18 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     {
         if (string.IsNullOrEmpty(input)) return input;
 
-        // Single pass with StringBuilder to avoid 5 intermediate string allocations
         var sb = new StringBuilder(input.Length + 16);
         foreach (var c in input)
         {
-            sb.Append(c switch
+            switch (c)
             {
-                '\\' => "\\\\",
-                '\'' => "\\'",
-                '"' => "\\\"",
-                '\n' => "\\n",
-                '\r' => "\\r",
-                _ => c.ToString()
-            });
+                case '\\': sb.Append("\\\\"); break;
+                case '\'': sb.Append("\\'"); break;
+                case '"': sb.Append("\\\""); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                default: sb.Append(c); break;
+            }
         }
         return sb.ToString();
     }
