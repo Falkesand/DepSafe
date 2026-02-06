@@ -1038,6 +1038,7 @@ public sealed partial class CraReportGenerator
         foreach (var pkg in report.Sbom.Packages.Skip(1).Where(p => directPackageIds.Contains(p.Name)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
         {
             var pkgName = pkg.Name;
+            var pkgNameLower = pkgName.ToLowerInvariant();
             var version = pkg.VersionInfo;
             var score = 70; // Default score
             var status = "watch";
@@ -1056,7 +1057,7 @@ public sealed partial class CraReportGenerator
             var kevClass = hasKev ? " has-kev" : "";
             var craScore = healthData?.CraScore ?? 0;
             var craTooltip = GetCraBadgeTooltip(healthData);
-            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScore}\">");
+            sb.AppendLine($"  <div class=\"package-card{kevClass}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgNameLower)}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScore}\">");
             sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
             sb.AppendLine($"      <div class=\"package-info\">");
             sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1112,6 +1113,7 @@ public sealed partial class CraReportGenerator
             foreach (var healthData in _actualTransitives.OrderBy(h => h.PackageId, StringComparer.OrdinalIgnoreCase))
             {
                 var pkgName = healthData.PackageId;
+                var pkgNameLower = pkgName.ToLowerInvariant();
                 var version = healthData.Version;
                 var score = healthData.Score;
                 var status = healthData.Status.ToString().ToLowerInvariant();
@@ -1130,7 +1132,7 @@ public sealed partial class CraReportGenerator
                 var kevClassTrans = hasKevTrans ? " has-kev" : "";
                 var craScoreTrans = healthData.CraScore;
                 var craTooltipTrans = GetCraBadgeTooltip(healthData);
-                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgName.ToLowerInvariant())}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScoreTrans}\">");
+                sb.AppendLine($"  <div class=\"package-card transitive{kevClassTrans}\" id=\"pkg-{EscapeHtml(pkgName)}\" data-status=\"{status}\" data-name=\"{EscapeHtml(pkgNameLower)}\" data-ecosystem=\"{ecosystemAttr}\" data-health=\"{score}\" data-cra=\"{craScoreTrans}\">");
                 sb.AppendLine("    <div class=\"package-header\" onclick=\"togglePackage(this)\">");
                 sb.AppendLine($"      <div class=\"package-info\">");
                 sb.AppendLine($"        <span class=\"package-name\">{EscapeHtml(pkgName)}</span>");
@@ -1216,7 +1218,8 @@ public sealed partial class CraReportGenerator
             var purlDisplay = FormatPurlForSbom(purl);
 
             var registryName = pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "NuGet";
-            sb.AppendLine($"    <tr data-name=\"{EscapeHtml(pkg.Name.ToLowerInvariant())}\">");
+            var pkgNameLower = pkg.Name.ToLowerInvariant();
+            sb.AppendLine($"    <tr data-name=\"{EscapeHtml(pkgNameLower)}\">");
             sb.AppendLine($"      <td class=\"component-name\">");
             sb.AppendLine($"        <strong>{EscapeHtml(pkg.Name)}</strong>");
             sb.AppendLine($"        <a href=\"{EscapeHtml(pkg.DownloadLocation)}\" target=\"_blank\" class=\"external-link\">View on {registryName}</a>");
@@ -2139,8 +2142,9 @@ public sealed partial class CraReportGenerator
         if (hasKev) nodeClasses.Add("has-kev");
 
         var scoreClass = node.HealthScore.HasValue ? GetScoreClass(node.HealthScore.Value) : "";
+        var nodeNameLower = node.PackageId.ToLowerInvariant();
 
-        sb.AppendLine($"{indentStr}<li class=\"{string.Join(" ", nodeClasses)}\" data-name=\"{EscapeHtml(node.PackageId.ToLowerInvariant())}\">");
+        sb.AppendLine($"{indentStr}<li class=\"{string.Join(" ", nodeClasses)}\" data-name=\"{EscapeHtml(nodeNameLower)}\">");
 
         if (hasChildren && !node.IsDuplicate)
         {
@@ -2179,9 +2183,10 @@ public sealed partial class CraReportGenerator
             var dupTooltip = "Appears elsewhere in the tree";
             if (_parentLookup.TryGetValue(node.PackageId, out var parents) && parents.Count > 0)
             {
-                dupTooltip = $"Required by: {string.Join(", ", parents.Distinct().Take(5))}";
-                if (parents.Distinct().Count() > 5)
-                    dupTooltip += $" (+{parents.Distinct().Count() - 5} more)";
+                var distinctParents = parents.Distinct().ToList();
+                dupTooltip = $"Required by: {string.Join(", ", distinctParents.Take(5))}";
+                if (distinctParents.Count > 5)
+                    dupTooltip += $" (+{distinctParents.Count - 5} more)";
             }
             sb.AppendLine($"{indentStr}  <span class=\"node-badge duplicate\" title=\"{EscapeHtml(dupTooltip)}\">dup</span>");
         }

@@ -3064,15 +3064,17 @@ public static class CraReportCommand
         // Group by license for summary
         var licenseGroups = packages
             .GroupBy(p => p.License ?? "Unknown")
-            .OrderByDescending(g => g.Count());
+            .Select(g => (License: g.Key, Count: g.Count()))
+            .OrderByDescending(g => g.Count)
+            .ToList();
 
         sb.AppendLine("### License Summary");
         sb.AppendLine();
         sb.AppendLine("| License | Count |");
         sb.AppendLine("|---------|-------|");
-        foreach (var group in licenseGroups)
+        foreach (var (license, count) in licenseGroups)
         {
-            sb.AppendLine($"| {group.Key} | {group.Count()} |");
+            sb.AppendLine($"| {license} | {count} |");
         }
         sb.AppendLine();
         sb.AppendLine("### Package Details");

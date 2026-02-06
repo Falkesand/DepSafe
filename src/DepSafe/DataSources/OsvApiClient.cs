@@ -312,7 +312,7 @@ public sealed partial class OsvApiClient : IDisposable
 
     private static List<string> ExtractCves(OsvVulnerability vuln)
     {
-        var cves = new List<string>();
+        var cves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // OSV IDs that start with CVE are CVEs
         if (vuln.Id?.StartsWith("CVE-", StringComparison.OrdinalIgnoreCase) == true)
@@ -329,7 +329,7 @@ public sealed partial class OsvApiClient : IDisposable
                 {
                     // Extract CVE from URL if possible
                     var match = CveRegex().Match(reference.Url);
-                    if (match.Success && !cves.Contains(match.Value, StringComparer.OrdinalIgnoreCase))
+                    if (match.Success)
                     {
                         cves.Add(match.Value.ToUpperInvariant());
                     }
@@ -337,7 +337,7 @@ public sealed partial class OsvApiClient : IDisposable
             }
         }
 
-        return cves;
+        return [.. cves];
     }
 
     private static string DetermineSeverity(OsvVulnerability vuln)
