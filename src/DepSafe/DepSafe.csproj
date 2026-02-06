@@ -10,8 +10,8 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>depsafe</ToolCommandName>
     <PackageId>DepSafe</PackageId>
-    <Version>1.3.0</Version>
-    <Authors>Falk</Authors>
+    <Version>1.4.0</Version>
+    <Authors>Peter Falkesand</Authors>
     <Description>Dependency safety and health analysis for .NET and npm projects. EU Cyber Resilience Act (CRA) compliance with SBOM/VEX generation, vulnerability scanning, and license compatibility.</Description>
     <PackageTags>dependencies;security;sbom;vex;cra;compliance;nuget;npm;vulnerabilities;supply-chain</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
