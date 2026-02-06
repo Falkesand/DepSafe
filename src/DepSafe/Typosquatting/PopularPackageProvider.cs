@@ -49,6 +49,7 @@ public sealed class PopularPackageProvider : IDisposable
             index.AddRange(onlineNpm);
         }
 
+        index.Freeze();
         return index;
     }
 

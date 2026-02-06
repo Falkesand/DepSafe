@@ -231,6 +231,7 @@ public sealed partial class OsvApiClient : IDisposable
         CancellationToken ct)
     {
         var results = new Dictionary<string, OsvVulnerability>(StringComparer.OrdinalIgnoreCase);
+        var resultsLock = new Lock();
 
         // Fetch vulnerabilities in parallel (with some concurrency limit)
         using var semaphore = new SemaphoreSlim(10); // Max 10 concurrent requests
@@ -245,7 +246,7 @@ public sealed partial class OsvApiClient : IDisposable
                     var vuln = await response.Content.ReadFromJsonAsync<OsvVulnerability>(ct);
                     if (vuln is not null)
                     {
-                        lock (results)
+                        lock (resultsLock)
                         {
                             results[vulnId] = vuln;
                         }

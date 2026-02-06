@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using DepSafe.Models;
 
 namespace DepSafe.Compliance;
@@ -7,6 +8,33 @@ namespace DepSafe.Compliance;
 /// </summary>
 public sealed class SbomGenerator
 {
+    private static readonly FrozenDictionary<string, string> SpdxLicenseMap = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["MIT"] = "MIT",
+        ["APACHE-2.0"] = "Apache-2.0",
+        ["APACHE 2.0"] = "Apache-2.0",
+        ["APACHE LICENSE 2.0"] = "Apache-2.0",
+        ["BSD-3-CLAUSE"] = "BSD-3-Clause",
+        ["BSD 3-CLAUSE"] = "BSD-3-Clause",
+        ["BSD-2-CLAUSE"] = "BSD-2-Clause",
+        ["BSD 2-CLAUSE"] = "BSD-2-Clause",
+        ["GPL-3.0"] = "GPL-3.0-only",
+        ["GPL 3.0"] = "GPL-3.0-only",
+        ["GPLV3"] = "GPL-3.0-only",
+        ["GPL-2.0"] = "GPL-2.0-only",
+        ["GPL 2.0"] = "GPL-2.0-only",
+        ["GPLV2"] = "GPL-2.0-only",
+        ["LGPL-3.0"] = "LGPL-3.0-only",
+        ["LGPLV3"] = "LGPL-3.0-only",
+        ["LGPL-2.1"] = "LGPL-2.1-only",
+        ["LGPLV2.1"] = "LGPL-2.1-only",
+        ["MPL-2.0"] = "MPL-2.0",
+        ["MOZILLA PUBLIC LICENSE 2.0"] = "MPL-2.0",
+        ["ISC"] = "ISC",
+        ["UNLICENSE"] = "Unlicense",
+        ["CC0-1.0"] = "CC0-1.0"
+    }.ToFrozenDictionary(StringComparer.Ordinal);
+
     private readonly string _toolName;
     private readonly string _toolVersion;
 
@@ -201,23 +229,11 @@ public sealed class SbomGenerator
     {
         if (string.IsNullOrEmpty(license)) return "NOASSERTION";
 
-        // Common license mappings
-        return license.ToUpperInvariant() switch
-        {
-            "MIT" => "MIT",
-            "APACHE-2.0" or "APACHE 2.0" or "APACHE LICENSE 2.0" => "Apache-2.0",
-            "BSD-3-CLAUSE" or "BSD 3-CLAUSE" => "BSD-3-Clause",
-            "BSD-2-CLAUSE" or "BSD 2-CLAUSE" => "BSD-2-Clause",
-            "GPL-3.0" or "GPL 3.0" or "GPLV3" => "GPL-3.0-only",
-            "GPL-2.0" or "GPL 2.0" or "GPLV2" => "GPL-2.0-only",
-            "LGPL-3.0" or "LGPLV3" => "LGPL-3.0-only",
-            "LGPL-2.1" or "LGPLV2.1" => "LGPL-2.1-only",
-            "MPL-2.0" or "MOZILLA PUBLIC LICENSE 2.0" => "MPL-2.0",
-            "ISC" => "ISC",
-            "UNLICENSE" => "Unlicense",
-            "CC0-1.0" => "CC0-1.0",
-            _ => license.Contains("http") ? "NOASSERTION" : license
-        };
+        var upper = license.ToUpperInvariant();
+        if (SpdxLicenseMap.TryGetValue(upper, out var spdx))
+            return spdx;
+
+        return license.Contains("http") ? "NOASSERTION" : license;
     }
 }
 

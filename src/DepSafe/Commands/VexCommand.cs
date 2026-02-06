@@ -61,11 +61,7 @@ public static class VexCommand
         var generator = new VexGenerator();
         var vex = generator.Generate(packages, allVulnerabilities);
 
-        var output = JsonSerializer.Serialize(vex, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var output = JsonSerializer.Serialize(vex, JsonDefaults.Indented);
 
         if (!string.IsNullOrEmpty(outputPath))
         {

@@ -108,11 +108,7 @@ public static class TyposquatCommand
 
         if (format == OutputFormat.Json)
         {
-            var json = JsonSerializer.Serialize(results, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var json = JsonSerializer.Serialize(results, JsonDefaults.Indented);
             Console.WriteLine(json);
             return results.Count > 0 ? 1 : 0;
         }

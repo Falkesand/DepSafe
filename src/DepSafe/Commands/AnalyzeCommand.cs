@@ -285,11 +285,7 @@ public static class AnalyzeCommand
 
     private static void OutputJson(ProjectReport report)
     {
-        var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var json = JsonSerializer.Serialize(report, JsonDefaults.Indented);
         Console.WriteLine(json);
     }
 

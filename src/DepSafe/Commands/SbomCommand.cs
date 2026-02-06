@@ -72,19 +72,12 @@ public static class SbomCommand
         if (format == SbomFormat.CycloneDx)
         {
             var cycloneDx = generator.GenerateCycloneDx(projectName, packages);
-            output = JsonSerializer.Serialize(cycloneDx, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            output = JsonSerializer.Serialize(cycloneDx, JsonDefaults.Indented);
         }
         else
         {
             var spdx = generator.Generate(projectName, packages);
-            output = JsonSerializer.Serialize(spdx, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
+            output = JsonSerializer.Serialize(spdx, JsonDefaults.IndentedDefault);
         }
 
         if (!string.IsNullOrEmpty(outputPath))

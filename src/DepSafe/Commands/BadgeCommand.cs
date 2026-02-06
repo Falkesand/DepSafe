@@ -210,11 +210,7 @@ public static class BadgeCommand
             badges
         };
 
-        return JsonSerializer.Serialize(data, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        return JsonSerializer.Serialize(data, JsonDefaults.Indented);
     }
 }
 

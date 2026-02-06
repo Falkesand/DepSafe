@@ -135,11 +135,7 @@ public static class CheckCommand
 
         if (format == OutputFormat.Json)
         {
-            var json = JsonSerializer.Serialize(health, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var json = JsonSerializer.Serialize(health, JsonDefaults.Indented);
             Console.WriteLine(json);
             return 0;
         }

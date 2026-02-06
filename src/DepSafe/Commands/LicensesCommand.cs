@@ -101,11 +101,7 @@ public static class LicensesCommand
 
         if (format == "json")
         {
-            var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var json = JsonSerializer.Serialize(report, JsonDefaults.Indented);
             Console.WriteLine(json);
             return report.ErrorCount > 0 ? 1 : 0;
         }

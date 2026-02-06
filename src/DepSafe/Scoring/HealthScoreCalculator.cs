@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using DepSafe.Models;
 
 namespace DepSafe.Scoring;
@@ -7,6 +8,24 @@ namespace DepSafe.Scoring;
 /// </summary>
 public sealed class HealthScoreCalculator
 {
+    private static readonly FrozenSet<string> KnownSpdxLicenses = FrozenSet.ToFrozenSet(
+    [
+        "MIT", "MIT-0",
+        "APACHE-2.0", "APACHE 2.0", "APACHE2",
+        "BSD-2-CLAUSE", "BSD-3-CLAUSE", "0BSD",
+        "ISC",
+        "GPL-2.0", "GPL-3.0", "GPL-2.0-ONLY", "GPL-3.0-ONLY", "GPL-2.0-OR-LATER", "GPL-3.0-OR-LATER",
+        "LGPL-2.1", "LGPL-3.0", "LGPL-2.1-ONLY", "LGPL-3.0-ONLY", "LGPL-2.1-OR-LATER", "LGPL-3.0-OR-LATER",
+        "MPL-2.0",
+        "UNLICENSE", "UNLICENSED",
+        "CC0-1.0", "CC-BY-4.0",
+        "BSL-1.0",
+        "WTFPL",
+        "ZLIB",
+        "MS-PL", "MS-RL",
+        "CLASSPATH-EXCEPTION-2.0", "LLVM-EXCEPTION"
+    ], StringComparer.Ordinal);
+
     private readonly ScoreWeights _weights;
 
     /// <summary>
@@ -389,29 +408,7 @@ public sealed class HealthScoreCalculator
         return IsKnownSingleLicense(normalized);
     }
 
-    private static bool IsKnownSingleLicense(string license)
-    {
-        // Common SPDX license identifiers
-        return license switch
-        {
-            "MIT" or "MIT-0" => true,
-            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
-            "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
-            "ISC" => true,
-            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" or "GPL-2.0-OR-LATER" or "GPL-3.0-OR-LATER" => true,
-            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" or "LGPL-2.1-OR-LATER" or "LGPL-3.0-OR-LATER" => true,
-            "MPL-2.0" => true,
-            "UNLICENSE" or "UNLICENSED" => true,
-            "CC0-1.0" or "CC-BY-4.0" => true,
-            "BSL-1.0" => true,
-            "WTFPL" => true,
-            "ZLIB" => true,
-            "MS-PL" or "MS-RL" => true,
-            // WITH exceptions (these come after "WITH" in expressions)
-            "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
-            _ => false
-        };
-    }
+    private static bool IsKnownSingleLicense(string license) => KnownSpdxLicenses.Contains(license);
 
     private static double CalculateFreshnessScore(int? daysSinceLastRelease)
     {

@@ -3626,10 +3626,7 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     /// </summary>
     public string GenerateJson(CraReport report)
     {
-        return JsonSerializer.Serialize(report, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        return JsonSerializer.Serialize(report, JsonDefaults.CamelCase);
     }
 
     private static string? GetLicenseUrl(string license)
