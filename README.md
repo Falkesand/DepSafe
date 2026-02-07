@@ -22,6 +22,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
   - [sbom](#sbom---generate-software-bill-of-materials)
   - [vex](#vex---generate-vulnerability-exchange-document)
   - [licenses](#licenses---analyze-license-compatibility)
+  - [typosquat](#typosquat---detect-typosquatting-attacks)
   - [badge](#badge---generate-readme-badges)
 - [Configuration](#configuration)
 - [CRA Compliance Report](#cra-compliance-report)
@@ -48,7 +49,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 - **Version status tracking** - Shows available updates with color-coded urgency indicators
 - **Peer dependency analysis** - Lists peer dependencies with version requirements (npm)
 
-### EU Cyber Resilience Act (CRA) Compliance (17 items)
+### EU Cyber Resilience Act (CRA) Compliance (18 items)
 - **Article 10 - SBOM** - Software Bill of Materials generation (SPDX 3.0 and CycloneDX)
 - **Article 10(4) - KEV Monitoring** - CISA Known Exploited Vulnerabilities catalog integration
 - **Article 10(4) - EPSS Scoring** - Exploit Prediction Scoring System for vulnerability prioritization
@@ -62,6 +63,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 - **Article 11(5) - Security Policy** - GitHub security policy detection
 - **Article 13(5) - Package Provenance** - NuGet and npm registry signature verification
 - **Article 13(8) - Support Period** - Detects unmaintained packages lacking ongoing support
+- **Article 14 - Incident Reporting** - CSIRT notification detection for actively exploited vulnerabilities (24h/72h/14d deadlines)
 - **Annex I Part I(1) - Release Readiness** - Verifies no known exploitable vulnerabilities at release
 - **Annex I Part I(10) - Attack Surface** - Dependency tree depth and transitive ratio analysis
 - **Annex I Part II(1) - SBOM Completeness** - BSI TR-03183-2 field validation
@@ -77,6 +79,8 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 
 ### Reporting
 - **Interactive HTML reports** - Dashboard with drill-down, filtering, and dependency trees
+- **Art. 14 Reporting Obligations** - Flags vulnerabilities requiring CSIRT notification with 24h/72h/14d deadlines
+- **Remediation Roadmap** - Prioritized update plan ranked by CRA score improvement, KEV status, and EPSS probability
 - **JSON export** - Machine-readable format for automation
 - **License attribution files** - Generate THIRD-PARTY-NOTICES in TXT, HTML, or Markdown
 - **shields.io badges** - Embeddable status badges for your README
@@ -141,11 +145,13 @@ depsafe cra-report [<path>] [options]
 ```
 
 **Arguments:**
+
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `<path>` | Path to project, solution, or directory | `.` (current directory) |
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Html\|Json>` | Output format | `Html` |
@@ -157,6 +163,7 @@ depsafe cra-report [<path>] [options]
 | `--check-typosquat` | Run typosquatting detection on all dependencies | `false` |
 
 **Exit Codes:**
+
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
@@ -192,6 +199,7 @@ depsafe analyze [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Table\|Json\|Markdown>` | Output format | `Table` |
@@ -221,6 +229,7 @@ depsafe check <package> [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-v, --version <version>` | Specific version to check | Latest |
@@ -250,6 +259,7 @@ depsafe sbom [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Spdx\|CycloneDx>` | Output format | `Spdx` |
@@ -279,6 +289,7 @@ depsafe vex [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-o, --output <path>` | Output file path | stdout |
@@ -303,6 +314,7 @@ depsafe licenses [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-l, --project-license <license>` | Your project's SPDX license identifier | `MIT` |
@@ -326,6 +338,35 @@ depsafe licenses --format json
 
 ---
 
+### `typosquat` - Detect Typosquatting Attacks
+
+Scan project dependencies for potential typosquatting attacks using edit distance analysis, separator substitution, scope confusion, and other detection heuristics.
+
+```bash
+depsafe typosquat [<path>] [options]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-f, --format <Table\|Json>` | Output format | `Table` |
+| `--offline` | Use embedded popular package data only (skip online refresh) | `false` |
+
+**Examples:**
+```bash
+# Scan current project
+depsafe typosquat
+
+# Offline mode (no network calls for package index)
+depsafe typosquat --offline
+
+# JSON output for automation
+depsafe typosquat --format json
+```
+
+---
+
 ### `badge` - Generate README Badges
 
 Generate shields.io badges for your README.
@@ -335,6 +376,7 @@ depsafe badge [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Markdown\|Html\|Json\|Url>` | Output format | `Markdown` |
@@ -379,7 +421,12 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
   "failOnKev": true,
   "failOnEpssThreshold": 0.5,
   "failOnVulnerabilityCount": 0,
-  "failOnCraReadinessBelow": 70
+  "failOnCraReadinessBelow": 70,
+  "failOnReportableVulnerabilities": true,
+  "failOnUnpatchedDaysOver": 30,
+  "failOnUnmaintainedPackages": false,
+  "failOnSbomCompletenessBelow": 80,
+  "failOnAttackSurfaceDepthOver": 10
 }
 ```
 
@@ -396,6 +443,11 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
 | `failOnEpssThreshold` | Fail if any EPSS probability exceeds this value (0.0-1.0) |
 | `failOnVulnerabilityCount` | Fail if active vulnerability count exceeds this number |
 | `failOnCraReadinessBelow` | Fail if CRA readiness score is below this value (0-100) |
+| `failOnReportableVulnerabilities` | Fail if any CRA Art. 14 reportable vulnerabilities exist |
+| `failOnUnpatchedDaysOver` | Fail if any vulnerability has been unpatched longer than N days |
+| `failOnUnmaintainedPackages` | Fail if any dependency has no activity for 2+ years |
+| `failOnSbomCompletenessBelow` | Fail if SBOM completeness percentage is below threshold (0-100) |
+| `failOnAttackSurfaceDepthOver` | Fail if max dependency tree depth exceeds this value |
 
 ---
 
@@ -413,7 +465,7 @@ The HTML report includes comprehensive compliance information:
 - License status summary
 - Recommended actions for non-compliant items
 
-### CRA Requirements Checklist (17 items)
+### CRA Requirements Checklist (18 items)
 | # | Requirement | CRA Reference | Description |
 |---|-------------|---------------|-------------|
 | 1 | SBOM | Art. 10 | Software Bill of Materials with all components |
@@ -429,10 +481,11 @@ The HTML report includes comprehensive compliance information:
 | 11 | Security Policy | Art. 11(5) | Coordinated vulnerability disclosure (SECURITY.md) |
 | 12 | Support Period | Art. 13(8) | Components have ongoing active maintenance |
 | 13 | Package Provenance | Art. 13(5) | NuGet and npm registry signature verification |
-| 14 | Release Readiness | Annex I Part I(1) | No known exploitable vulnerabilities at release |
-| 15 | Attack Surface | Annex I Part I(10) | Dependency tree depth and transitive ratio analysis |
-| 16 | SBOM Completeness | Annex I Part II(1) | BSI TR-03183-2 field validation (supplier, PURL, checksum) |
-| 17 | Documentation | Annex II | README, security contact, support period, changelog |
+| 14 | Incident Reporting | Art. 14 | CSIRT notification for actively exploited vulnerabilities (24h/72h/14d) |
+| 15 | Release Readiness | Annex I Part I(1) | No known exploitable vulnerabilities at release |
+| 16 | Attack Surface | Annex I Part I(10) | Dependency tree depth and transitive ratio analysis |
+| 17 | SBOM Completeness | Annex I Part II(1) | BSI TR-03183-2 field validation (supplier, PURL, checksum) |
+| 18 | Documentation | Annex II | README, security contact, support period, changelog |
 
 ### Package Cards
 Each package displays:
@@ -446,6 +499,23 @@ Each package displays:
 - **Peer dependencies** - For npm packages
 - **Dependencies** - Clickable links to navigate dependency tree
 - **Recommendations** - Actionable improvement suggestions
+
+### Art. 14 Reporting Obligations
+When actively exploited or high-probability vulnerabilities are detected:
+- **CSIRT notification deadlines** — 24-hour early warning, 72-hour full notification, 14-day final report
+- **Detection criteria** — CISA KEV catalog (confirmed exploitation) or EPSS probability >= 0.5
+- **Trigger badges** — KEV, EPSS, or Both indicators per package
+- **Overdue tracking** — Highlights deadlines that have already passed
+- Shows a success card when no reportable vulnerabilities are found
+
+### Remediation Roadmap
+Prioritized update plan for vulnerable dependencies:
+- **Priority ranking** — KEV > EPSS >= 0.5 > Critical > High severity > CRA score lift
+- **Score Lift** — Estimated CRA readiness score improvement per package update
+- **Effort indicator** — Patch (low risk), Minor (new features), Major (breaking changes)
+- **Version recommendations** — Current vs recommended version with CVE count
+- Top 20 most impactful updates, sorted by priority
+- Shows a success card when no remediation actions are needed
 
 ### Dependency Tree
 Interactive tree visualization showing:
@@ -468,6 +538,7 @@ The CRA Readiness Score is a single weighted metric (0-100) that reflects overal
 | Weight | Compliance Items |
 |--------|-----------------|
 | 15 | Exploited Vulnerabilities (KEV), Vulnerability Handling |
+| 12 | Incident Reporting (Art. 14) |
 | 10 | SBOM, Release Readiness |
 | 8 | Remediation Timeliness |
 | 7 | Exploit Probability (EPSS) |
@@ -479,6 +550,7 @@ The CRA Readiness Score is a single weighted metric (0-100) that reflects overal
 | 1 | Deprecated Components, Cryptographic Compliance, Supply Chain Integrity |
 
 **Score calculation per item:**
+
 | Item Status | Score Multiplier |
 |-------------|-----------------|
 | Compliant | 100% of weight |
@@ -577,7 +649,12 @@ DepSafe supports config-driven CI/CD build gates via `.cra-config.json`. When th
 {
   "failOnKev": true,
   "failOnVulnerabilityCount": 0,
-  "failOnCraReadinessBelow": 70
+  "failOnCraReadinessBelow": 70,
+  "failOnReportableVulnerabilities": true,
+  "failOnUnpatchedDaysOver": 30,
+  "failOnUnmaintainedPackages": true,
+  "failOnSbomCompletenessBelow": 80,
+  "failOnAttackSurfaceDepthOver": 10
 }
 ```
 

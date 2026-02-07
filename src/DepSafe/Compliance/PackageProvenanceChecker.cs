@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using DepSafe.Models;
@@ -11,7 +10,9 @@ namespace DepSafe.Compliance;
 /// </summary>
 public sealed class PackageProvenanceChecker : IDisposable
 {
+    private static readonly string s_userAgent = GetUserAgent();
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
     private bool _disposed;
 
     public PackageProvenanceChecker(HttpClient? httpClient = null)
@@ -19,6 +20,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         if (httpClient is not null)
         {
             _httpClient = httpClient;
+            _ownsHttpClient = false;
         }
         else
         {
@@ -27,10 +29,9 @@ public sealed class PackageProvenanceChecker : IDisposable
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             };
             _httpClient = new HttpClient(handler);
+            _ownsHttpClient = true;
         }
-        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        var versionString = version is not null ? $"{version.Major}.{version.Minor}" : "1.0";
-        _httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd($"DepSafe/{versionString}");
+        _httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd(s_userAgent);
     }
 
     /// <summary>
@@ -40,7 +41,6 @@ public sealed class PackageProvenanceChecker : IDisposable
     public async Task<List<ProvenanceResult>> CheckNuGetProvenanceAsync(
         IReadOnlyList<(string PackageId, string Version)> packages)
     {
-        var results = new ConcurrentBag<ProvenanceResult>();
         using var semaphore = new SemaphoreSlim(5);
 
         var tasks = packages.Select(async pkg =>
@@ -48,8 +48,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             await semaphore.WaitAsync();
             try
             {
-                var result = await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version);
-                results.Add(result);
+                return await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version);
             }
             finally
             {
@@ -57,8 +56,8 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
         });
 
-        await Task.WhenAll(tasks);
-        return results.ToList();
+        var results = await Task.WhenAll(tasks);
+        return [.. results];
     }
 
     private async Task<ProvenanceResult> CheckSingleNuGetPackageAsync(string packageId, string version)
@@ -83,7 +82,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
 
             var json = await response.Content.ReadAsStringAsync();
-            var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
             // Check for published property (indicates it's on nuget.org, which repo-signs everything)
@@ -105,7 +104,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                         if (catalogResponse.IsSuccessStatusCode)
                         {
                             var catalogJson = await catalogResponse.Content.ReadAsStringAsync();
-                            var catalogDoc = JsonDocument.Parse(catalogJson);
+                            using var catalogDoc = JsonDocument.Parse(catalogJson);
                             if (catalogDoc.RootElement.TryGetProperty("packageHash", out var hashProp))
                             {
                                 contentHash = hashProp.GetString();
@@ -115,7 +114,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                         }
                     }
                 }
-                catch { /* Non-critical — checksum is best-effort */ }
+                catch (Exception ex) when (ex is HttpRequestException or JsonException) { /* Non-critical — checksum is best-effort */ }
             }
 
             // NuGet.org repository-signs all packages since April 2019
@@ -131,7 +130,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 ContentHashAlgorithm = hashAlgorithm
             };
         }
-        catch
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
         {
             return new ProvenanceResult
             {
@@ -151,7 +150,6 @@ public sealed class PackageProvenanceChecker : IDisposable
     public async Task<List<ProvenanceResult>> CheckNpmProvenanceAsync(
         IReadOnlyList<(string PackageId, string Version)> packages)
     {
-        var results = new ConcurrentBag<ProvenanceResult>();
         using var semaphore = new SemaphoreSlim(10);
 
         var tasks = packages.Select(async pkg =>
@@ -159,8 +157,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             await semaphore.WaitAsync();
             try
             {
-                var result = await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version);
-                results.Add(result);
+                return await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version);
             }
             finally
             {
@@ -168,8 +165,8 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
         });
 
-        await Task.WhenAll(tasks);
-        return results.ToList();
+        var results = await Task.WhenAll(tasks);
+        return [.. results];
     }
 
     private async Task<ProvenanceResult> CheckSingleNpmPackageAsync(string packageId, string version)
@@ -195,7 +192,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
 
             var json = await response.Content.ReadAsStringAsync();
-            var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
             var hasRepoSignature = false;
@@ -247,7 +244,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 ContentHashAlgorithm = hashAlgorithm
             };
         }
-        catch
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
         {
             return new ProvenanceResult
             {
@@ -260,11 +257,21 @@ public sealed class PackageProvenanceChecker : IDisposable
         }
     }
 
+    private static string GetUserAgent()
+    {
+        var version = typeof(PackageProvenanceChecker).Assembly.GetName().Version;
+        var versionString = version is not null ? $"{version.Major}.{version.Minor}" : "1.0";
+        return $"DepSafe/{versionString}";
+    }
+
     public void Dispose()
     {
         if (!_disposed)
         {
-            _httpClient.Dispose();
+            if (_ownsHttpClient)
+            {
+                _httpClient.Dispose();
+            }
             _disposed = true;
         }
     }

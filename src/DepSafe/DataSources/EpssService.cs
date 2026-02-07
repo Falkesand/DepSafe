@@ -34,7 +34,7 @@ public sealed class EpssService : IDisposable
     {
         var uniqueCves = cveIds
             .Where(c => !string.IsNullOrWhiteSpace(c))
-            .Select(c => c.Trim().ToUpperInvariant())
+            .Select(c => c.Trim())
             .Distinct()
             .ToList();
 
@@ -64,8 +64,8 @@ public sealed class EpssService : IDisposable
         // Fetch uncached CVEs in batches
         foreach (var batch in Batch(uncached, BatchSize))
         {
-            var scores = await FetchBatchAsync(batch, ct);
-            foreach (var score in scores)
+            var fetchResult = await FetchBatchAsync(batch, ct);
+            foreach (var score in fetchResult.ValueOr([]))
             {
                 result[score.Cve] = score;
                 await _cache.SetAsync($"epss:{score.Cve}", score, TimeSpan.FromHours(24), ct);
@@ -74,10 +74,9 @@ public sealed class EpssService : IDisposable
             // Cache misses as zero scores so we don't re-fetch
             foreach (var cve in batch)
             {
-                if (!result.ContainsKey(cve))
+                var missing = new EpssScore { Cve = cve, Probability = 0, Percentile = 0 };
+                if (result.TryAdd(cve, missing))
                 {
-                    var missing = new EpssScore { Cve = cve, Probability = 0, Percentile = 0 };
-                    result[cve] = missing;
                     await _cache.SetAsync($"epss:{cve}", missing, TimeSpan.FromHours(24), ct);
                 }
             }
@@ -86,7 +85,7 @@ public sealed class EpssService : IDisposable
         return result;
     }
 
-    private async Task<List<EpssScore>> FetchBatchAsync(
+    private async Task<Result<List<EpssScore>>> FetchBatchAsync(
         List<string> cveIds, CancellationToken ct)
     {
         try
@@ -94,20 +93,26 @@ public sealed class EpssService : IDisposable
             var cveParam = string.Join(",", cveIds);
             var url = $"{EpssApiUrl}?cve={Uri.EscapeDataString(cveParam)}";
 
-            var response = await _httpClient.GetAsync(url, ct);
+            using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
             {
                 Console.Error.WriteLine($"[WARN] EPSS API returned {(int)response.StatusCode} for batch of {cveIds.Count} CVEs");
-                return [];
+                return Result.Fail<List<EpssScore>>(
+                    $"EPSS API returned {(int)response.StatusCode} for batch of {cveIds.Count} CVEs", ErrorKind.NetworkError);
             }
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
             return ParseResponse(json);
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
         {
             Console.Error.WriteLine($"[WARN] Failed to fetch EPSS scores: {ex.Message}");
-            return [];
+            return Result.Fail<List<EpssScore>>($"Failed to fetch EPSS scores: {ex.Message}", ErrorKind.NetworkError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] Failed to fetch EPSS scores: {ex.Message}");
+            return Result.Fail<List<EpssScore>>($"Failed to fetch EPSS scores: {ex.Message}", ErrorKind.Unknown);
         }
     }
 
@@ -132,7 +137,7 @@ public sealed class EpssService : IDisposable
 
             scores.Add(new EpssScore
             {
-                Cve = cve.ToUpperInvariant(),
+                Cve = cve,
                 Probability = probability,
                 Percentile = percentile
             });

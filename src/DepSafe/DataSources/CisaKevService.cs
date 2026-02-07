@@ -12,7 +12,8 @@ public sealed class CisaKevService : IDisposable
     private const string KevUrl = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
-    private HashSet<string>? _kevCves;
+    private readonly SemaphoreSlim _loadLock = new(1, 1);
+    private HashSet<string>? _kevCves; // Uses OrdinalIgnoreCase comparer
 
     public CisaKevService(ResponseCache? cache = null)
     {
@@ -27,50 +28,68 @@ public sealed class CisaKevService : IDisposable
     /// <summary>
     /// Load the KEV catalog (cached for 24 hours).
     /// </summary>
-    public async Task LoadCatalogAsync(CancellationToken ct = default)
+    public async Task<Result> LoadCatalogAsync(CancellationToken ct = default)
     {
-        if (_kevCves is not null) return;
+        if (_kevCves is not null) return Result.Ok();
 
-        var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct);
-        if (cached is not null)
-        {
-            _kevCves = cached;
-            return;
-        }
-
+        await _loadLock.WaitAsync(ct);
         try
         {
-            var response = await _httpClient.GetAsync(KevUrl, ct);
-            if (!response.IsSuccessStatusCode)
+            if (_kevCves is not null) return Result.Ok(); // double-check after acquiring lock
+
+            var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct);
+            if (cached is not null)
             {
-                _kevCves = [];
-                return;
+                _kevCves = cached;
+                return Result.Ok();
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-            _kevCves = [];
-
-            if (json.TryGetProperty("vulnerabilities", out var vulns))
+            try
             {
-                foreach (var vuln in vulns.EnumerateArray())
+                using var response = await _httpClient.GetAsync(KevUrl, ct);
+                if (!response.IsSuccessStatusCode)
                 {
-                    if (vuln.TryGetProperty("cveID", out var cveId))
+                    _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    return Result.Fail($"CISA KEV API returned {(int)response.StatusCode}", ErrorKind.NetworkError);
+                }
+
+                var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                if (json.TryGetProperty("vulnerabilities", out var vulns))
+                {
+                    foreach (var vuln in vulns.EnumerateArray())
                     {
-                        var cve = cveId.GetString();
-                        if (!string.IsNullOrEmpty(cve))
+                        if (vuln.TryGetProperty("cveID", out var cveId))
                         {
-                            _kevCves.Add(cve.ToUpperInvariant());
+                            var cve = cveId.GetString();
+                            if (!string.IsNullOrEmpty(cve))
+                            {
+                                _kevCves.Add(cve);
+                            }
                         }
                     }
                 }
-            }
 
-            await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
+                await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
+                return Result.Ok();
+            }
+            catch (HttpRequestException ex)
+            {
+                Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                return Result.Fail($"Failed to fetch CISA KEV catalog: {ex.Message}", ErrorKind.NetworkError);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                return Result.Fail($"Failed to fetch CISA KEV catalog: {ex.Message}", ErrorKind.Unknown);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
-            _kevCves = [];
+            _loadLock.Release();
         }
     }
 
@@ -80,7 +99,7 @@ public sealed class CisaKevService : IDisposable
     public bool IsKnownExploited(string cveId)
     {
         if (_kevCves is null || string.IsNullOrEmpty(cveId)) return false;
-        return _kevCves.Contains(cveId.ToUpperInvariant());
+        return _kevCves.Contains(cveId);
     }
 
     /// <summary>
@@ -89,7 +108,7 @@ public sealed class CisaKevService : IDisposable
     public List<string> GetKnownExploitedCves(IEnumerable<string> cves)
     {
         if (_kevCves is null) return [];
-        return cves.Where(cve => _kevCves.Contains(cve.ToUpperInvariant())).ToList();
+        return cves.Where(cve => _kevCves.Contains(cve)).ToList();
     }
 
     /// <summary>

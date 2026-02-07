@@ -53,7 +53,7 @@ public static class AnalyzeCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
@@ -82,6 +82,19 @@ public static class AnalyzeCommand
             _ => HealthStatus.Critical
         };
 
+        int healthyCount = 0, watchCount = 0, warningCount = 0, criticalCount = 0, vulnerableCount = 0;
+        foreach (var p in packages)
+        {
+            switch (p.Status)
+            {
+                case HealthStatus.Healthy: healthyCount++; break;
+                case HealthStatus.Watch: watchCount++; break;
+                case HealthStatus.Warning: warningCount++; break;
+                case HealthStatus.Critical: criticalCount++; break;
+            }
+            if (p.Vulnerabilities.Count > 0) vulnerableCount++;
+        }
+
         var report = new ProjectReport
         {
             ProjectPath = path,
@@ -92,11 +105,11 @@ public static class AnalyzeCommand
             Summary = new ProjectSummary
             {
                 TotalPackages = packages.Count,
-                HealthyCount = packages.Count(p => p.Status == HealthStatus.Healthy),
-                WatchCount = packages.Count(p => p.Status == HealthStatus.Watch),
-                WarningCount = packages.Count(p => p.Status == HealthStatus.Warning),
-                CriticalCount = packages.Count(p => p.Status == HealthStatus.Critical),
-                VulnerableCount = packages.Count(p => p.Vulnerabilities.Count > 0)
+                HealthyCount = healthyCount,
+                WatchCount = watchCount,
+                WarningCount = warningCount,
+                CriticalCount = criticalCount,
+                VulnerableCount = vulnerableCount
             }
         };
 
@@ -132,7 +145,7 @@ public static class AnalyzeCommand
                         TyposquatRiskLevel.Medium => "yellow",
                         _ => "dim"
                     };
-                    AnsiConsole.MarkupLine($"  [{riskColor}]{result.RiskLevel}[/]  {result.PackageName} -> {result.SimilarTo} ({result.Detail}, confidence: {result.Confidence}%)");
+                    AnsiConsole.MarkupLine($"  [{riskColor}]{result.RiskLevel}[/]  {Markup.Escape(result.PackageName)} -> {Markup.Escape(result.SimilarTo)} ({Markup.Escape(result.Detail)}, confidence: {result.Confidence}%)");
                 }
             }
         }
@@ -151,7 +164,7 @@ public static class AnalyzeCommand
     {
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule($"[bold]Package Health Report[/]").LeftJustified());
-        AnsiConsole.MarkupLine($"[dim]{report.ProjectPath}[/]");
+        AnsiConsole.MarkupLine($"[dim]{Markup.Escape(report.ProjectPath)}[/]");
         AnsiConsole.WriteLine();
 
         var hasEpss = report.Packages.Any(p => p.MaxEpssProbability.HasValue);
@@ -189,8 +202,8 @@ public static class AnalyzeCommand
             {
                 var epssDisplay = FormatEpss(pkg.MaxEpssProbability, pkg.MaxEpssPercentile);
                 table.AddRow(
-                    pkg.PackageId,
-                    pkg.Version,
+                    Markup.Escape(pkg.PackageId),
+                    Markup.Escape(pkg.Version),
                     $"[{scoreColor}]{pkg.Score}[/]",
                     statusMarkup,
                     epssDisplay);
@@ -198,8 +211,8 @@ public static class AnalyzeCommand
             else
             {
                 table.AddRow(
-                    pkg.PackageId,
-                    pkg.Version,
+                    Markup.Escape(pkg.PackageId),
+                    Markup.Escape(pkg.Version),
                     $"[{scoreColor}]{pkg.Score}[/]",
                     statusMarkup);
             }
@@ -256,10 +269,10 @@ public static class AnalyzeCommand
 
             foreach (var pkg in problemPackages)
             {
-                AnsiConsole.MarkupLine($"\n[bold]{pkg.PackageId}[/] (score: {pkg.Score})");
+                AnsiConsole.MarkupLine($"\n[bold]{Markup.Escape(pkg.PackageId)}[/] (score: {pkg.Score})");
                 foreach (var rec in pkg.Recommendations)
                 {
-                    AnsiConsole.MarkupLine($"  • {rec}");
+                    AnsiConsole.MarkupLine($"  \u2022 {Markup.Escape(rec)}");
                 }
             }
         }
@@ -285,11 +298,7 @@ public static class AnalyzeCommand
 
     private static void OutputJson(ProjectReport report)
     {
-        var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var json = JsonSerializer.Serialize(report, JsonDefaults.Indented);
         Console.WriteLine(json);
     }
 

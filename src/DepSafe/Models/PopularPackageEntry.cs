@@ -11,6 +11,12 @@ public sealed class PopularPackageEntry
     /// <summary>Pre-normalized (lowercased) name for comparison without per-call allocations.</summary>
     public string NormalizedName { get; init; } = "";
 
+    /// <summary>Pre-computed homoglyph-normalized name for comparison without per-call allocations.</summary>
+    public string HomoglyphNormalizedName { get; init; } = "";
+
+    /// <summary>Pre-computed separator-normalized name (hyphens as canonical separator) for comparison without per-call allocations.</summary>
+    public string SeparatorNormalizedName { get; init; } = "";
+
     /// <summary>Weekly/monthly download count (approximate).</summary>
     public long Downloads { get; init; }
 

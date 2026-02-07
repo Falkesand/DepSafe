@@ -62,15 +62,17 @@ public static class CheckCommand
             AnsiConsole.WriteLine();
         }
 
-        var nugetInfo = await AnsiConsole.Status()
+        var nugetResult = await AnsiConsole.Status()
             .StartAsync($"Fetching package info for {packageId}...", async _ =>
                 await nugetClient.GetPackageInfoAsync(packageId));
 
-        if (nugetInfo is null)
+        if (nugetResult.IsFailure)
         {
-            AnsiConsole.MarkupLine($"[red]Package not found: {packageId}[/]");
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(nugetResult.Error)}[/]");
             return 1;
         }
+
+        var nugetInfo = nugetResult.Value;
 
         version ??= nugetInfo.LatestVersion;
 
@@ -79,9 +81,10 @@ public static class CheckCommand
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {
-            repoInfo = await AnsiConsole.Status()
+            var repoResult = await AnsiConsole.Status()
                 .StartAsync("Fetching repository info...", async _ =>
                     await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl));
+            if (repoResult.IsSuccess) repoInfo = repoResult.Value;
 
             if (!githubClient.IsRateLimited && githubClient.HasToken)
             {
@@ -107,10 +110,9 @@ public static class CheckCommand
                 foreach (var vuln in vulnerabilities)
                 {
                     var maxEpss = vuln.Cves
-                        .Where(c => epssScores.ContainsKey(c))
-                        .Select(c => epssScores[c])
-                        .OrderByDescending(s => s.Probability)
-                        .FirstOrDefault();
+                        .Select(c => epssScores.TryGetValue(c, out var score) ? score : null)
+                        .Where(s => s is not null)
+                        .MaxBy(s => s!.Probability);
 
                     if (maxEpss is not null)
                     {
@@ -122,8 +124,7 @@ public static class CheckCommand
                 // Enrich PackageHealth with max EPSS
                 var maxPkgEpss = vulnerabilities
                     .Where(v => v.EpssProbability.HasValue)
-                    .OrderByDescending(v => v.EpssProbability)
-                    .FirstOrDefault();
+                    .MaxBy(v => v.EpssProbability);
 
                 if (maxPkgEpss is not null)
                 {
@@ -135,11 +136,7 @@ public static class CheckCommand
 
         if (format == OutputFormat.Json)
         {
-            var json = JsonSerializer.Serialize(health, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var json = JsonSerializer.Serialize(health, JsonDefaults.Indented);
             Console.WriteLine(json);
             return 0;
         }
@@ -169,9 +166,9 @@ public static class CheckCommand
             .AddColumn("Metric")
             .AddColumn("Value");
 
-        table.AddRow("Package ID", packageId);
-        table.AddRow("Version", version);
-        table.AddRow("Latest Version", nugetInfo.LatestVersion);
+        table.AddRow("Package ID", Markup.Escape(packageId));
+        table.AddRow("Version", Markup.Escape(version));
+        table.AddRow("Latest Version", Markup.Escape(nugetInfo.LatestVersion));
         table.AddRow("Total Downloads", FormatNumber(nugetInfo.TotalDownloads));
         table.AddRow("Days Since Release", health.Metrics.DaysSinceLastRelease?.ToString() ?? "[dim]Unknown[/]");
         table.AddRow("Releases/Year", health.Metrics.ReleasesPerYear.ToString("F1"));
@@ -194,12 +191,12 @@ public static class CheckCommand
 
         if (!string.IsNullOrEmpty(health.License))
         {
-            table.AddRow("License", health.License);
+            table.AddRow("License", Markup.Escape(health.License));
         }
 
         if (!string.IsNullOrEmpty(health.RepositoryUrl))
         {
-            table.AddRow("Repository", health.RepositoryUrl);
+            table.AddRow("Repository", Markup.Escape(health.RepositoryUrl));
         }
 
         if (health.Metrics.VulnerabilityCount > 0)
@@ -235,12 +232,13 @@ public static class CheckCommand
 
                 var epssDisplay = FormatEpss(vuln.EpssProbability, vuln.EpssPercentile);
 
+                var summaryText = vuln.Summary.Length > 50 ? vuln.Summary[..47] + "..." : vuln.Summary;
                 vulnTable.AddRow(
-                    vuln.Id,
-                    $"[{severityColor}]{vuln.Severity}[/]",
+                    Markup.Escape(vuln.Id),
+                    $"[{severityColor}]{Markup.Escape(vuln.Severity)}[/]",
                     epssDisplay,
-                    vuln.Summary.Length > 50 ? vuln.Summary[..47] + "..." : vuln.Summary,
-                    vuln.PatchedVersion ?? "N/A");
+                    Markup.Escape(summaryText),
+                    Markup.Escape(vuln.PatchedVersion ?? "N/A"));
             }
 
             AnsiConsole.Write(vulnTable);
@@ -254,7 +252,7 @@ public static class CheckCommand
 
             foreach (var rec in health.Recommendations)
             {
-                AnsiConsole.MarkupLine($"  • {rec}");
+                AnsiConsole.MarkupLine($"  \u2022 {Markup.Escape(rec)}");
             }
         }
 

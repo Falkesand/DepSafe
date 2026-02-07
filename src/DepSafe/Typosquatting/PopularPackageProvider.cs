@@ -49,6 +49,7 @@ public sealed class PopularPackageProvider : IDisposable
             index.AddRange(onlineNpm);
         }
 
+        index.Freeze();
         return index;
     }
 
@@ -71,15 +72,22 @@ public sealed class PopularPackageProvider : IDisposable
 
             return entries
                 .Where(e => !string.IsNullOrWhiteSpace(e.Name))
-                .Select(e => new PopularPackageEntry
+                .Select(e =>
                 {
-                    Name = e.Name!,
-                    Downloads = e.Downloads,
-                    Ecosystem = ecosystem
+                    var name = e.Name!;
+                    var normalized = name.ToLowerInvariant();
+                    return new PopularPackageEntry
+                    {
+                        Name = name,
+                        NormalizedName = normalized,
+                        HomoglyphNormalizedName = StringDistance.NormalizeHomoglyphs(normalized),
+                        Downloads = e.Downloads,
+                        Ecosystem = ecosystem
+                    };
                 })
                 .ToList();
         }
-        catch
+        catch (JsonException)
         {
             return [];
         }

@@ -69,4 +69,38 @@ public sealed class CraConfig
     /// Returns exit code 2 for CI/CD build gates.
     /// </summary>
     public int? FailOnCraReadinessBelow { get; set; }
+
+    /// <summary>
+    /// Fail if any CRA Art. 14 reportable vulnerabilities exist (KEV or EPSS >= 0.5).
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public bool FailOnReportableVulnerabilities { get; set; }
+
+    /// <summary>
+    /// Fail if any vulnerability has been unpatched for more than this many days.
+    /// Maps to CRA Art. 11(4) remediation timeliness requirement.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public int? FailOnUnpatchedDaysOver { get; set; }
+
+    /// <summary>
+    /// Fail if any dependency has had no activity for 2+ years.
+    /// Maps to CRA Art. 13(8) support period requirement.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public bool FailOnUnmaintainedPackages { get; set; }
+
+    /// <summary>
+    /// Fail if SBOM completeness percentage is below this threshold (0-100).
+    /// Maps to CRA Annex I Part II(1) SBOM completeness requirement.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public int? FailOnSbomCompletenessBelow { get; set; }
+
+    /// <summary>
+    /// Fail if maximum dependency tree depth exceeds this value.
+    /// Maps to CRA Annex I Part I(10) attack surface minimization requirement.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public int? FailOnAttackSurfaceDepthOver { get; set; }
 }

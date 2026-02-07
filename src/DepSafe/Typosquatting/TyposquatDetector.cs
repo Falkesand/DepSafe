@@ -28,6 +28,8 @@ public sealed class TyposquatDetector
             return results;
 
         var lowerName = packageName.ToLowerInvariant();
+        var normalizedCandidateHomoglyph = StringDistance.NormalizeHomoglyphs(lowerName);
+        var normalizedCandidateSeparator = StringDistance.NormalizeSeparatorsCore(lowerName);
 
         // Layers 1-3: Single pass over length-bucketed candidates
         foreach (var candidate in _index.FindCandidates(packageName))
@@ -58,8 +60,9 @@ public sealed class TyposquatDetector
                 });
             }
 
-            // Layer 2: Homoglyph normalization
-            if (StringDistance.IsHomoglyphMatch(packageName, candidate.Name))
+            // Layer 2: Homoglyph normalization (using pre-computed values to avoid per-candidate allocations)
+            if (normalizedCandidateHomoglyph == candidate.HomoglyphNormalizedName &&
+                !string.Equals(packageName, candidate.Name, StringComparison.OrdinalIgnoreCase))
             {
                 var detail = DetectHomoglyphDetail(lowerName, candidate.NormalizedName);
 
@@ -75,8 +78,9 @@ public sealed class TyposquatDetector
                 });
             }
 
-            // Layer 3: Separator normalization
-            if (StringDistance.IsSeparatorMatch(packageName, candidate.Name))
+            // Layer 3: Separator normalization (using pre-computed values)
+            if (!string.Equals(lowerName, candidate.NormalizedName, StringComparison.Ordinal) &&
+                normalizedCandidateSeparator == candidate.SeparatorNormalizedName)
             {
                 results.Add(new TyposquatResult
                 {
@@ -91,10 +95,14 @@ public sealed class TyposquatDetector
             }
         }
 
-        // Layer 4: Prefix/suffix detection (check broader range since lengths can differ more)
+        // Layers 4 & 5: Single pass over all entries
+        var checkScopeConfusion = ecosystem == PackageEcosystem.Npm && packageName.StartsWith('@');
         foreach (var candidate in GetAllEntries())
         {
-            if (StringDistance.IsPrefixSuffixMatch(packageName, candidate.Name))
+            if (candidate.Ecosystem != ecosystem) continue;
+
+            // Layer 4: Prefix/suffix detection (check broader range since lengths can differ more)
+            if (StringDistance.IsPrefixSuffixMatchCore(lowerName, candidate.NormalizedName))
             {
                 results.Add(new TyposquatResult
                 {
@@ -107,35 +115,33 @@ public sealed class TyposquatDetector
                     Ecosystem = ecosystem
                 });
             }
-        }
 
-        // Layer 5: Scope confusion (npm only)
-        if (ecosystem == PackageEcosystem.Npm && packageName.StartsWith('@'))
-        {
-            foreach (var candidate in GetAllEntries())
+            // Layer 5: Scope confusion (npm only)
+            if (checkScopeConfusion && StringDistance.IsScopeConfusion(packageName, candidate.Name))
             {
-                if (StringDistance.IsScopeConfusion(packageName, candidate.Name))
+                results.Add(new TyposquatResult
                 {
-                    results.Add(new TyposquatResult
-                    {
-                        PackageName = packageName,
-                        SimilarTo = candidate.Name,
-                        Method = TyposquatDetectionMethod.ScopeConfusion,
-                        RiskLevel = TyposquatRiskLevel.High,
-                        Confidence = 90,
-                        Detail = "scope confusion with popular scoped package",
-                        Ecosystem = ecosystem
-                    });
-                }
+                    PackageName = packageName,
+                    SimilarTo = candidate.Name,
+                    Method = TyposquatDetectionMethod.ScopeConfusion,
+                    RiskLevel = TyposquatRiskLevel.High,
+                    Confidence = 90,
+                    Detail = "scope confusion with popular scoped package",
+                    Ecosystem = ecosystem
+                });
             }
         }
 
         // Deduplicate: keep highest confidence per popular package
-        return results
-            .GroupBy(r => r.SimilarTo, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderByDescending(r => r.Confidence).First())
-            .OrderByDescending(r => r.Confidence)
-            .ToList();
+        var deduped = new Dictionary<string, TyposquatResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in results)
+        {
+            if (!deduped.TryGetValue(r.SimilarTo, out var existing) || r.Confidence > existing.Confidence)
+                deduped[r.SimilarTo] = r;
+        }
+        var final = deduped.Values.ToList();
+        final.Sort((a, b) => b.Confidence.CompareTo(a.Confidence));
+        return final;
     }
 
     /// <summary>

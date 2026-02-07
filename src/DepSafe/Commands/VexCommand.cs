@@ -38,8 +38,20 @@ public static class VexCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
+        }
+
+        // Validate output path: block relative path traversal
+        if (!string.IsNullOrEmpty(outputPath) && !Path.IsPathRooted(outputPath))
+        {
+            var fullOutputPath = Path.GetFullPath(outputPath);
+            var workingDir = Path.GetFullPath(Directory.GetCurrentDirectory());
+            if (!fullOutputPath.StartsWith(workingDir, StringComparison.OrdinalIgnoreCase))
+            {
+                AnsiConsole.MarkupLine("[red]Error: Relative output path must not traverse outside the working directory.[/]");
+                return 1;
+            }
         }
 
         // VEX always needs GitHub for vulnerability data
@@ -61,16 +73,12 @@ public static class VexCommand
         var generator = new VexGenerator();
         var vex = generator.Generate(packages, allVulnerabilities);
 
-        var output = JsonSerializer.Serialize(vex, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var output = JsonSerializer.Serialize(vex, JsonDefaults.Indented);
 
         if (!string.IsNullOrEmpty(outputPath))
         {
             await File.WriteAllTextAsync(outputPath, output);
-            AnsiConsole.MarkupLine($"[green]VEX document written to {outputPath}[/]");
+            AnsiConsole.MarkupLine($"[green]VEX document written to {Markup.Escape(outputPath)}[/]");
         }
         else
         {

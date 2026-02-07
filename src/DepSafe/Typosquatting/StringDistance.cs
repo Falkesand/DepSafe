@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace DepSafe.Typosquatting;
 
 /// <summary>
@@ -5,6 +7,8 @@ namespace DepSafe.Typosquatting;
 /// </summary>
 public static class StringDistance
 {
+    private static readonly char[] s_separators = ['-', '.', '_'];
+
     /// <summary>
     /// Compute Damerau-Levenshtein distance with early exit when distance exceeds maxDistance.
     /// Handles transpositions in addition to insertions, deletions, and substitutions.
@@ -84,14 +88,10 @@ public static class StringDistance
     /// </summary>
     public static string NormalizeHomoglyphs(string input)
     {
-        var result = input.ToLowerInvariant();
-
+        var sb = new StringBuilder(input.ToLowerInvariant());
         foreach (var (from, to) in HomoglyphPairs)
-        {
-            result = result.Replace(from, to);
-        }
-
-        return result;
+            sb.Replace(from, to);
+        return sb.ToString();
     }
 
     /// <summary>
@@ -100,7 +100,15 @@ public static class StringDistance
     /// </summary>
     public static string NormalizeSeparators(string input)
     {
-        return input.ToLowerInvariant()
+        return NormalizeSeparatorsCore(input.ToLowerInvariant());
+    }
+
+    /// <summary>
+    /// Normalize separators on an already-lowered string.
+    /// </summary>
+    public static string NormalizeSeparatorsCore(string lowerInput)
+    {
+        return lowerInput
             .Replace('.', '-')
             .Replace('_', '-');
     }
@@ -110,11 +118,13 @@ public static class StringDistance
     /// </summary>
     public static bool IsHomoglyphMatch(string candidate, string popular)
     {
+        if (string.Equals(candidate, popular, StringComparison.OrdinalIgnoreCase))
+            return false;
+
         var normalizedCandidate = NormalizeHomoglyphs(candidate);
         var normalizedPopular = NormalizeHomoglyphs(popular);
 
-        return normalizedCandidate == normalizedPopular &&
-               !string.Equals(candidate, popular, StringComparison.OrdinalIgnoreCase);
+        return normalizedCandidate == normalizedPopular;
     }
 
     /// <summary>
@@ -122,11 +132,21 @@ public static class StringDistance
     /// </summary>
     public static bool IsSeparatorMatch(string candidate, string popular)
     {
-        var normalizedCandidate = NormalizeSeparators(candidate);
-        var normalizedPopular = NormalizeSeparators(popular);
+        return IsSeparatorMatchCore(candidate.ToLowerInvariant(), popular.ToLowerInvariant());
+    }
 
-        return normalizedCandidate == normalizedPopular &&
-               !string.Equals(candidate, popular, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Check if two already-lowered package names match after separator normalization.
+    /// </summary>
+    public static bool IsSeparatorMatchCore(string lowerCandidate, string lowerPopular)
+    {
+        if (string.Equals(lowerCandidate, lowerPopular, StringComparison.Ordinal))
+            return false;
+
+        var normalizedCandidate = NormalizeSeparatorsCore(lowerCandidate);
+        var normalizedPopular = NormalizeSeparatorsCore(lowerPopular);
+
+        return normalizedCandidate == normalizedPopular;
     }
 
     /// <summary>
@@ -140,28 +160,39 @@ public static class StringDistance
         if (popular.Length < 4)
             return false;
 
-        var lowerCandidate = candidate.ToLowerInvariant();
-        var lowerPopular = popular.ToLowerInvariant();
+        return IsPrefixSuffixMatchCore(candidate.ToLowerInvariant(), popular.ToLowerInvariant());
+    }
+
+    /// <summary>
+    /// Check if candidate is a prefix/suffix variant using pre-lowered strings.
+    /// </summary>
+    internal static bool IsPrefixSuffixMatchCore(string lowerCandidate, string lowerPopular)
+    {
+        if (lowerPopular.Length < 4)
+            return false;
 
         if (lowerCandidate == lowerPopular)
             return false;
 
         // Sub-package in dotted namespace convention is not typosquatting
         // e.g., Microsoft.EntityFrameworkCore.Design extends Microsoft.EntityFrameworkCore
-        if (lowerCandidate.StartsWith($"{lowerPopular}."))
+        if (lowerCandidate.Length > lowerPopular.Length &&
+            lowerCandidate[lowerPopular.Length] == '.' &&
+            lowerCandidate.AsSpan(0, lowerPopular.Length).SequenceEqual(lowerPopular))
             return false;
 
-        // Check common prefixes/suffixes with separators
-        char[] separators = ['-', '.', '_'];
-
-        foreach (var sep in separators)
+        // Check common prefixes/suffixes with separators using IndexOf to avoid allocations
+        var idx = lowerCandidate.IndexOf(lowerPopular, StringComparison.Ordinal);
+        while (idx >= 0)
         {
-            // "node-lodash" contains "lodash" after separator
-            if (lowerCandidate.Contains($"{sep}{lowerPopular}") ||
-                lowerCandidate.Contains($"{lowerPopular}{sep}"))
-            {
+            // Check if preceded by separator
+            if (idx > 0 && Array.IndexOf(s_separators, lowerCandidate[idx - 1]) >= 0)
                 return true;
-            }
+            // Check if followed by separator
+            var endIdx = idx + lowerPopular.Length;
+            if (endIdx < lowerCandidate.Length && Array.IndexOf(s_separators, lowerCandidate[endIdx]) >= 0)
+                return true;
+            idx = lowerCandidate.IndexOf(lowerPopular, idx + 1, StringComparison.Ordinal);
         }
 
         return false;

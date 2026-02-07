@@ -32,7 +32,7 @@ public sealed class NpmApiClient : IDisposable
     /// <summary>
     /// Get package information from npm registry.
     /// </summary>
-    public async Task<NpmPackageInfo?> GetPackageInfoAsync(string packageName, CancellationToken ct = default)
+    public async Task<Result<NpmPackageInfo>> GetPackageInfoAsync(string packageName, CancellationToken ct = default)
     {
         var cacheKey = $"npm:{packageName}";
         var cached = await _cache.GetAsync<NpmPackageInfo>(cacheKey, ct);
@@ -42,11 +42,11 @@ public sealed class NpmApiClient : IDisposable
         {
             // URL encode package name (handles scoped packages like @org/package)
             var encodedName = Uri.EscapeDataString(packageName);
-            var response = await _httpClient.GetAsync($"{NpmRegistryUrl}/{encodedName}", ct);
+            using var response = await _httpClient.GetAsync($"{NpmRegistryUrl}/{encodedName}", ct);
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return null;
+                return Result.Fail<NpmPackageInfo>($"npm package '{packageName}' not found", ErrorKind.NotFound);
             }
 
             response.EnsureSuccessStatusCode();
@@ -54,7 +54,8 @@ public sealed class NpmApiClient : IDisposable
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct);
 
-            if (doc is null) return null;
+            if (doc is null)
+                return Result.Fail<NpmPackageInfo>($"Failed to parse npm response for '{packageName}'", ErrorKind.ParseError);
 
             var distTags = doc["dist-tags"]?.AsObject();
             var latestVersion = distTags?["latest"]?.GetValue<string>() ?? "";
@@ -104,7 +105,7 @@ public sealed class NpmApiClient : IDisposable
             // Extract author - can be a string or an object with "name" property
             var authorName = ExtractAuthorName(latestVersionNode?["author"] ?? doc["author"]);
 
-            var result = new NpmPackageInfo
+            var info = new NpmPackageInfo
             {
                 Name = packageName,
                 LatestVersion = latestVersion,
@@ -123,13 +124,28 @@ public sealed class NpmApiClient : IDisposable
                 PeerDependencies = peerDependencies
             };
 
-            await _cache.SetAsync(cacheKey, result, TimeSpan.FromHours(12), ct);
-            return result;
+            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(12), ct);
+            return info;
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"Network error fetching npm info for {packageName}: {ex.Message}");
+            return Result.Fail<NpmPackageInfo>($"Network error fetching npm info for {packageName}: {ex.Message}", ErrorKind.NetworkError);
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"Parse error fetching npm info for {packageName}: {ex.Message}");
+            return Result.Fail<NpmPackageInfo>($"Parse error fetching npm info for {packageName}: {ex.Message}", ErrorKind.ParseError);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"Timeout fetching npm info for {packageName}");
+            return Result.Fail<NpmPackageInfo>($"Timeout fetching npm info for {packageName}", ErrorKind.Timeout);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"Error fetching npm info for {packageName}: {ex.Message}");
-            return null;
+            return Result.Fail<NpmPackageInfo>($"Error fetching npm info for {packageName}: {ex.Message}", ErrorKind.Unknown);
         }
     }
 
@@ -154,10 +170,10 @@ public sealed class NpmApiClient : IDisposable
             await semaphore.WaitAsync(ct);
             try
             {
-                var info = await GetPackageInfoAsync(packageName, ct);
-                if (info is not null)
+                var result = await GetPackageInfoAsync(packageName, ct);
+                if (result.IsSuccess)
                 {
-                    results[packageName] = info;
+                    results[packageName] = result.Value;
                 }
             }
             finally
@@ -178,7 +194,7 @@ public sealed class NpmApiClient : IDisposable
         try
         {
             var encodedName = Uri.EscapeDataString(packageName);
-            var response = await _httpClient.GetAsync($"{NpmDownloadsUrl}/{encodedName}", ct);
+            using var response = await _httpClient.GetAsync($"{NpmDownloadsUrl}/{encodedName}", ct);
 
             if (!response.IsSuccessStatusCode) return 0;
 
@@ -198,16 +214,18 @@ public sealed class NpmApiClient : IDisposable
     /// <summary>
     /// Parse package.json file.
     /// </summary>
-    public static async Task<PackageJson?> ParsePackageJsonAsync(string path, CancellationToken ct = default)
+    public static async Task<Result<PackageJson>> ParsePackageJsonAsync(string path, CancellationToken ct = default)
     {
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path))
+            return Result.Fail<PackageJson>($"package.json not found at {path}", ErrorKind.NotFound);
 
         try
         {
             var json = await File.ReadAllTextAsync(path, ct);
             var doc = JsonNode.Parse(json);
 
-            if (doc is null) return null;
+            if (doc is null)
+                return Result.Fail<PackageJson>($"Failed to parse package.json at {path}", ErrorKind.ParseError);
 
             return new PackageJson
             {
@@ -220,10 +238,15 @@ public sealed class NpmApiClient : IDisposable
                 Repository = ExtractRepositoryUrl(doc["repository"])
             };
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
-            Console.Error.WriteLine($"Error parsing package.json at {path}: {ex.Message}");
-            return null;
+            Console.Error.WriteLine($"Parse error in package.json at {path}: {ex.Message}");
+            return Result.Fail<PackageJson>($"Parse error in package.json at {path}: {ex.Message}", ErrorKind.ParseError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"Error reading package.json at {path}: {ex.Message}");
+            return Result.Fail<PackageJson>($"Error reading package.json at {path}: {ex.Message}", ErrorKind.Unknown);
         }
     }
 
@@ -231,18 +254,19 @@ public sealed class NpmApiClient : IDisposable
     /// Parse package-lock.json and build dependency information.
     /// Supports lockfileVersion 2 and 3.
     /// </summary>
-    public static async Task<List<NpmLockDependency>> ParsePackageLockAsync(string path, CancellationToken ct = default)
+    public static async Task<Result<List<NpmLockDependency>>> ParsePackageLockAsync(string path, CancellationToken ct = default)
     {
-        var dependencies = new List<NpmLockDependency>();
-
-        if (!File.Exists(path)) return dependencies;
+        if (!File.Exists(path))
+            return Result.Fail<List<NpmLockDependency>>($"package-lock.json not found at {path}", ErrorKind.NotFound);
 
         try
         {
+            var dependencies = new List<NpmLockDependency>();
             var json = await File.ReadAllTextAsync(path, ct);
             var doc = JsonNode.Parse(json);
 
-            if (doc is null) return dependencies;
+            if (doc is null)
+                return Result.Fail<List<NpmLockDependency>>($"Failed to parse package-lock.json at {path}", ErrorKind.ParseError);
 
             var lockfileVersion = doc["lockfileVersion"]?.GetValue<int>() ?? 1;
 
@@ -287,13 +311,19 @@ public sealed class NpmApiClient : IDisposable
                 // lockfileVersion 1 uses "dependencies" field
                 ParseLegacyDependencies(doc["dependencies"]?.AsObject(), dependencies);
             }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Error parsing package-lock.json at {path}: {ex.Message}");
-        }
 
-        return dependencies;
+            return dependencies;
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"Parse error in package-lock.json at {path}: {ex.Message}");
+            return Result.Fail<List<NpmLockDependency>>($"Parse error in package-lock.json at {path}: {ex.Message}", ErrorKind.ParseError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"Error reading package-lock.json at {path}: {ex.Message}");
+            return Result.Fail<List<NpmLockDependency>>($"Error reading package-lock.json at {path}: {ex.Message}", ErrorKind.Unknown);
+        }
     }
 
     private static void ParseLegacyDependencies(JsonObject? depsNode, List<NpmLockDependency> dependencies, bool isDev = false)
@@ -410,9 +440,10 @@ public sealed class NpmApiClient : IDisposable
         int maxDepth = 10,
         CancellationToken ct = default)
     {
-        var packageJson = await ParsePackageJsonAsync(packageJsonPath, ct);
+        var packageJsonResult = await ParsePackageJsonAsync(packageJsonPath, ct);
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDeps = await ParsePackageLockAsync(lockPath, ct);
+        var lockDepsResult = await ParsePackageLockAsync(lockPath, ct);
+        var lockDeps = lockDepsResult.ValueOr([]);
 
         var lockLookup = lockDeps
             .GroupBy(d => d.Name)
@@ -423,8 +454,9 @@ public sealed class NpmApiClient : IDisposable
         var licenseLookup = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
         // Build tree from direct dependencies
-        if (packageJson is not null)
+        if (packageJsonResult.IsSuccess)
         {
+            var packageJson = packageJsonResult.Value;
             foreach (var dep in packageJson.Dependencies)
             {
                 var node = await BuildTreeNodeAsync(dep.Key, dep.Value, 0, maxDepth, lockLookup, seen, licenseLookup, false, ct);
@@ -491,11 +523,11 @@ public sealed class NpmApiClient : IDisposable
         // Fetch health info for this package or get from cache
         if (!isDuplicate)
         {
-            var npmInfo = await GetPackageInfoAsync(name, ct);
-            if (npmInfo is not null)
+            var npmResult = await GetPackageInfoAsync(name, ct);
+            if (npmResult.IsSuccess)
             {
-                node.License = npmInfo.License;
-                licenseLookup[key] = npmInfo.License;
+                node.License = npmResult.Value.License;
+                licenseLookup[key] = npmResult.Value.License;
             }
         }
         else if (licenseLookup.TryGetValue(key, out var cachedLicense))

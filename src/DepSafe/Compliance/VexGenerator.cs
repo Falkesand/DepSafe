@@ -34,6 +34,7 @@ public sealed class VexGenerator
                 var status = DetermineStatus(vuln, pkg.Version);
                 // Generate appropriate URL based on vulnerability ID
                 var vulnUrl = vuln.Url ?? GetVulnerabilityUrl(vuln.Id);
+                var purl = $"pkg:{(pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget")}/{pkg.PackageId}@{pkg.Version}";
 
                 var statement = new VexStatement
                 {
@@ -48,10 +49,10 @@ public sealed class VexGenerator
                     [
                         new VexProduct
                         {
-                            Id = $"pkg:{(pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget")}/{pkg.PackageId}@{pkg.Version}",
+                            Id = purl,
                             Identifiers = new VexIdentifiers
                             {
-                                Purl = $"pkg:{(pkg.Ecosystem == PackageEcosystem.Npm ? "npm" : "nuget")}/{pkg.PackageId}@{pkg.Version}"
+                                Purl = purl
                             }
                         }
                     ],
@@ -102,7 +103,7 @@ public sealed class VexGenerator
                     return VexStatus.Fixed;
                 }
             }
-            catch
+            catch (Exception ex) when (ex is FormatException or ArgumentException)
             {
                 // Version parsing failed, fall through to range-based logic
             }

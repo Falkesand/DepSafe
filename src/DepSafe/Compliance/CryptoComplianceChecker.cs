@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace DepSafe.Compliance;
 
 /// <summary>
@@ -9,7 +11,7 @@ public static class CryptoComplianceChecker
     /// <summary>
     /// Packages known to use deprecated cryptographic algorithms.
     /// </summary>
-    private static readonly Dictionary<string, string> DeprecatedCryptoPackages = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenDictionary<string, string> DeprecatedCryptoPackages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         // MD5 implementations
         ["MD5CryptoServiceProvider"] = "MD5 is cryptographically broken",
@@ -35,12 +37,12 @@ public static class CryptoComplianceChecker
 
         // JWT libraries with known vulnerabilities
         ["System.IdentityModel.Tokens.Jwt"] = "Ensure version >= 6.x for security fixes",
-    };
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Packages that are crypto-related and should be reviewed.
     /// </summary>
-    private static readonly HashSet<string> CryptoRelatedPackages = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenSet<string> CryptoRelatedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "System.Security.Cryptography.Algorithms",
         "System.Security.Cryptography.Csp",
@@ -56,7 +58,7 @@ public static class CryptoComplianceChecker
         "NSec.Cryptography",
         "BCrypt.Net-Next",
         "Konscious.Security.Cryptography.Argon2",
-    };
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Check packages for crypto compliance issues.

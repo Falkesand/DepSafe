@@ -56,8 +56,8 @@ public static class TyposquatCommand
             var nugetPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var projectFile in projectFiles)
             {
-                var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                foreach (var r in refs)
+                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                foreach (var r in refsResult.ValueOr([]))
                     nugetPackages.Add(r.PackageId);
             }
 
@@ -74,8 +74,9 @@ public static class TyposquatCommand
         {
             foreach (var packageJsonPath in packageJsonFiles)
             {
-                var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-                if (packageJson is null) continue;
+                var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+                if (packageJsonResult.IsFailure) continue;
+                var packageJson = packageJsonResult.Value;
 
                 var npmPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var dep in packageJson.Dependencies)
@@ -100,7 +101,7 @@ public static class TyposquatCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
@@ -108,11 +109,7 @@ public static class TyposquatCommand
 
         if (format == OutputFormat.Json)
         {
-            var json = JsonSerializer.Serialize(results, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var json = JsonSerializer.Serialize(results, JsonDefaults.Indented);
             Console.WriteLine(json);
             return results.Count > 0 ? 1 : 0;
         }
@@ -120,7 +117,7 @@ public static class TyposquatCommand
         // Table output
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold]Typosquatting Analysis[/]").LeftJustified());
-        AnsiConsole.MarkupLine($"[dim]{path}[/]");
+        AnsiConsole.MarkupLine($"[dim]{Markup.Escape(path)}[/]");
         AnsiConsole.WriteLine();
 
         if (results.Count == 0)
@@ -158,9 +155,9 @@ public static class TyposquatCommand
 
             table.AddRow(
                 riskMarkup,
-                result.PackageName,
-                result.SimilarTo,
-                result.Detail,
+                Markup.Escape(result.PackageName),
+                Markup.Escape(result.SimilarTo),
+                Markup.Escape(result.Detail),
                 $"[{confColor}]{result.Confidence}%[/]");
         }
 

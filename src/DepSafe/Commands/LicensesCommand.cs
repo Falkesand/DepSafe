@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Text.Json;
 using DepSafe.Compliance;
@@ -49,12 +50,13 @@ public static class LicensesCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
         // Get packages using dotnet list
-        var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
         if (topLevel.Count == 0)
         {
@@ -62,8 +64,8 @@ public static class LicensesCommand
             var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
             foreach (var projectFile in projectFiles)
             {
-                var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                topLevel.AddRange(refs);
+                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                topLevel.AddRange(refsResult.ValueOr([]));
             }
         }
 
@@ -88,12 +90,24 @@ public static class LicensesCommand
             {
                 var task = ctx.AddTask("Fetching license information", maxValue: allPackages.Count);
 
-                foreach (var pkg in allPackages)
+                using var semaphore = new SemaphoreSlim(10);
+                var results = new ConcurrentBag<(string PackageId, string? License)>();
+                var tasks = allPackages.Select(async pkg =>
                 {
-                    var info = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
-                    packageLicenses.Add((pkg.PackageId, info?.License));
-                    task.Increment(1);
-                }
+                    await semaphore.WaitAsync();
+                    try
+                    {
+                        var result = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
+                        results.Add((pkg.PackageId, result.IsSuccess ? result.Value.License : null));
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        task.Increment(1);
+                    }
+                });
+                await Task.WhenAll(tasks);
+                packageLicenses.AddRange(results);
             });
 
         // Analyze compatibility
@@ -101,11 +115,7 @@ public static class LicensesCommand
 
         if (format == "json")
         {
-            var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            var json = JsonSerializer.Serialize(report, JsonDefaults.Indented);
             Console.WriteLine(json);
             return report.ErrorCount > 0 ? 1 : 0;
         }
@@ -180,9 +190,9 @@ public static class LicensesCommand
             {
                 var severityColor = issue.Severity == "Error" ? "red" : "yellow";
                 issuesTable.AddRow(
-                    $"[{severityColor}]{issue.Severity}[/]",
-                    issue.Message,
-                    issue.Recommendation ?? "-");
+                    $"[{severityColor}]{Markup.Escape(issue.Severity)}[/]",
+                    Markup.Escape(issue.Message),
+                    Markup.Escape(issue.Recommendation ?? "-"));
             }
 
             AnsiConsole.Write(issuesTable);
@@ -199,7 +209,7 @@ public static class LicensesCommand
             AnsiConsole.Write(new Rule("[bold yellow]Packages with Unknown Licenses[/]").LeftJustified());
             foreach (var unknown in report.UnknownLicenses.Take(10))
             {
-                AnsiConsole.MarkupLine($"  [dim]•[/] {unknown}");
+                AnsiConsole.MarkupLine($"  [dim]\u2022[/] {Markup.Escape(unknown)}");
             }
             if (report.UnknownLicenses.Count > 10)
             {

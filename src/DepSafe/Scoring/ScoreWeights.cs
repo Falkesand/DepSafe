@@ -23,7 +23,7 @@ public sealed class ScoreWeights
     /// <summary>
     /// Default weights as defined in the plan.
     /// </summary>
-    public static ScoreWeights Default => new();
+    public static ScoreWeights Default { get; } = new();
 
     /// <summary>
     /// Validates that weights sum to 1.0.

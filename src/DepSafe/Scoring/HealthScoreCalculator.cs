@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using DepSafe.Models;
 
 namespace DepSafe.Scoring;
@@ -7,6 +8,28 @@ namespace DepSafe.Scoring;
 /// </summary>
 public sealed class HealthScoreCalculator
 {
+    private static readonly string[] SpdxExpressionSeparators = [" OR ", " AND ", " WITH "];
+    private static readonly char[] s_licenseTrimChars = ['(', ')', ' '];
+    private static readonly Dictionary<string, string> s_emptyDict = new();
+
+    private static readonly FrozenSet<string> KnownSpdxLicenses = FrozenSet.ToFrozenSet(
+    [
+        "MIT", "MIT-0",
+        "APACHE-2.0", "APACHE 2.0", "APACHE2",
+        "BSD-2-CLAUSE", "BSD-3-CLAUSE", "0BSD",
+        "ISC",
+        "GPL-2.0", "GPL-3.0", "GPL-2.0-ONLY", "GPL-3.0-ONLY", "GPL-2.0-OR-LATER", "GPL-3.0-OR-LATER",
+        "LGPL-2.1", "LGPL-3.0", "LGPL-2.1-ONLY", "LGPL-3.0-ONLY", "LGPL-2.1-OR-LATER", "LGPL-3.0-OR-LATER",
+        "MPL-2.0",
+        "UNLICENSE", "UNLICENSED",
+        "CC0-1.0", "CC-BY-4.0",
+        "BSL-1.0",
+        "WTFPL",
+        "ZLIB",
+        "MS-PL", "MS-RL",
+        "CLASSPATH-EXCEPTION-2.0", "LLVM-EXCEPTION"
+    ], StringComparer.OrdinalIgnoreCase);
+
     private readonly ScoreWeights _weights;
 
     /// <summary>
@@ -86,7 +109,7 @@ public sealed class HealthScoreCalculator
             Dependencies = nugetInfo.Dependencies,
             DependencyType = dependencyType,
             LatestVersion = nugetInfo.LatestVersion,
-            PeerDependencies = new Dictionary<string, string>() // NuGet doesn't have peer dependencies concept
+            PeerDependencies = s_emptyDict // NuGet doesn't have peer dependencies concept
         };
     }
 
@@ -304,10 +327,15 @@ public sealed class HealthScoreCalculator
 
         // Vulnerability assessment (60 points max)
         // CRA Article 11 - Vulnerability handling
-        var criticalVulns = vulnerabilities.Count(v =>
-            v.Severity?.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase) == true);
-        var highVulns = vulnerabilities.Count(v =>
-            v.Severity?.Equals("HIGH", StringComparison.OrdinalIgnoreCase) == true);
+        var criticalVulns = 0;
+        var highVulns = 0;
+        foreach (var v in vulnerabilities)
+        {
+            if (v.Severity?.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase) == true)
+                criticalVulns++;
+            else if (v.Severity?.Equals("HIGH", StringComparison.OrdinalIgnoreCase) == true)
+                highVulns++;
+        }
         var otherVulns = vulnerabilities.Count - criticalVulns - highVulns;
 
         if (vulnerabilities.Count == 0)
@@ -331,7 +359,7 @@ public sealed class HealthScoreCalculator
         // CRA Article 10(9) - License information
         if (!string.IsNullOrWhiteSpace(license))
         {
-            var normalizedLicense = license.Trim().ToUpperInvariant();
+            var normalizedLicense = license.Trim();
             // Well-known SPDX licenses get full credit
             if (IsKnownSpdxLicense(normalizedLicense))
             {
@@ -374,44 +402,25 @@ public sealed class HealthScoreCalculator
     {
         // Handle SPDX expressions with OR/AND/WITH operators
         // e.g., "(MIT OR Apache-2.0)", "GPL-3.0 WITH Classpath-exception-2.0"
-        var normalized = license.Trim().TrimStart('(').TrimEnd(')').Trim();
+        var normalized = license.Trim(s_licenseTrimChars);
+
+        // Fast path: most licenses are single identifiers
+        if (!normalized.Contains(" OR ") && !normalized.Contains(" AND ") && !normalized.Contains(" WITH "))
+            return IsKnownSingleLicense(normalized);
 
         // Split on OR, AND, WITH and check each part
-        var separators = new[] { " OR ", " AND ", " WITH " };
-        var parts = normalized.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+        var parts = normalized.Split(SpdxExpressionSeparators, StringSplitOptions.RemoveEmptyEntries);
 
         // If we have multiple parts, check if all license parts are known
         if (parts.Length > 1)
         {
-            return parts.All(p => IsKnownSingleLicense(p.Trim().TrimStart('(').TrimEnd(')').Trim().ToUpperInvariant()));
+            return parts.All(p => IsKnownSingleLicense(p.Trim(s_licenseTrimChars)));
         }
 
         return IsKnownSingleLicense(normalized);
     }
 
-    private static bool IsKnownSingleLicense(string license)
-    {
-        // Common SPDX license identifiers
-        return license switch
-        {
-            "MIT" or "MIT-0" => true,
-            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
-            "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
-            "ISC" => true,
-            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" or "GPL-2.0-OR-LATER" or "GPL-3.0-OR-LATER" => true,
-            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" or "LGPL-2.1-OR-LATER" or "LGPL-3.0-OR-LATER" => true,
-            "MPL-2.0" => true,
-            "UNLICENSE" or "UNLICENSED" => true,
-            "CC0-1.0" or "CC-BY-4.0" => true,
-            "BSL-1.0" => true,
-            "WTFPL" => true,
-            "ZLIB" => true,
-            "MS-PL" or "MS-RL" => true,
-            // WITH exceptions (these come after "WITH" in expressions)
-            "CLASSPATH-EXCEPTION-2.0" or "LLVM-EXCEPTION" => true,
-            _ => false
-        };
-    }
+    private static bool IsKnownSingleLicense(string license) => KnownSpdxLicenses.Contains(license);
 
     private static double CalculateFreshnessScore(int? daysSinceLastRelease)
     {
@@ -497,6 +506,10 @@ public sealed class HealthScoreCalculator
     {
         if (vulnerabilities.Count == 0) return [];
 
+        // Parse the version ONCE for all vulnerability checks
+        if (!NuGet.Versioning.NuGetVersion.TryParse(version, out var parsedVersion))
+            return vulnerabilities; // can't filter without valid version
+
         var active = new List<VulnerabilityInfo>();
         foreach (var vuln in vulnerabilities)
         {
@@ -504,7 +517,7 @@ public sealed class HealthScoreCalculator
             bool inVulnerableRange;
             if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
             {
-                inVulnerableRange = IsVersionInVulnerableRange(version, vuln.VulnerableVersionRange);
+                inVulnerableRange = IsVersionInVulnerableRange(parsedVersion, vuln.VulnerableVersionRange);
             }
             else
             {
@@ -520,16 +533,11 @@ public sealed class HealthScoreCalculator
             // THEN check if version is patched (only matters if we're in the vulnerable range)
             if (!string.IsNullOrEmpty(vuln.PatchedVersion))
             {
-                try
+                if (NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                    parsedVersion >= patched)
                 {
-                    var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                    var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                    if (current >= patched)
-                    {
-                        continue; // Patched in current version
-                    }
+                    continue; // Patched in current version
                 }
-                catch { /* Version parsing failed, assume still vulnerable */ }
             }
 
             // Version is in vulnerable range and not patched
@@ -540,66 +548,94 @@ public sealed class HealthScoreCalculator
     }
 
     /// <summary>
+    /// Check if the installed version is actually affected by the vulnerability.
+    /// Shared logic used by RemediationPrioritizer and ReportingObligationAnalyzer.
+    /// </summary>
+    internal static bool IsAffected(string installedVersion, VulnerabilityInfo vuln)
+    {
+        // Check if installed version is >= patched version (already fixed)
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        {
+            if (NuGet.Versioning.NuGetVersion.TryParse(installedVersion, out var current) &&
+                NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                current >= patched)
+                return false;
+        }
+
+        // Check if installed version is in the vulnerable range
+        if (!string.IsNullOrEmpty(vuln.VulnerableVersionRange))
+        {
+            return IsVersionInVulnerableRange(installedVersion, vuln.VulnerableVersionRange);
+        }
+
+        // Conservative: if no range specified, assume affected
+        return true;
+    }
+
+    /// <summary>
     /// Check if a version falls within a vulnerable version range string.
     /// Supports operators: &gt;=, &gt;, &lt;=, &lt;, = and exact version matches, comma-separated.
     /// </summary>
     internal static bool IsVersionInVulnerableRange(string version, string range)
     {
+        if (!NuGet.Versioning.NuGetVersion.TryParse(version, out var parsedVersion))
+            return true; // can't parse, assume affected (conservative)
+
+        return IsVersionInVulnerableRange(parsedVersion, range);
+    }
+
+    /// <summary>
+    /// Check if a pre-parsed version falls within a vulnerable version range string.
+    /// </summary>
+    private static bool IsVersionInVulnerableRange(NuGet.Versioning.NuGetVersion current, string range)
+    {
         try
         {
-            var current = NuGet.Versioning.NuGetVersion.Parse(version);
-            var parts = range.Split(',').Select(p => p.Trim()).ToArray();
+            var parts = range.Split(',');
 
             // Track whether we have any range constraints
             bool hasRangeConstraint = false;
             bool hasExactMatch = false;
 
-            foreach (var part in parts)
+            foreach (var rawPart in parts)
             {
+                var part = rawPart.Trim();
                 if (part.StartsWith(">="))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current < v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[2..].Trim(), out var v) && current < v)
+                        return false;
                 }
                 else if (part.StartsWith(">"))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current <= v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current <= v)
+                        return false;
                 }
                 else if (part.StartsWith("<="))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[2..].Trim());
-                    if (current > v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[2..].Trim(), out var v) && current > v)
+                        return false;
                 }
                 else if (part.StartsWith("<"))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current >= v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current >= v)
+                        return false;
                 }
                 else if (part.StartsWith("="))
                 {
                     hasRangeConstraint = true;
-                    var v = NuGet.Versioning.NuGetVersion.Parse(part[1..].Trim());
-                    if (current != v) return false;
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current != v)
+                        return false;
                 }
                 else if (!string.IsNullOrWhiteSpace(part))
                 {
                     // Exact version match (e.g., "4.4.2" from OSV's versions list)
-                    try
+                    if (NuGet.Versioning.NuGetVersion.TryParse(part, out var v) && current == v)
                     {
-                        var v = NuGet.Versioning.NuGetVersion.Parse(part);
-                        if (current == v)
-                        {
-                            hasExactMatch = true;
-                        }
-                    }
-                    catch
-                    {
-                        // Not a parseable version, ignore
+                        hasExactMatch = true;
                     }
                 }
             }
@@ -613,7 +649,7 @@ public sealed class HealthScoreCalculator
             // Range constraints passed
             return true;
         }
-        catch
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
         {
             // If we can't parse, assume affected (conservative for security)
             // May result in false positives - user should verify
@@ -826,8 +862,7 @@ public sealed class HealthScoreCalculator
         // 7. License (2 pts) - Art. 10(9)
         if (!string.IsNullOrWhiteSpace(pkg.License))
         {
-            var upper = pkg.License.Trim().ToUpperInvariant();
-            rawScore += IsKnownSpdxLicense(upper) ? wLicense : wLicense * 0.6;
+            rawScore += IsKnownSpdxLicense(pkg.License.Trim()) ? wLicense : wLicense * 0.6;
         }
 
         // 8. Identifiability (2 pts)
@@ -863,16 +898,15 @@ public sealed class HealthScoreCalculator
     /// <summary>
     /// Calculate aggregate score for a project.
     /// </summary>
-    public static int CalculateProjectScore(IEnumerable<PackageHealth> packages)
+    public static int CalculateProjectScore(IReadOnlyList<PackageHealth> packages)
     {
-        var packageList = packages.ToList();
-        if (packageList.Count == 0) return 100;
+        if (packages.Count == 0) return 100;
 
         // Weight critical packages more heavily
         var weightedSum = 0.0;
         var totalWeight = 0.0;
 
-        foreach (var pkg in packageList)
+        foreach (var pkg in packages)
         {
             var weight = pkg.Status switch
             {

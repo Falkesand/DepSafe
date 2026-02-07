@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.CommandLine;
 using System.CommandLine.Binding;
 using System.Text.Json;
@@ -66,7 +67,7 @@ public static class CraReportCommand
         return command;
     }
 
-    private static ProjectType DetectProjectType(string path)
+    private static Result<ProjectType> DetectProjectType(string path)
     {
         var hasNetProjects = NuGetApiClient.FindProjectFiles(path).Any();
         var hasPackageJson = NpmApiClient.FindPackageJsonFiles(path).Any();
@@ -76,11 +77,11 @@ public static class CraReportCommand
             (true, true) => ProjectType.Mixed,
             (true, false) => ProjectType.DotNet,
             (false, true) => ProjectType.Npm,
-            _ => throw new InvalidOperationException("No project files found")
+            _ => Result.Fail<ProjectType>("No project files found (no .csproj/.sln or package.json)", ErrorKind.NotFound)
         };
     }
 
-    private static async Task<CraConfig?> LoadCraConfigAsync(string path)
+    private static async Task<Result<CraConfig>> LoadCraConfigAsync(string path)
     {
         // Look for .cra-config.json in project root
         var searchDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
@@ -88,22 +89,26 @@ public static class CraReportCommand
 
         if (!File.Exists(configPath))
         {
-            return null;
+            return Result.Fail<CraConfig>("No .cra-config.json found", ErrorKind.NotFound);
         }
 
         try
         {
             var json = await File.ReadAllTextAsync(configPath);
-            var config = JsonSerializer.Deserialize<CraConfig>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var config = JsonSerializer.Deserialize<CraConfig>(json, JsonDefaults.CaseInsensitive);
+            if (config is null)
+                return Result.Fail<CraConfig>("Failed to deserialize .cra-config.json", ErrorKind.ParseError);
             return config;
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
             AnsiConsole.MarkupLine($"[yellow]Warning: Failed to parse .cra-config.json: {ex.Message}[/]");
-            return null;
+            return Result.Fail<CraConfig>($"Failed to parse .cra-config.json: {ex.Message}", ErrorKind.ParseError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Warning: Failed to read .cra-config.json: {ex.Message}[/]");
+            return Result.Fail<CraConfig>($"Failed to read .cra-config.json: {ex.Message}", ErrorKind.Unknown);
         }
     }
 
@@ -129,33 +134,31 @@ public static class CraReportCommand
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            AnsiConsole.MarkupLine($"[red]Path not found: {path}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {Markup.Escape(path)}[/]");
             return 1;
         }
 
-        // Validate output path to prevent directory traversal (security)
-        if (!string.IsNullOrEmpty(outputPath))
+        // Validate output path: block relative path traversal (e.g., ../../etc/passwd)
+        // but allow absolute paths since the user explicitly chose them.
+        if (!string.IsNullOrEmpty(outputPath) && !Path.IsPathRooted(outputPath))
         {
             var fullOutputPath = Path.GetFullPath(outputPath);
             var workingDir = Path.GetFullPath(Directory.GetCurrentDirectory());
             if (!fullOutputPath.StartsWith(workingDir, StringComparison.OrdinalIgnoreCase))
             {
-                AnsiConsole.MarkupLine("[red]Error: Output path must be within the current working directory.[/]");
+                AnsiConsole.MarkupLine("[red]Error: Relative output path must not traverse outside the working directory.[/]");
                 return 1;
             }
         }
 
         // Detect project type
-        ProjectType projectType;
-        try
-        {
-            projectType = DetectProjectType(path);
-        }
-        catch (InvalidOperationException)
+        var projectTypeResult = DetectProjectType(path);
+        if (projectTypeResult.IsFailure)
         {
             AnsiConsole.MarkupLine("[yellow]No project files found (no .csproj/.sln or package.json).[/]");
             return 0;
         }
+        var projectType = projectTypeResult.Value;
 
         AnsiConsole.MarkupLine($"[dim]Detected project type: {projectType}[/]");
         if (deepScan)
@@ -164,7 +167,8 @@ public static class CraReportCommand
         }
 
         // Load CRA config if present
-        var config = await LoadCraConfigAsync(path);
+        var configResult = await LoadCraConfigAsync(path);
+        var config = configResult.IsSuccess ? configResult.Value : null;
         if (config is not null && config.LicenseOverrides.Count > 0)
         {
             AnsiConsole.MarkupLine($"[dim]Loaded .cra-config.json with {config.LicenseOverrides.Count} license override(s)[/]");
@@ -200,7 +204,7 @@ public static class CraReportCommand
                     TyposquatRiskLevel.Medium => "yellow",
                     _ => "dim"
                 };
-                AnsiConsole.MarkupLine($"  [{riskColor}]{tr.RiskLevel}[/]  {tr.PackageName} -> {tr.SimilarTo} ({tr.Detail}, confidence: {tr.Confidence}%)");
+                AnsiConsole.MarkupLine($"  [{riskColor}]{tr.RiskLevel}[/]  {Markup.Escape(tr.PackageName)} -> {Markup.Escape(tr.SimilarTo)} ({Markup.Escape(tr.Detail)}, confidence: {tr.Confidence}%)");
             }
         }
 
@@ -231,13 +235,14 @@ public static class CraReportCommand
         ShowGitHubStatus(githubClient, skipGitHub);
 
         // Parse package.json
-        var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-        if (packageJson is null)
+        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+        if (packageJsonResult.IsFailure)
         {
-            AnsiConsole.MarkupLine("[red]Failed to parse package.json[/]");
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(packageJsonResult.Error)}[/]");
             return 1;
         }
 
+        var packageJson = packageJsonResult.Value;
         var allDeps = packageJson.Dependencies
             .Concat(packageJson.DevDependencies)
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -285,10 +290,10 @@ public static class CraReportCommand
                     await semaphore.WaitAsync();
                     try
                     {
-                        var info = await npmClient.GetPackageInfoAsync(packageName);
-                        if (info is not null)
+                        var result = await npmClient.GetPackageInfoAsync(packageName);
+                        if (result.IsSuccess)
                         {
-                            npmInfoMap[packageName] = info;
+                            npmInfoMap[packageName] = result.Value;
                         }
                     }
                     finally
@@ -341,7 +346,8 @@ public static class CraReportCommand
 
         // Parse lock file for integrity hashes
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDeps = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDeps = lockDepsResult.ValueOr([]);
         var integrityLookup = lockDeps
             .Where(d => !string.IsNullOrEmpty(d.Integrity))
             .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
@@ -353,7 +359,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageName, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageName, []);
+            if (!allVulnerabilities.TryGetValue(packageName, out var vulnerabilities))
+                vulnerabilities = [];
 
             // Use installed version from lock file, fall back to latest if not found
             var installedVersion = installedVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
@@ -472,7 +479,8 @@ public static class CraReportCommand
                 var vulnId = !string.IsNullOrEmpty(node.VulnerabilitySummary) ? node.VulnerabilitySummary : null;
 
                 // Also check the vulnerabilities dict for additional context
-                var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
+                if (!vulnerabilities.TryGetValue(node.PackageId, out var pkgVulns))
+                    pkgVulns = [];
                 var activeVulns = hasVulns
                     ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
@@ -556,7 +564,8 @@ public static class CraReportCommand
                 var hasVulns = node.HasVulnerabilities;
                 var vulnId = !string.IsNullOrEmpty(node.VulnerabilitySummary) ? node.VulnerabilitySummary : null;
 
-                var pkgVulns = vulnerabilities.GetValueOrDefault(node.PackageId, []);
+                if (!vulnerabilities.TryGetValue(node.PackageId, out var pkgVulns))
+                    pkgVulns = [];
                 var activeVulns = hasVulns
                     ? pkgVulns.Where(v => IsVulnerabilityActiveForVersion(node.Version, v)).ToList()
                     : [];
@@ -643,8 +652,13 @@ public static class CraReportCommand
         HashSet<string> excludePackageIds,
         HashSet<string> transitiveIds)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (!excludePackageIds.Contains(node.PackageId))
             {
                 transitiveIds.Add(node.PackageId);
@@ -666,8 +680,13 @@ public static class CraReportCommand
         List<DependencyTreeNode> roots,
         Dictionary<string, List<VulnerabilityInfo>> vulnerabilities)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (vulnerabilities.TryGetValue(node.PackageId, out var vulns) && vulns.Count > 0)
             {
                 // Find the first vulnerability that actually affects this version
@@ -719,18 +738,12 @@ public static class CraReportCommand
             }
 
             // THEN check if version is patched (only matters if we're in the vulnerable range)
-            if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+            if (!string.IsNullOrEmpty(vuln.PatchedVersion) &&
+                NuGet.Versioning.NuGetVersion.TryParse(version, out var current) &&
+                NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+                current >= patched)
             {
-                try
-                {
-                    var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                    var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                    if (current >= patched)
-                    {
-                        continue; // Patched, check next vulnerability
-                    }
-                }
-                catch { /* Version parsing failed, assume still vulnerable */ }
+                continue; // Patched, check next vulnerability
             }
 
             // Version is in vulnerable range and not patched
@@ -767,15 +780,12 @@ public static class CraReportCommand
         if (!inVulnerableRange) return false;
 
         // Check if version is patched
-        if (!string.IsNullOrEmpty(vuln.PatchedVersion))
+        if (!string.IsNullOrEmpty(vuln.PatchedVersion) &&
+            NuGet.Versioning.NuGetVersion.TryParse(version, out var current) &&
+            NuGet.Versioning.NuGetVersion.TryParse(vuln.PatchedVersion, out var patched) &&
+            current >= patched)
         {
-            try
-            {
-                var current = NuGet.Versioning.NuGetVersion.Parse(version);
-                var patched = NuGet.Versioning.NuGetVersion.Parse(vuln.PatchedVersion);
-                if (current >= patched) return false; // Patched
-            }
-            catch { /* Version parsing failed, assume still vulnerable */ }
+            return false; // Patched
         }
 
         return true;
@@ -875,7 +885,7 @@ public static class CraReportCommand
         // License identification (25 points max)
         if (!string.IsNullOrWhiteSpace(license))
         {
-            var normalizedLicense = license.Trim().ToUpperInvariant();
+            var normalizedLicense = license.Trim();
             if (IsKnownSpdxLicense(normalizedLicense))
             {
                 score += 25;
@@ -909,26 +919,24 @@ public static class CraReportCommand
         return (score, status);
     }
 
-    private static bool IsKnownSpdxLicense(string license)
-    {
-        return license switch
-        {
-            "MIT" or "MIT-0" => true,
-            "APACHE-2.0" or "APACHE 2.0" or "APACHE2" => true,
-            "BSD-2-CLAUSE" or "BSD-3-CLAUSE" or "0BSD" => true,
-            "ISC" => true,
-            "GPL-2.0" or "GPL-3.0" or "GPL-2.0-ONLY" or "GPL-3.0-ONLY" => true,
-            "LGPL-2.1" or "LGPL-3.0" or "LGPL-2.1-ONLY" or "LGPL-3.0-ONLY" => true,
-            "MPL-2.0" => true,
-            "UNLICENSE" or "UNLICENSED" => true,
-            "CC0-1.0" or "CC-BY-4.0" => true,
-            "BSL-1.0" => true,
-            "WTFPL" => true,
-            "ZLIB" => true,
-            "MS-PL" or "MS-RL" => true,
-            _ => false
-        };
-    }
+    private static readonly FrozenSet<string> KnownSpdxLicenses = FrozenSet.ToFrozenSet(
+    [
+        "MIT", "MIT-0",
+        "APACHE-2.0", "APACHE 2.0", "APACHE2",
+        "BSD-2-CLAUSE", "BSD-3-CLAUSE", "0BSD",
+        "ISC",
+        "GPL-2.0", "GPL-3.0", "GPL-2.0-ONLY", "GPL-3.0-ONLY",
+        "LGPL-2.1", "LGPL-3.0", "LGPL-2.1-ONLY", "LGPL-3.0-ONLY",
+        "MPL-2.0",
+        "UNLICENSE", "UNLICENSED",
+        "CC0-1.0", "CC-BY-4.0",
+        "BSL-1.0",
+        "WTFPL",
+        "ZLIB",
+        "MS-PL", "MS-RL"
+    ], StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
     private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
     {
@@ -959,24 +967,20 @@ public static class CraReportCommand
             .StartAsync("Scanning packages (resolving MSBuild variables)...", async ctx =>
             {
                 // Try dotnet list package first for resolved versions
-                var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                 if (topLevel.Count > 0)
                 {
                     foreach (var r in topLevel)
                     {
-                        if (!allReferences.ContainsKey(r.PackageId))
-                        {
-                            allReferences[r.PackageId] = r;
-                            if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                        }
+                        if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                            hasUnresolvedVersions = true;
                     }
                     foreach (var r in transitive)
                     {
-                        if (!transitiveReferences.ContainsKey(r.PackageId) && !allReferences.ContainsKey(r.PackageId))
-                        {
-                            transitiveReferences[r.PackageId] = r;
-                        }
+                        if (!allReferences.ContainsKey(r.PackageId))
+                            transitiveReferences.TryAdd(r.PackageId, r);
                     }
                 }
                 else
@@ -986,14 +990,11 @@ public static class CraReportCommand
                     ctx.Status("Falling back to XML parsing...");
                     foreach (var projectFile in projectFiles)
                     {
-                        var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                        foreach (var r in refs)
+                        var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                        foreach (var r in refsResult.ValueOr([]))
                         {
-                            if (!allReferences.ContainsKey(r.PackageId))
-                            {
-                                allReferences[r.PackageId] = r;
-                                if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                            }
+                            if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                                hasUnresolvedVersions = true;
                         }
                     }
                 }
@@ -1008,7 +1009,8 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"[dim]Found {allReferences.Count} direct packages and {transitiveReferences.Count} transitive dependencies[/]");
 
         // Warn about incomplete transitive dependencies
-        var incompleteTransitive = usedFallbackParsing || transitiveReferences.Count == 0;
+        // Only warn when fallback parsing also found nothing — packages.config is already a complete flat list
+        var incompleteTransitive = usedFallbackParsing && allReferences.Count == 0;
         if (incompleteTransitive || hasUnresolvedVersions)
         {
             AnsiConsole.WriteLine();
@@ -1043,10 +1045,10 @@ public static class CraReportCommand
                     await semaphore.WaitAsync();
                     try
                     {
-                        var info = await nugetClient.GetPackageInfoAsync(packageId);
-                        if (info is not null)
+                        var result = await nugetClient.GetPackageInfoAsync(packageId);
+                        if (result.IsSuccess)
                         {
-                            nugetInfoMap[packageId] = info;
+                            nugetInfoMap[packageId] = result.Value;
                         }
                     }
                     finally
@@ -1088,10 +1090,10 @@ public static class CraReportCommand
                         {
                             if (!nugetInfoMap.ContainsKey(packageId))
                             {
-                                var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                if (info is not null)
+                                var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                if (result.IsSuccess)
                                 {
-                                    nugetInfoMap[packageId] = info;
+                                    nugetInfoMap[packageId] = result.Value;
                                 }
                             }
                         }
@@ -1110,7 +1112,7 @@ public static class CraReportCommand
         var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
 
         // Include dependency packages in the list for GitHub lookups
-        var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).ToList();
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {
@@ -1168,7 +1170,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+            if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                vulnerabilities = [];
 
             var health = calculator.Calculate(
                 packageId,
@@ -1187,7 +1190,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+            if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                vulnerabilities = [];
 
             var health = calculator.Calculate(
                 packageId,
@@ -1213,7 +1217,8 @@ public static class CraReportCommand
                 continue;
 
             repoInfoMap.TryGetValue(packageId, out var repoInfo);
-            var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+            if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                vulnerabilities = [];
 
             var health = calculator.Calculate(
                 packageId,
@@ -1312,24 +1317,20 @@ public static class CraReportCommand
             await AnsiConsole.Status()
                 .StartAsync("Scanning .NET packages...", async ctx =>
                 {
-                    var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                    var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                     if (topLevel.Count > 0)
                     {
                         foreach (var r in topLevel)
                         {
-                            if (!allReferences.ContainsKey(r.PackageId))
-                            {
-                                allReferences[r.PackageId] = r;
-                                if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                            }
+                            if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                                hasUnresolvedVersions = true;
                         }
                         foreach (var r in transitive)
                         {
-                            if (!transitiveReferences.ContainsKey(r.PackageId) && !allReferences.ContainsKey(r.PackageId))
-                            {
-                                transitiveReferences[r.PackageId] = r;
-                            }
+                            if (!allReferences.ContainsKey(r.PackageId))
+                                transitiveReferences.TryAdd(r.PackageId, r);
                         }
                     }
                     else
@@ -1338,20 +1339,17 @@ public static class CraReportCommand
                         ctx.Status("Falling back to XML parsing...");
                         foreach (var projectFile in projectFiles)
                         {
-                            var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                            foreach (var r in refs)
+                            var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                            foreach (var r in refsResult.ValueOr([]))
                             {
-                                if (!allReferences.ContainsKey(r.PackageId))
-                                {
-                                    allReferences[r.PackageId] = r;
-                                    if (r.Version.Contains("$(")) hasUnresolvedVersions = true;
-                                }
+                                if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
+                                    hasUnresolvedVersions = true;
                             }
                         }
                     }
                 });
 
-            incompleteTransitive = usedFallbackParsing || transitiveReferences.Count == 0;
+            incompleteTransitive = usedFallbackParsing && allReferences.Count == 0;
 
             if (allReferences.Count > 0)
             {
@@ -1373,10 +1371,10 @@ public static class CraReportCommand
                             await semaphore.WaitAsync();
                             try
                             {
-                                var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                if (info is not null)
+                                var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                if (result.IsSuccess)
                                 {
-                                    nugetInfoMap[packageId] = info;
+                                    nugetInfoMap[packageId] = result.Value;
                                 }
                             }
                             finally
@@ -1415,10 +1413,10 @@ public static class CraReportCommand
                                 {
                                     if (!nugetInfoMap.ContainsKey(packageId))
                                     {
-                                        var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                        if (info is not null)
+                                        var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                        if (result.IsSuccess)
                                         {
-                                            nugetInfoMap[packageId] = info;
+                                            nugetInfoMap[packageId] = result.Value;
                                         }
                                     }
                                 }
@@ -1434,7 +1432,7 @@ public static class CraReportCommand
 
                 // Check NuGet vulnerabilities via OSV (free, no auth required)
                 var nugetRepoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-                var allNuGetPackageIds = allPackageIds.Concat(dependencyPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                var allNuGetPackageIds = allPackageIds.Concat(dependencyPackageIds).ToList();
 
                 using var osvNuGetClient = new OsvApiClient();
                 await AnsiConsole.Status()
@@ -1480,7 +1478,8 @@ public static class CraReportCommand
                 {
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+                    if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                        vulnerabilities = [];
                     allPackages.Add(calculator.Calculate(packageId, reference.Version, nugetInfo, repoInfo, vulnerabilities));
                 }
 
@@ -1488,7 +1487,8 @@ public static class CraReportCommand
                 {
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+                    if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                        vulnerabilities = [];
                     allTransitivePackages.Add(calculator.Calculate(packageId, reference.Version, nugetInfo, repoInfo, vulnerabilities, DependencyType.Transitive));
                 }
 
@@ -1502,7 +1502,8 @@ public static class CraReportCommand
                     if (transitivePackageIds.Contains(packageId)) continue;
                     if (!nugetInfoMap.TryGetValue(packageId, out var nugetInfo)) continue;
                     nugetRepoInfoMap.TryGetValue(packageId, out var repoInfo);
-                    var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageId, []);
+                    if (!allVulnerabilities.TryGetValue(packageId, out var vulnerabilities))
+                        vulnerabilities = [];
                     allTransitivePackages.Add(calculator.Calculate(packageId, nugetInfo.LatestVersion, nugetInfo, repoInfo, vulnerabilities, DependencyType.SubDependency));
                     transitivePackageIds.Add(packageId); // Keep in sync for subsequent iterations
                 }
@@ -1524,9 +1525,10 @@ public static class CraReportCommand
             var packageJsonPath = packageJsonFiles[0];
             AnsiConsole.MarkupLine($"[dim]Using: {packageJsonPath}[/]");
 
-            var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-            if (packageJson is not null)
+            var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+            if (packageJsonResult.IsSuccess)
             {
+                var packageJson = packageJsonResult.Value;
                 var allDeps = packageJson.Dependencies
                     .Concat(packageJson.DevDependencies)
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -1555,20 +1557,29 @@ public static class CraReportCommand
                     var allNpmPackageIds = allDeps.Keys.Concat(transitiveNpmPackageIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     var npmPackagesToFetch = deepScan ? allNpmPackageIds : allDeps.Keys.ToList();
 
-                    // Fetch npm info (include transitive if deep scan)
-                    var npmInfoMap = new Dictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
+                    // Fetch npm info in parallel (include transitive if deep scan)
+                    var npmInfoMap = new ConcurrentDictionary<string, NpmPackageInfo>(StringComparer.OrdinalIgnoreCase);
 
                     await AnsiConsole.Progress()
                         .StartAsync(async ctx =>
                         {
                             var task = ctx.AddTask($"Fetching npm info for {npmPackagesToFetch.Count} packages", maxValue: npmPackagesToFetch.Count);
-                            foreach (var packageName in npmPackagesToFetch)
+                            using var semaphore = new SemaphoreSlim(10);
+                            var tasks = npmPackagesToFetch.Select(async packageName =>
                             {
-                                task.Description = $"npm: {packageName}";
-                                var info = await npmClient.GetPackageInfoAsync(packageName);
-                                if (info is not null) npmInfoMap[packageName] = info;
-                                task.Increment(1);
-                            }
+                                await semaphore.WaitAsync();
+                                try
+                                {
+                                    var result = await npmClient.GetPackageInfoAsync(packageName);
+                                    if (result.IsSuccess) npmInfoMap[packageName] = result.Value;
+                                }
+                                finally
+                                {
+                                    semaphore.Release();
+                                    task.Increment(1);
+                                }
+                            });
+                            await Task.WhenAll(tasks);
                         });
 
                     // Check npm vulnerabilities via OSV (free, no auth required)
@@ -1579,8 +1590,7 @@ public static class CraReportCommand
                             var vulns = await osvNpmClient.QueryNpmPackagesAsync(allNpmPackageIds);
                             foreach (var (name, v) in vulns)
                             {
-                                if (!allVulnerabilities.ContainsKey(name))
-                                    allVulnerabilities[name] = v;
+                                allVulnerabilities.TryAdd(name, v);
                             }
                         });
 
@@ -1627,7 +1637,8 @@ public static class CraReportCommand
 
                     // Parse lock file for integrity hashes
                     var npmLockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-                    var npmLockDeps = await NpmApiClient.ParsePackageLockAsync(npmLockPath);
+                    var npmLockDepsResult = await NpmApiClient.ParsePackageLockAsync(npmLockPath);
+                    var npmLockDeps = npmLockDepsResult.ValueOr([]);
                     var npmIntegrityLookup = npmLockDeps
                         .Where(d => !string.IsNullOrEmpty(d.Integrity))
                         .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
@@ -1638,7 +1649,8 @@ public static class CraReportCommand
                     {
                         if (!npmInfoMap.TryGetValue(packageName, out var npmInfo)) continue;
                         npmRepoInfoMap.TryGetValue(packageName, out var repoInfo);
-                        var vulnerabilities = allVulnerabilities.GetValueOrDefault(packageName, []);
+                        if (!allVulnerabilities.TryGetValue(packageName, out var vulnerabilities))
+                            vulnerabilities = [];
 
                         // Use installed version from lock file, fall back to latest if not found
                         var installedVersion = npmInstalledVersions.GetValueOrDefault(packageName, npmInfo.LatestVersion);
@@ -1732,6 +1744,16 @@ public static class CraReportCommand
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
         CraConfig? config = null)
     {
+        // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
+        var allPackages = packages.Concat(transitivePackages).ToList();
+        var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var p in allPackages)
+        {
+            packageVersionLookup.TryAdd(p.PackageId, p.Version);
+            packageLookup.TryAdd(p.PackageId, p);
+        }
+
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
         {
@@ -1829,12 +1851,10 @@ public static class CraReportCommand
         // Set remediation data (F5) - cross-reference vulnerabilities with patches
         {
             var remediationData = new List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)>();
-            var packageVersions2 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
 
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions2.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 foreach (var vuln in vulns)
@@ -1862,17 +1882,12 @@ public static class CraReportCommand
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
 
-        // Build lookup of package versions for version range checking
-        var packageVersions = packages.Concat(transitivePackages)
-            .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
         var kevCvePackages = allVulnerabilities
             .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
             .Where(x => kevService.IsKnownExploited(x.Cve))
             .Where(x =>
             {
-                // Only flag if installed version is actually in the vulnerable range
-                if (!packageVersions.TryGetValue(x.PackageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(x.PackageId, out var installedVersion))
                     return false;
                 return IsVersionInVulnerableRange(installedVersion, x.Vuln);
             })
@@ -1884,7 +1899,7 @@ public static class CraReportCommand
         // Mark packages with KEV vulnerabilities
         var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
         var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
-        foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
+        foreach (var pkg in allPackages.Where(p => kevPackageIds.Contains(p.PackageId)))
         {
             pkg.HasKevVulnerability = true;
 
@@ -1915,12 +1930,9 @@ public static class CraReportCommand
 
         // Populate patch timeliness data from remediation info for enhanced CRA scoring
         {
-            var packageVersions3 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions3.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 var patchCount = 0;
@@ -1939,27 +1951,22 @@ public static class CraReportCommand
                         oldestDays = days;
                 }
 
-                if (patchCount > 0)
+                if (patchCount > 0 && packageLookup.TryGetValue(packageId, out var target))
                 {
-                    var target = packages.Concat(transitivePackages)
-                        .FirstOrDefault(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
-                    if (target is not null)
-                    {
-                        target.PatchAvailableNotAppliedCount = patchCount;
-                        target.OldestUnpatchedVulnDays = oldestDays;
-                    }
+                    target.PatchAvailableNotAppliedCount = patchCount;
+                    target.OldestUnpatchedVulnDays = oldestDays;
                 }
             }
         }
 
         // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
-        foreach (var pkg in packages.Concat(transitivePackages))
+        foreach (var pkg in allPackages)
         {
             HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
         }
 
         // Crypto compliance check
-        var allPackageTuples = packages.Concat(transitivePackages)
+        var allPackageTuples = allPackages
             .Select(p => (p.PackageId, p.Version))
             .ToList();
         var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
@@ -1972,7 +1979,7 @@ public static class CraReportCommand
             using var provenanceChecker = new PackageProvenanceChecker();
             var allProvenanceResults = new List<ProvenanceResult>();
 
-            var nugetPackages = packages.Concat(transitivePackages)
+            var nugetPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -1984,7 +1991,7 @@ public static class CraReportCommand
                 allProvenanceResults.AddRange(nugetResults);
             }
 
-            var npmPackages = packages.Concat(transitivePackages)
+            var npmPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.Npm)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -2000,10 +2007,29 @@ public static class CraReportCommand
                 reportGenerator.SetProvenanceResults(allProvenanceResults);
         }
 
+        // Art. 14 Reporting Obligation Analysis
+        {
+            var kevCveSet = new HashSet<string>(kevCvePackages.Select(k => k.Cve), StringComparer.OrdinalIgnoreCase);
+            var epssLookup = allVulnerabilities.Values
+                .SelectMany(v => v.SelectMany(vi => vi.Cves.Where(c => vi.EpssProbability.HasValue)
+                    .Select(c => new EpssScore { Cve = c, Probability = vi.EpssProbability!.Value, Percentile = vi.EpssPercentile ?? 0.0 })))
+                .GroupBy(s => s.Cve, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Probability).First(), StringComparer.OrdinalIgnoreCase);
+
+            var reportingObligations = ReportingObligationAnalyzer.Analyze(allPackages, allVulnerabilities, kevCveSet, epssLookup);
+            reportGenerator.SetReportingObligations(reportingObligations);
+        }
+
         // Generate SBOM/VEX once, validate SBOM, then build final report
         var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
         reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
+
+        // Remediation Roadmap (needs CRA score from report for prioritization)
+        {
+            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            reportGenerator.SetRemediationRoadmap(roadmap);
+        }
 
         if (string.IsNullOrEmpty(outputPath))
         {
@@ -2147,7 +2173,8 @@ public static class CraReportCommand
         var isDuplicate = !seen.Add(key);
 
         healthLookup.TryGetValue(packageId, out var health);
-        var vulnList = vulnerabilities.GetValueOrDefault(packageId, []);
+        if (!vulnerabilities.TryGetValue(packageId, out var vulnList))
+            vulnList = [];
         var activeVuln = vulnList.Count > 0 ? GetFirstActiveVulnerability(version, vulnList) : null;
         var hasVuln = activeVuln is not null;
 
@@ -2210,9 +2237,13 @@ public static class CraReportCommand
     private static int CalculateMaxDepth(List<DependencyTreeNode> roots)
     {
         var maxDepth = 0;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (node.Depth > maxDepth) maxDepth = node.Depth;
             foreach (var child in node.Children)
             {
@@ -2231,9 +2262,13 @@ public static class CraReportCommand
     private static int CountVulnerableNodes(List<DependencyTreeNode> roots)
     {
         var count = 0;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key)) return;
+
             if (node.HasVulnerabilities) count++;
             foreach (var child in node.Children)
             {
@@ -2255,9 +2290,15 @@ public static class CraReportCommand
     /// </summary>
     private static void PropagateVulnerabilityStatus(List<DependencyTreeNode> roots)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         // Returns true if this node or any descendant has vulnerabilities
         bool Visit(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visited.Add(key))
+                return node.HasVulnerabilities || node.HasVulnerableDescendant;
+
             var hasVulnerableChild = false;
 
             foreach (var child in node.Children)
@@ -2289,9 +2330,13 @@ public static class CraReportCommand
     {
         // Collect all versions for each package
         var packageVersions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var visitedCollect = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void CollectVersions(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visitedCollect.Add(key)) return;
+
             if (!packageVersions.TryGetValue(node.PackageId, out var versions))
             {
                 versions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2319,8 +2364,13 @@ public static class CraReportCommand
             return;
 
         // Mark nodes with conflicts and create issues
+        var visitedMark = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         void MarkConflicts(DependencyTreeNode node)
         {
+            var key = $"{node.PackageId}@{node.Version}";
+            if (!visitedMark.Add(key)) return;
+
             if (conflictingPackages.TryGetValue(node.PackageId, out var versions))
             {
                 node.HasVersionConflict = true;
@@ -2377,11 +2427,12 @@ public static class CraReportCommand
         {
             foreach (var vuln in vulns)
             {
-                var maxEpss = vuln.Cves
-                    .Where(c => epssScores.ContainsKey(c))
-                    .Select(c => epssScores[c])
-                    .OrderByDescending(s => s.Probability)
-                    .FirstOrDefault();
+                EpssScore? maxEpss = null;
+                foreach (var c in vuln.Cves)
+                {
+                    if (epssScores.TryGetValue(c, out var score) && (maxEpss is null || score.Probability > maxEpss.Probability))
+                        maxEpss = score;
+                }
 
                 if (maxEpss is not null)
                 {
@@ -2402,8 +2453,7 @@ public static class CraReportCommand
             var activeVulnIds = new HashSet<string>(pkg.Vulnerabilities, StringComparer.OrdinalIgnoreCase);
             var maxPkgEpss = pkgVulns
                 .Where(v => v.EpssProbability.HasValue && activeVulnIds.Contains(v.Id))
-                .OrderByDescending(v => v.EpssProbability)
-                .FirstOrDefault();
+                .MaxBy(v => v.EpssProbability);
 
             if (maxPkgEpss is not null)
             {
@@ -2471,61 +2521,6 @@ public static class CraReportCommand
             });
     }
 
-    private static async Task FetchGitHubDataAsync(
-        GitHubApiClient githubClient,
-        List<string> repoUrls,
-        Dictionary<string, NpmPackageInfo> npmInfoMap,
-        List<string> packageNames,
-        Dictionary<string, GitHubRepoInfo?> repoInfoMap,
-        Dictionary<string, List<VulnerabilityInfo>> allVulnerabilities)
-    {
-        await AnsiConsole.Status()
-            .StartAsync("Fetching GitHub repository info (batch)...", async ctx =>
-            {
-                var validUrls = repoUrls
-                    .Where(u => u.Contains("github.com", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (validUrls.Count > 0)
-                {
-                    var results = await githubClient.GetRepositoriesBatchAsync(validUrls);
-
-                    foreach (var (packageName, info) in npmInfoMap)
-                    {
-                        var url = info.RepositoryUrl;
-                        if (url is not null && results.TryGetValue(url, out var repoInfo))
-                        {
-                            repoInfoMap[packageName] = repoInfo;
-                        }
-                    }
-                }
-
-                if (githubClient.IsRateLimited)
-                {
-                    ctx.Status("[yellow]GitHub rate limited - continuing with available data[/]");
-                }
-            });
-
-        // Fetch vulnerabilities
-        if (!githubClient.IsRateLimited && githubClient.HasToken)
-        {
-            await AnsiConsole.Status()
-                .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
-                {
-                    var results = await githubClient.GetVulnerabilitiesBatchAsync(packageNames);
-                    foreach (var (name, vulns) in results)
-                    {
-                        allVulnerabilities[name] = vulns;
-                    }
-
-                    if (githubClient.IsRateLimited)
-                    {
-                        ctx.Status("[yellow]GitHub rate limited - vulnerability data may be incomplete[/]");
-                    }
-                });
-        }
-    }
-
     private static async Task<int> GenerateReportAsync(
         string path,
         List<PackageHealth> packages,
@@ -2546,6 +2541,16 @@ public static class CraReportCommand
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
         CraConfig? config = null)
     {
+        // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
+        var allPackages = packages.Concat(transitivePackages).ToList();
+        var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var p in allPackages)
+        {
+            packageVersionLookup.TryAdd(p.PackageId, p.Version);
+            packageLookup.TryAdd(p.PackageId, p);
+        }
+
         // Calculate project score
         var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
         var projectStatus = projectScore switch
@@ -2639,12 +2644,10 @@ public static class CraReportCommand
         // Set remediation data (F5) - cross-reference vulnerabilities with patches
         {
             var remediationData = new List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)>();
-            var packageVersions2 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
 
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions2.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 foreach (var vuln in vulns)
@@ -2674,17 +2677,13 @@ public static class CraReportCommand
         using var kevService = new CisaKevService();
         await kevService.LoadCatalogAsync();
 
-        // Build lookup of package versions for version range checking
-        var packageVersions = packages.Concat(transitivePackages)
-            .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
         var kevCvePackages = allVulnerabilities
             .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
             .Where(x => kevService.IsKnownExploited(x.Cve))
             .Where(x =>
             {
                 // Only flag if installed version is actually in the vulnerable range
-                if (!packageVersions.TryGetValue(x.PackageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(x.PackageId, out var installedVersion))
                     return false;
                 return IsVersionInVulnerableRange(installedVersion, x.Vuln);
             })
@@ -2696,7 +2695,7 @@ public static class CraReportCommand
         // Mark packages with KEV vulnerabilities
         var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
         var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
-        foreach (var pkg in packages.Concat(transitivePackages).Where(p => kevPackageIds.Contains(p.PackageId)))
+        foreach (var pkg in allPackages.Where(p => kevPackageIds.Contains(p.PackageId)))
         {
             pkg.HasKevVulnerability = true;
 
@@ -2727,12 +2726,9 @@ public static class CraReportCommand
 
         // Populate patch timeliness data from remediation info for enhanced CRA scoring
         {
-            var packageVersions3 = packages.Concat(transitivePackages)
-                .ToDictionary(p => p.PackageId, p => p.Version, StringComparer.OrdinalIgnoreCase);
-
             foreach (var (packageId, vulns) in allVulnerabilities)
             {
-                if (!packageVersions3.TryGetValue(packageId, out var installedVersion))
+                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
                     continue;
 
                 var patchCount = 0;
@@ -2751,27 +2747,22 @@ public static class CraReportCommand
                         oldestDays = days;
                 }
 
-                if (patchCount > 0)
+                if (patchCount > 0 && packageLookup.TryGetValue(packageId, out var target))
                 {
-                    var target = packages.Concat(transitivePackages)
-                        .FirstOrDefault(p => p.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
-                    if (target is not null)
-                    {
-                        target.PatchAvailableNotAppliedCount = patchCount;
-                        target.OldestUnpatchedVulnDays = oldestDays;
-                    }
+                    target.PatchAvailableNotAppliedCount = patchCount;
+                    target.OldestUnpatchedVulnDays = oldestDays;
                 }
             }
         }
 
         // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
-        foreach (var pkg in packages.Concat(transitivePackages))
+        foreach (var pkg in allPackages)
         {
             HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
         }
 
         // 4. Crypto compliance check
-        var allPackageTuples = packages.Concat(transitivePackages)
+        var allPackageTuples = allPackages
             .Select(p => (p.PackageId, p.Version))
             .ToList();
         var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
@@ -2784,7 +2775,7 @@ public static class CraReportCommand
             using var provenanceChecker = new PackageProvenanceChecker();
             var allProvenanceResults = new List<ProvenanceResult>();
 
-            var nugetPackages = packages.Concat(transitivePackages)
+            var nugetPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -2796,7 +2787,7 @@ public static class CraReportCommand
                 allProvenanceResults.AddRange(nugetResults);
             }
 
-            var npmPackages = packages.Concat(transitivePackages)
+            var npmPackages = allPackages
                 .Where(p => p.Ecosystem == PackageEcosystem.Npm)
                 .Select(p => (p.PackageId, p.Version))
                 .ToList();
@@ -2812,10 +2803,29 @@ public static class CraReportCommand
                 reportGenerator.SetProvenanceResults(allProvenanceResults);
         }
 
+        // Art. 14 Reporting Obligation Analysis
+        {
+            var kevCveSet = new HashSet<string>(kevCvePackages.Select(k => k.Cve), StringComparer.OrdinalIgnoreCase);
+            var epssLookup = allVulnerabilities.Values
+                .SelectMany(v => v.SelectMany(vi => vi.Cves.Where(c => vi.EpssProbability.HasValue)
+                    .Select(c => new EpssScore { Cve = c, Probability = vi.EpssProbability!.Value, Percentile = vi.EpssPercentile ?? 0.0 })))
+                .GroupBy(s => s.Cve, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Probability).First(), StringComparer.OrdinalIgnoreCase);
+
+            var reportingObligations = ReportingObligationAnalyzer.Analyze(allPackages, allVulnerabilities, kevCveSet, epssLookup);
+            reportGenerator.SetReportingObligations(reportingObligations);
+        }
+
         // Generate SBOM/VEX once, validate SBOM, then build final report
         var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
         reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
+
+        // Remediation Roadmap (needs CRA score from report for prioritization)
+        {
+            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            reportGenerator.SetRemediationRoadmap(roadmap);
+        }
 
         // Determine output path
         if (string.IsNullOrEmpty(outputPath))
@@ -2938,6 +2948,24 @@ public static class CraReportCommand
             if (config.FailOnCraReadinessBelow.HasValue && report.CraReadinessScore < config.FailOnCraReadinessBelow.Value)
                 violations.Add($"CRA readiness score {report.CraReadinessScore} below threshold {config.FailOnCraReadinessBelow.Value}");
 
+            if (config.FailOnReportableVulnerabilities && report.ReportableVulnerabilityCount > 0)
+                violations.Add($"CRA Art. 14 reportable vulnerabilities detected ({report.ReportableVulnerabilityCount})");
+
+            if (config.FailOnUnpatchedDaysOver.HasValue && report.MaxUnpatchedVulnerabilityDays.HasValue
+                && report.MaxUnpatchedVulnerabilityDays.Value > config.FailOnUnpatchedDaysOver.Value)
+                violations.Add($"Unpatched vulnerability age {report.MaxUnpatchedVulnerabilityDays.Value} days exceeds threshold {config.FailOnUnpatchedDaysOver.Value}");
+
+            if (config.FailOnUnmaintainedPackages && report.HasUnmaintainedPackages)
+                violations.Add("Unmaintained packages detected (no activity 2+ years)");
+
+            if (config.FailOnSbomCompletenessBelow.HasValue && report.SbomCompletenessPercentage.HasValue
+                && report.SbomCompletenessPercentage.Value < config.FailOnSbomCompletenessBelow.Value)
+                violations.Add($"SBOM completeness {report.SbomCompletenessPercentage.Value}% below threshold {config.FailOnSbomCompletenessBelow.Value}%");
+
+            if (config.FailOnAttackSurfaceDepthOver.HasValue && report.MaxDependencyDepth.HasValue
+                && report.MaxDependencyDepth.Value > config.FailOnAttackSurfaceDepthOver.Value)
+                violations.Add($"Dependency tree depth {report.MaxDependencyDepth.Value} exceeds threshold {config.FailOnAttackSurfaceDepthOver.Value}");
+
             if (violations.Count > 0)
             {
                 AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
@@ -3035,7 +3063,7 @@ public static class CraReportCommand
             sb.AppendLine($"    <h3>{System.Web.HttpUtility.HtmlEncode(pkg.PackageId)} <span class=\"meta\">v{System.Web.HttpUtility.HtmlEncode(pkg.Version)}</span></h3>");
             sb.AppendLine($"    <span class=\"{licenseClass}\">{System.Web.HttpUtility.HtmlEncode(pkg.License ?? "Unknown")}</span>");
 
-            if (!string.IsNullOrEmpty(pkg.RepositoryUrl))
+            if (pkg.RepositoryUrl is not null && (pkg.RepositoryUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || pkg.RepositoryUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
             {
                 sb.AppendLine("    <p class=\"meta\">");
                 sb.AppendLine($"      <a href=\"{System.Web.HttpUtility.HtmlEncode(pkg.RepositoryUrl)}\" target=\"_blank\">Repository</a>");
@@ -3066,15 +3094,17 @@ public static class CraReportCommand
         // Group by license for summary
         var licenseGroups = packages
             .GroupBy(p => p.License ?? "Unknown")
-            .OrderByDescending(g => g.Count());
+            .Select(g => (License: g.Key, Count: g.Count()))
+            .OrderByDescending(g => g.Count)
+            .ToList();
 
         sb.AppendLine("### License Summary");
         sb.AppendLine();
         sb.AppendLine("| License | Count |");
         sb.AppendLine("|---------|-------|");
-        foreach (var group in licenseGroups)
+        foreach (var (license, count) in licenseGroups)
         {
-            sb.AppendLine($"| {group.Key} | {group.Count()} |");
+            sb.AppendLine($"| {license} | {count} |");
         }
         sb.AppendLine();
         sb.AppendLine("### Package Details");
@@ -3120,23 +3150,13 @@ public static class CraReportCommand
         if (format == SbomFormat.CycloneDx)
         {
             var bom = sbomGenerator.GenerateCycloneDx(projectName, allPackages);
-            content = JsonSerializer.Serialize(bom, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            });
+            content = JsonSerializer.Serialize(bom, JsonDefaults.IndentedIgnoreNull);
             fileName = $"{projectName}-sbom.cdx.json";
         }
         else
         {
             var sbom = sbomGenerator.Generate(projectName, allPackages);
-            content = JsonSerializer.Serialize(sbom, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            });
+            content = JsonSerializer.Serialize(sbom, JsonDefaults.IndentedIgnoreNull);
             fileName = $"{projectName}-sbom.spdx.json";
         }
 
