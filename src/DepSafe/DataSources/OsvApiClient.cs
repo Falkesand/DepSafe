@@ -18,6 +18,7 @@ public sealed partial class OsvApiClient : IDisposable
 
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private const string OsvApiUrl = "https://api.osv.dev/v1";
     private const int BatchSize = 1000; // OSV supports up to 1000 queries per batch
 
@@ -33,6 +34,7 @@ public sealed partial class OsvApiClient : IDisposable
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "DepSafe");
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -58,14 +60,14 @@ public sealed partial class OsvApiClient : IDisposable
         IEnumerable<(string Name, string? Version, PackageEcosystem Ecosystem)> packages,
         CancellationToken ct = default)
     {
-        var results = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
         var packageList = packages.ToList();
+        var results = new Dictionary<string, List<VulnerabilityInfo>>(packageList.Count, StringComparer.OrdinalIgnoreCase);
 
         if (packageList.Count == 0)
             return results;
 
         // Check cache first, collect packages that need fetching
-        var packagesToFetch = new List<(string Name, string? Version, PackageEcosystem Ecosystem)>();
+        var packagesToFetch = new List<(string Name, string? Version, PackageEcosystem Ecosystem)>(packageList.Count);
         foreach (var pkg in packageList)
         {
             var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
@@ -125,30 +127,30 @@ public sealed partial class OsvApiClient : IDisposable
     /// <summary>
     /// Query vulnerabilities for npm packages.
     /// </summary>
-    public async Task<Dictionary<string, List<VulnerabilityInfo>>> QueryNpmPackagesAsync(
+    public Task<Dictionary<string, List<VulnerabilityInfo>>> QueryNpmPackagesAsync(
         IEnumerable<string> packageNames,
         CancellationToken ct = default)
     {
         var packages = packageNames.Select(name => (name, (string?)null, PackageEcosystem.Npm));
-        return await QueryBatchAsync(packages, ct);
+        return QueryBatchAsync(packages, ct);
     }
 
     /// <summary>
     /// Query vulnerabilities for NuGet packages.
     /// </summary>
-    public async Task<Dictionary<string, List<VulnerabilityInfo>>> QueryNuGetPackagesAsync(
+    public Task<Dictionary<string, List<VulnerabilityInfo>>> QueryNuGetPackagesAsync(
         IEnumerable<string> packageNames,
         CancellationToken ct = default)
     {
         var packages = packageNames.Select(name => (name, (string?)null, PackageEcosystem.NuGet));
-        return await QueryBatchAsync(packages, ct);
+        return QueryBatchAsync(packages, ct);
     }
 
     private async Task<Dictionary<string, List<VulnerabilityInfo>>> QueryBatchInternalAsync(
         List<(string Name, string? Version, PackageEcosystem Ecosystem)> packages,
         CancellationToken ct)
     {
-        var results = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
+        var results = new Dictionary<string, List<VulnerabilityInfo>>(packages.Count, StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -222,9 +224,21 @@ public sealed partial class OsvApiClient : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
         {
-            Console.Error.WriteLine($"OSV API error: {ex.Message}");
+            Console.Error.WriteLine($"[WARN] OSV API network error: {ex.Message}");
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"[WARN] OSV API parse error: {ex.Message}");
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine("[WARN] OSV API request timed out");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] OSV API error: {ex.Message}");
         }
 
         return results;
@@ -237,7 +251,7 @@ public sealed partial class OsvApiClient : IDisposable
         List<string> vulnIds,
         CancellationToken ct)
     {
-        var results = new Dictionary<string, OsvVulnerability>(StringComparer.OrdinalIgnoreCase);
+        var results = new Dictionary<string, OsvVulnerability>(vulnIds.Count, StringComparer.OrdinalIgnoreCase);
         var resultsLock = new Lock();
 
         // Fetch vulnerabilities in parallel (with some concurrency limit)
@@ -488,6 +502,7 @@ public sealed partial class OsvApiClient : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 
     // OSV API request/response models

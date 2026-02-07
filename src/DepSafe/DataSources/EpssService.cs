@@ -14,6 +14,7 @@ public sealed class EpssService : IDisposable
     private const int BatchSize = 100; // Keep URLs under ~4000 chars
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
 
     public EpssService(ResponseCache? cache = null)
     {
@@ -23,6 +24,7 @@ public sealed class EpssService : IDisposable
         })
         { Timeout = TimeSpan.FromSeconds(30) };
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -41,10 +43,10 @@ public sealed class EpssService : IDisposable
         if (uniqueCves.Count == 0)
             return [];
 
-        var result = new Dictionary<string, EpssScore>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, EpssScore>(uniqueCves.Count, StringComparer.OrdinalIgnoreCase);
 
         // Check cache first, collect uncached CVEs
-        var uncached = new List<string>();
+        var uncached = new List<string>(uniqueCves.Count);
         foreach (var cve in uniqueCves)
         {
             var cached = await _cache.GetAsync<EpssScore>($"epss:{cve}", ct);
@@ -177,20 +179,6 @@ public sealed class EpssService : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
-}
-
-/// <summary>
-/// EPSS score for a single CVE.
-/// </summary>
-public sealed class EpssScore
-{
-    /// <summary>CVE identifier (e.g., CVE-2021-44228).</summary>
-    public required string Cve { get; init; }
-
-    /// <summary>Probability of exploitation in the next 30 days (0.0-1.0).</summary>
-    public required double Probability { get; init; }
-
-    /// <summary>Percentile ranking relative to all scored CVEs (0.0-1.0).</summary>
-    public required double Percentile { get; init; }
 }

@@ -1,21 +1,6 @@
 namespace DepSafe.Models;
 
 /// <summary>
-/// Trigger reason for a CRA Art. 14 reporting obligation.
-/// </summary>
-public enum ReportingTrigger
-{
-    /// <summary>Vulnerability is in CISA KEV catalog (actively exploited).</summary>
-    KevExploitation,
-
-    /// <summary>EPSS probability >= 0.5 (high likelihood of exploitation).</summary>
-    HighEpss,
-
-    /// <summary>Both KEV and high EPSS.</summary>
-    Both
-}
-
-/// <summary>
 /// A vulnerability that triggers CRA Art. 14 incident reporting obligations.
 /// Art. 14 requires manufacturers to notify CSIRT within 24 hours of becoming aware
 /// of an actively exploited vulnerability, with full details within 72 hours.

@@ -13,6 +13,7 @@ public sealed class NpmApiClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private const string NpmRegistryUrl = "https://registry.npmjs.org";
     private const string NpmDownloadsUrl = "https://api.npmjs.org/downloads/point/last-week";
 
@@ -27,6 +28,7 @@ public sealed class NpmApiClient : IDisposable
         };
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -204,7 +206,22 @@ public sealed class NpmApiClient : IDisposable
 
             return doc?["downloads"]?.GetValue<long>() ?? 0;
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Network error fetching download count for {packageName}: {ex.Message}");
+            return 0;
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Parse error fetching download count for {packageName}: {ex.Message}");
+            return 0;
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"[WARN] Timeout fetching download count for {packageName}");
+            return 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"[WARN] Failed to fetch download count for {packageName}: {ex.Message}");
             return 0;
@@ -425,9 +442,13 @@ public sealed class NpmApiClient : IDisposable
                     queue.Enqueue(subDir);
                 }
             }
-            catch
+            catch (IOException)
             {
                 // Ignore directories we can't access
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Ignore directories we don't have permission for
             }
         }
     }
@@ -684,5 +705,6 @@ public sealed class NpmApiClient : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 }

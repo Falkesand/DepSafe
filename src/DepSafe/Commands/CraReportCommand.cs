@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.CommandLine;
-using System.CommandLine.Binding;
 using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
@@ -306,8 +305,8 @@ public static class CraReportCommand
             });
 
         // Phase 2: Fetch vulnerabilities from OSV (free, no auth required) and GitHub repo info
-        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(allNpmPackageIds.Count, StringComparer.OrdinalIgnoreCase);
+        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(allNpmPackageIds.Count, StringComparer.OrdinalIgnoreCase);
 
         // Fetch vulnerabilities from OSV (always available, no auth)
         using var osvClient = new OsvApiClient();
@@ -335,7 +334,7 @@ public static class CraReportCommand
         var packages = new List<PackageHealth>();
 
         // Build lookup of installed versions from dependency tree
-        var installedVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var installedVersions = new Dictionary<string, string>(dependencyTree?.Roots.Count ?? 0, StringComparer.OrdinalIgnoreCase);
         if (dependencyTree is not null)
         {
             foreach (var root in dependencyTree.Roots)
@@ -1108,11 +1107,10 @@ public static class CraReportCommand
         }
 
         // Phase 2: Batch fetch GitHub repo info (if not skipped)
-        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-
         // Include dependency packages in the list for GitHub lookups
         var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).ToList();
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(allPackageIdsWithDeps.Count, StringComparer.OrdinalIgnoreCase);
+        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(allPackageIdsWithDeps.Count, StringComparer.OrdinalIgnoreCase);
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {
@@ -3195,72 +3193,4 @@ public static class CraReportCommand
 
         return true;
     }
-}
-
-public sealed record CraReportOptions(
-    string? Path,
-    CraOutputFormat Format,
-    string? Output,
-    bool SkipGitHub,
-    bool Deep,
-    LicenseOutputFormat? Licenses,
-    SbomFormat? Sbom,
-    bool CheckTyposquat);
-
-public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
-{
-    private readonly Argument<string?> _path;
-    private readonly Option<CraOutputFormat> _format;
-    private readonly Option<string?> _output;
-    private readonly Option<bool> _skipGitHub;
-    private readonly Option<bool> _deep;
-    private readonly Option<LicenseOutputFormat?> _licenses;
-    private readonly Option<SbomFormat?> _sbom;
-    private readonly Option<bool> _checkTyposquat;
-
-    public CraReportOptionsBinder(
-        Argument<string?> path,
-        Option<CraOutputFormat> format,
-        Option<string?> output,
-        Option<bool> skipGitHub,
-        Option<bool> deep,
-        Option<LicenseOutputFormat?> licenses,
-        Option<SbomFormat?> sbom,
-        Option<bool> checkTyposquat)
-    {
-        _path = path;
-        _format = format;
-        _output = output;
-        _skipGitHub = skipGitHub;
-        _deep = deep;
-        _licenses = licenses;
-        _sbom = sbom;
-        _checkTyposquat = checkTyposquat;
-    }
-
-    protected override CraReportOptions GetBoundValue(BindingContext bindingContext) => new(
-        bindingContext.ParseResult.GetValueForArgument(_path),
-        bindingContext.ParseResult.GetValueForOption(_format),
-        bindingContext.ParseResult.GetValueForOption(_output),
-        bindingContext.ParseResult.GetValueForOption(_skipGitHub),
-        bindingContext.ParseResult.GetValueForOption(_deep),
-        bindingContext.ParseResult.GetValueForOption(_licenses),
-        bindingContext.ParseResult.GetValueForOption(_sbom),
-        bindingContext.ParseResult.GetValueForOption(_checkTyposquat));
-}
-
-public enum CraOutputFormat
-{
-    Html,
-    Json
-}
-
-public enum LicenseOutputFormat
-{
-    /// <summary>Plain text THIRD-PARTY-NOTICES.txt format</summary>
-    Txt,
-    /// <summary>HTML page with styled license information</summary>
-    Html,
-    /// <summary>Markdown ATTRIBUTION.md format</summary>
-    Md
 }

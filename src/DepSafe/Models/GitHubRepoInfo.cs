@@ -21,26 +21,3 @@ public sealed class GitHubRepoInfo
     /// <summary>Whether the repository has a SECURITY.md file (CRA Art. 11(5)).</summary>
     public bool HasSecurityPolicy { get; init; }
 }
-
-/// <summary>
-/// Vulnerability information from GitHub Advisory Database.
-/// </summary>
-public sealed class VulnerabilityInfo
-{
-    public required string Id { get; init; }
-    public required string Severity { get; init; }
-    public required string Summary { get; init; }
-    public string? Description { get; init; }
-    public required string PackageId { get; init; }
-    public required string VulnerableVersionRange { get; init; }
-    public string? PatchedVersion { get; init; }
-    public List<string> Cves { get; init; } = [];
-    public string? Url { get; init; }
-    public DateTime? PublishedAt { get; init; }
-
-    /// <summary>EPSS probability of exploitation in the next 30 days (0.0-1.0). Max across all CVEs.</summary>
-    public double? EpssProbability { get; set; }
-
-    /// <summary>EPSS percentile ranking (0.0-1.0). Max across all CVEs.</summary>
-    public double? EpssPercentile { get; set; }
-}

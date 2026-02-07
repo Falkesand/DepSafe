@@ -510,7 +510,7 @@ public sealed class HealthScoreCalculator
         if (!NuGet.Versioning.NuGetVersion.TryParse(version, out var parsedVersion))
             return vulnerabilities; // can't filter without valid version
 
-        var active = new List<VulnerabilityInfo>();
+        var active = new List<VulnerabilityInfo>(vulnerabilities.Count);
         foreach (var vuln in vulnerabilities)
         {
             // FIRST check if version is in vulnerable range

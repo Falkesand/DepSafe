@@ -63,7 +63,7 @@ public static class ReportingObligationAnalyzer
                     if (cveEpss > maxEpss) maxEpss = cveEpss;
 
                     // Track highest severity
-                    int vulnRank = Array.IndexOf(s_severityOrder, vuln.Severity?.ToUpperInvariant());
+                    int vulnRank = FindSeverityIndex(vuln.Severity);
                     if (vulnRank >= 0 && vulnRank < highestRank)
                         highestRank = vulnRank;
                 }
@@ -101,8 +101,8 @@ public static class ReportingObligationAnalyzer
         // Sort by severity: Critical > High > Medium > Low, then by trigger (Both > KEV > EPSS)
         obligations.Sort((a, b) =>
         {
-            int aSev = Array.IndexOf(s_severityOrder, a.Severity.ToUpperInvariant());
-            int bSev = Array.IndexOf(s_severityOrder, b.Severity.ToUpperInvariant());
+            int aSev = FindSeverityIndex(a.Severity);
+            int bSev = FindSeverityIndex(b.Severity);
             if (aSev < 0) aSev = s_severityOrder.Length;
             if (bSev < 0) bSev = s_severityOrder.Length;
             int cmp = aSev.CompareTo(bSev);
@@ -113,4 +113,13 @@ public static class ReportingObligationAnalyzer
         return obligations;
     }
 
+    private static int FindSeverityIndex(string? severity)
+    {
+        for (int i = 0; i < s_severityOrder.Length; i++)
+        {
+            if (string.Equals(s_severityOrder[i], severity, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
+    }
 }

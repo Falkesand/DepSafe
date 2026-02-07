@@ -5,39 +5,6 @@ using NuGet.Versioning;
 namespace DepSafe.Scoring;
 
 /// <summary>
-/// Effort level for upgrading a package.
-/// </summary>
-public enum UpgradeEffort
-{
-    /// <summary>Patch version bump (e.g., 1.0.0 -> 1.0.1). Low risk.</summary>
-    Patch,
-    /// <summary>Minor version bump (e.g., 1.0.0 -> 1.1.0). May have new features.</summary>
-    Minor,
-    /// <summary>Major version bump (e.g., 1.0.0 -> 2.0.0). May have breaking changes.</summary>
-    Major
-}
-
-/// <summary>
-/// A prioritized remediation action for the CRA Remediation Roadmap.
-/// </summary>
-public sealed class RemediationRoadmapItem
-{
-    public required string PackageId { get; init; }
-    public required string CurrentVersion { get; init; }
-    public required string RecommendedVersion { get; init; }
-    public required int CveCount { get; init; }
-    public required List<string> CveIds { get; init; }
-    public required int ScoreLift { get; init; }
-    public required UpgradeEffort Effort { get; init; }
-    public bool HasKevVulnerability { get; init; }
-    public double MaxEpssProbability { get; init; }
-    public int MaxPatchAgeDays { get; init; }
-
-    /// <summary>Computed priority score for sorting (higher = more urgent).</summary>
-    public int PriorityScore { get; init; }
-}
-
-/// <summary>
 /// Ranks vulnerable packages by CRA compliance impact to produce a prioritized remediation roadmap.
 /// Only considers vulnerabilities that actually affect the installed package version.
 /// </summary>
@@ -60,7 +27,7 @@ public static class RemediationPrioritizer
         int currentCraScore,
         List<CraComplianceItem> currentComplianceItems)
     {
-        var items = new List<RemediationRoadmapItem>();
+        var items = new List<RemediationRoadmapItem>(Math.Min(allPackages.Count, MaxItems));
 
         foreach (var pkg in allPackages)
         {
@@ -69,7 +36,7 @@ public static class RemediationPrioritizer
 
             // Collect CVEs only from vulnerabilities that actually affect the installed version
             var allCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var affectedVulns = new List<VulnerabilityInfo>();
+            var affectedVulns = new List<VulnerabilityInfo>(vulns.Count);
             string? recommendedVersion = null;
             int maxPatchAgeDays = 0;
             double maxEpss = 0.0;
@@ -197,9 +164,19 @@ public static class RemediationPrioritizer
         int best = s_severityOrder.Length;
         foreach (var vuln in vulns)
         {
-            int idx = Array.IndexOf(s_severityOrder, vuln.Severity?.ToUpperInvariant());
+            int idx = FindSeverityIndex(vuln.Severity);
             if (idx >= 0 && idx < best) best = idx;
         }
         return best < s_severityOrder.Length ? s_severityOrder[best] : "LOW";
+    }
+
+    private static int FindSeverityIndex(string? severity)
+    {
+        for (int i = 0; i < s_severityOrder.Length; i++)
+        {
+            if (string.Equals(s_severityOrder[i], severity, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
     }
 }
