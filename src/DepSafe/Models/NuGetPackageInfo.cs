@@ -20,22 +20,3 @@ public sealed class NuGetPackageInfo
     public string? DeprecationReason { get; init; }
     public List<PackageDependency> Dependencies { get; init; } = [];
 }
-
-/// <summary>
-/// A package dependency.
-/// </summary>
-public sealed class PackageDependency
-{
-    public required string PackageId { get; init; }
-    public string? VersionRange { get; init; }
-    public string? TargetFramework { get; init; }
-}
-
-public sealed class VersionInfo
-{
-    public required string Version { get; init; }
-    public required DateTime PublishedDate { get; init; }
-    public required long Downloads { get; init; }
-    public bool IsPrerelease { get; init; }
-    public bool IsListed { get; init; } = true;
-}

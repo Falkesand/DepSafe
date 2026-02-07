@@ -464,9 +464,3 @@ public static class SbomCommand
         return [];
     }
 }
-
-public enum SbomFormat
-{
-    Spdx,
-    CycloneDx
-}

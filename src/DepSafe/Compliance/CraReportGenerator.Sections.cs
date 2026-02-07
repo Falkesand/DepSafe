@@ -105,7 +105,7 @@ public sealed partial class CraReportGenerator
             "Review Recommended" => "warning",
             _ => "critical"
         };
-        var unknownCount = licenseReport.CategoryDistribution.GetValueOrDefault(LicenseCompatibility.LicenseCategory.Unknown, 0);
+        var unknownCount = licenseReport.CategoryDistribution.GetValueOrDefault(LicenseCategory.Unknown, 0);
 
         sb.AppendLine($"  <div class=\"card metric-card license-card\" onclick=\"showSection('licenses')\" style=\"cursor: pointer;\" title=\"License compatibility analysis across all dependencies. Checks for copyleft conflicts, unknown licenses, and compliance risks. Click to view details.\">");
         sb.AppendLine($"    <div class=\"metric-value {licenseStatusClass}\">{(licenseReport.ErrorCount == 0 ? "\u2713" : licenseReport.ErrorCount.ToString())}</div>");
@@ -530,10 +530,10 @@ public sealed partial class CraReportGenerator
                 var percent = (count * 100.0) / total;
                 var categoryClass = category switch
                 {
-                    LicenseCompatibility.LicenseCategory.Permissive => "permissive",
-                    LicenseCompatibility.LicenseCategory.WeakCopyleft => "weak-copyleft",
-                    LicenseCompatibility.LicenseCategory.StrongCopyleft => "strong-copyleft",
-                    LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
+                    LicenseCategory.Permissive => "permissive",
+                    LicenseCategory.WeakCopyleft => "weak-copyleft",
+                    LicenseCategory.StrongCopyleft => "strong-copyleft",
+                    LicenseCategory.PublicDomain => "public-domain",
                     _ => "unknown"
                 };
                 // Only show label if segment is wide enough (>10%)
@@ -550,10 +550,10 @@ public sealed partial class CraReportGenerator
                 var percent = (count * 100.0) / total;
                 var categoryClass = category switch
                 {
-                    LicenseCompatibility.LicenseCategory.Permissive => "permissive",
-                    LicenseCompatibility.LicenseCategory.WeakCopyleft => "weak-copyleft",
-                    LicenseCompatibility.LicenseCategory.StrongCopyleft => "strong-copyleft",
-                    LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
+                    LicenseCategory.Permissive => "permissive",
+                    LicenseCategory.WeakCopyleft => "weak-copyleft",
+                    LicenseCategory.StrongCopyleft => "strong-copyleft",
+                    LicenseCategory.PublicDomain => "public-domain",
                     _ => "unknown"
                 };
                 sb.AppendLine($"    <div class=\"legend-item\">");
@@ -582,10 +582,10 @@ public sealed partial class CraReportGenerator
             var category = info?.Category.ToString() ?? "Unknown";
             var categoryClass = info?.Category switch
             {
-                LicenseCompatibility.LicenseCategory.Permissive => "permissive",
-                LicenseCompatibility.LicenseCategory.WeakCopyleft => "weak-copyleft",
-                LicenseCompatibility.LicenseCategory.StrongCopyleft => "strong-copyleft",
-                LicenseCompatibility.LicenseCategory.PublicDomain => "public-domain",
+                LicenseCategory.Permissive => "permissive",
+                LicenseCategory.WeakCopyleft => "weak-copyleft",
+                LicenseCategory.StrongCopyleft => "strong-copyleft",
+                LicenseCategory.PublicDomain => "public-domain",
                 _ => "unknown"
             };
             sb.AppendLine($"      <tr>");
@@ -668,8 +668,8 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("    <tbody>");
 
         // Row: Permissive (MIT, Apache-2.0, BSD, ISC)
-        var permActive = projectCategory is LicenseCompatibility.LicenseCategory.Permissive
-            or LicenseCompatibility.LicenseCategory.PublicDomain;
+        var permActive = projectCategory is LicenseCategory.Permissive
+            or LicenseCategory.PublicDomain;
         sb.AppendLine($"      <tr{(permActive ? " class=\"active-row\"" : "")}>");
         sb.AppendLine("        <td>Permissive<span class=\"matrix-label\">MIT, Apache-2.0, BSD, ISC</span></td>");
         sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
@@ -679,7 +679,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("      </tr>");
 
         // Row: Weak Copyleft (LGPL, MPL, EPL)
-        var weakActive = projectCategory == LicenseCompatibility.LicenseCategory.WeakCopyleft;
+        var weakActive = projectCategory == LicenseCategory.WeakCopyleft;
         sb.AppendLine($"      <tr{(weakActive ? " class=\"active-row\"" : "")}>");
         sb.AppendLine("        <td>Weak Copyleft<span class=\"matrix-label\">LGPL, MPL, EPL</span></td>");
         sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");
@@ -689,7 +689,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("      </tr>");
 
         // Row: Strong Copyleft (GPL)
-        var strongActive = projectCategory == LicenseCompatibility.LicenseCategory.StrongCopyleft;
+        var strongActive = projectCategory == LicenseCategory.StrongCopyleft;
         sb.AppendLine($"      <tr{(strongActive ? " class=\"active-row\"" : "")}>");
         sb.AppendLine("        <td>Strong Copyleft<span class=\"matrix-label\">GPL-2.0, GPL-3.0, AGPL-3.0</span></td>");
         sb.AppendLine("        <td><span class=\"matrix-cell-ok\">\u2713</span></td>");

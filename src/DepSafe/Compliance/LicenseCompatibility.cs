@@ -8,50 +8,6 @@ namespace DepSafe.Compliance;
 /// </summary>
 public static class LicenseCompatibility
 {
-    /// <summary>
-    /// License categories based on restrictions and copyleft requirements.
-    /// </summary>
-    public enum LicenseCategory
-    {
-        /// <summary>Very permissive, no copyleft (MIT, BSD, Apache, ISC, Unlicense)</summary>
-        Permissive,
-        /// <summary>Weak copyleft, allows linking (LGPL, MPL, EPL)</summary>
-        WeakCopyleft,
-        /// <summary>Strong copyleft, requires source disclosure (GPL, AGPL)</summary>
-        StrongCopyleft,
-        /// <summary>Proprietary or commercial license</summary>
-        Proprietary,
-        /// <summary>Public domain or equivalent (CC0, WTFPL)</summary>
-        PublicDomain,
-        /// <summary>Unknown or unrecognized license</summary>
-        Unknown
-    }
-
-    /// <summary>
-    /// Categorized license information.
-    /// </summary>
-    public sealed class LicenseInfo
-    {
-        public required string Identifier { get; init; }
-        public required string Name { get; init; }
-        public required LicenseCategory Category { get; init; }
-        public required bool RequiresAttribution { get; init; }
-        public required bool RequiresSourceDisclosure { get; init; }
-        public required bool AllowsCommercialUse { get; init; }
-        public string? SpdxId { get; init; }
-    }
-
-    /// <summary>
-    /// Result of a license compatibility check.
-    /// </summary>
-    public sealed class CompatibilityResult
-    {
-        public required bool IsCompatible { get; init; }
-        public required string Severity { get; init; } // "Error", "Warning", "Info"
-        public required string Message { get; init; }
-        public string? Recommendation { get; init; }
-    }
-
     private static readonly FrozenDictionary<string, LicenseInfo> KnownLicenses = new Dictionary<string, LicenseInfo>(StringComparer.OrdinalIgnoreCase)
     {
         // Permissive licenses
@@ -426,20 +382,4 @@ public static class LicenseCompatibility
             WarningCount = warningCount
         };
     }
-}
-
-/// <summary>
-/// Complete license analysis report.
-/// </summary>
-public sealed class LicenseReport
-{
-    public string? ProjectLicense { get; init; }
-    public int TotalPackages { get; init; }
-    public required List<LicenseCompatibility.CompatibilityResult> CompatibilityResults { get; init; }
-    public required Dictionary<string, int> LicenseDistribution { get; init; }
-    public required Dictionary<LicenseCompatibility.LicenseCategory, int> CategoryDistribution { get; init; }
-    public required List<string> UnknownLicenses { get; init; }
-    public required string OverallStatus { get; init; }
-    public int ErrorCount { get; init; }
-    public int WarningCount { get; init; }
 }

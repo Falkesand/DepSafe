@@ -157,10 +157,10 @@ public static class LicensesCommand
             var info = LicenseCompatibility.GetLicenseInfo(license);
             var categoryColor = info?.Category switch
             {
-                LicenseCompatibility.LicenseCategory.Permissive => "green",
-                LicenseCompatibility.LicenseCategory.PublicDomain => "green",
-                LicenseCompatibility.LicenseCategory.WeakCopyleft => "yellow",
-                LicenseCompatibility.LicenseCategory.StrongCopyleft => "red",
+                LicenseCategory.Permissive => "green",
+                LicenseCategory.PublicDomain => "green",
+                LicenseCategory.WeakCopyleft => "yellow",
+                LicenseCategory.StrongCopyleft => "red",
                 _ => "dim"
             };
             distTable.AddRow(license, count.ToString(), $"[{categoryColor}]{info?.Category.ToString() ?? "Unknown"}[/]");

@@ -26,27 +26,3 @@ public sealed class TyposquatResult
     /// <summary>Package ecosystem (NuGet or npm).</summary>
     public PackageEcosystem Ecosystem { get; init; } = PackageEcosystem.NuGet;
 }
-
-/// <summary>
-/// Risk level for a potential typosquatting match.
-/// </summary>
-public enum TyposquatRiskLevel
-{
-    None,
-    Low,
-    Medium,
-    High,
-    Critical
-}
-
-/// <summary>
-/// Detection method that identified the typosquatting candidate.
-/// </summary>
-public enum TyposquatDetectionMethod
-{
-    EditDistance,
-    Homoglyph,
-    SeparatorSwap,
-    PrefixSuffix,
-    ScopeConfusion
-}

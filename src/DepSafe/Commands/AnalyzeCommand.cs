@@ -354,10 +354,3 @@ public static class AnalyzeCommand
         }
     }
 }
-
-public enum OutputFormat
-{
-    Table,
-    Json,
-    Markdown
-}

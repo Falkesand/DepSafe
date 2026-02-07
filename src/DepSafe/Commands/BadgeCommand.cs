@@ -226,11 +226,3 @@ public static class BadgeCommand
         return JsonSerializer.Serialize(data, JsonDefaults.Indented);
     }
 }
-
-public enum BadgeFormat
-{
-    Markdown,
-    Html,
-    Json,
-    Url
-}
