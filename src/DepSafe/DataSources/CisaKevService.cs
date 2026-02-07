@@ -12,6 +12,7 @@ public sealed class CisaKevService : IDisposable
     private const string KevUrl = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private readonly SemaphoreSlim _loadLock = new(1, 1);
     private HashSet<string>? _kevCves; // Uses OrdinalIgnoreCase comparer
 
@@ -23,6 +24,7 @@ public sealed class CisaKevService : IDisposable
         })
         { Timeout = TimeSpan.FromSeconds(30) };
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -119,5 +121,7 @@ public sealed class CisaKevService : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        _loadLock.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 }

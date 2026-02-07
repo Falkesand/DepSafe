@@ -27,7 +27,7 @@ public static class RemediationPrioritizer
         int currentCraScore,
         List<CraComplianceItem> currentComplianceItems)
     {
-        var items = new List<RemediationRoadmapItem>();
+        var items = new List<RemediationRoadmapItem>(Math.Min(allPackages.Count, MaxItems));
 
         foreach (var pkg in allPackages)
         {
@@ -36,7 +36,7 @@ public static class RemediationPrioritizer
 
             // Collect CVEs only from vulnerabilities that actually affect the installed version
             var allCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var affectedVulns = new List<VulnerabilityInfo>();
+            var affectedVulns = new List<VulnerabilityInfo>(vulns.Count);
             string? recommendedVersion = null;
             int maxPatchAgeDays = 0;
             double maxEpss = 0.0;
@@ -164,9 +164,19 @@ public static class RemediationPrioritizer
         int best = s_severityOrder.Length;
         foreach (var vuln in vulns)
         {
-            int idx = Array.IndexOf(s_severityOrder, vuln.Severity?.ToUpperInvariant());
+            int idx = FindSeverityIndex(vuln.Severity);
             if (idx >= 0 && idx < best) best = idx;
         }
         return best < s_severityOrder.Length ? s_severityOrder[best] : "LOW";
+    }
+
+    private static int FindSeverityIndex(string? severity)
+    {
+        for (int i = 0; i < s_severityOrder.Length; i++)
+        {
+            if (string.Equals(s_severityOrder[i], severity, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
     }
 }

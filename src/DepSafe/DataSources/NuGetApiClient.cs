@@ -19,6 +19,7 @@ public sealed class NuGetApiClient : IDisposable
     private readonly SourceCacheContext _cacheContext;
     private readonly SourceRepository _repository;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private readonly ILogger _logger;
 
     public NuGetApiClient(string? sourceUrl = null, ResponseCache? cache = null)
@@ -27,6 +28,7 @@ public sealed class NuGetApiClient : IDisposable
         var source = new PackageSource(sourceUrl ?? "https://api.nuget.org/v3/index.json");
         _repository = Repository.Factory.GetCoreV3(source);
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
         _logger = NullLogger.Instance;
     }
 
@@ -495,6 +497,7 @@ public sealed class NuGetApiClient : IDisposable
     public void Dispose()
     {
         _cacheContext.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 
     /// <summary>

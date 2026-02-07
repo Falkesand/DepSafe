@@ -161,7 +161,7 @@ public sealed class ResponseCache : IDisposable
                     TryDeleteFile(file);
                 }
             }
-            catch
+            catch (IOException)
             {
                 // Ignore cleanup failures
             }
@@ -186,7 +186,7 @@ public sealed class ResponseCache : IDisposable
 
     private static void TryDeleteFile(string path)
     {
-        try { File.Delete(path); } catch { }
+        try { File.Delete(path); } catch (IOException) { }
     }
 
     public void Dispose()

@@ -11,6 +11,15 @@ namespace DepSafe.Compliance;
 public sealed class PackageProvenanceChecker : IDisposable
 {
     private static readonly string s_userAgent = GetUserAgent();
+
+    private static readonly HashSet<string> s_allowedHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "api.nuget.org",
+        "www.nuget.org",
+        "registry.npmjs.org",
+        "www.npmjs.com"
+    };
+
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
     private bool _disposed;
@@ -66,7 +75,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         {
             // NuGet.org signs all packages with a repository signature
             // Check the registration endpoint for signature metadata
-            var url = $"https://api.nuget.org/v3/registration5-gz-semver2/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}.json";
+            var url = $"https://api.nuget.org/v3/registration5-gz-semver2/{Uri.EscapeDataString(packageId.ToLowerInvariant())}/{Uri.EscapeDataString(version.ToLowerInvariant())}.json";
 
             using var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode)
@@ -98,7 +107,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 try
                 {
                     var catalogUrl = catalog.GetString();
-                    if (!string.IsNullOrEmpty(catalogUrl))
+                    if (!string.IsNullOrEmpty(catalogUrl) && IsAllowedUrl(catalogUrl))
                     {
                         using var catalogResponse = await _httpClient.GetAsync(catalogUrl);
                         if (catalogResponse.IsSuccessStatusCode)
@@ -255,6 +264,13 @@ public sealed class PackageProvenanceChecker : IDisposable
                 Ecosystem = PackageEcosystem.Npm
             };
         }
+    }
+
+    private static bool IsAllowedUrl(string url)
+    {
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps
+            && s_allowedHosts.Contains(uri.Host);
     }
 
     private static string GetUserAgent()

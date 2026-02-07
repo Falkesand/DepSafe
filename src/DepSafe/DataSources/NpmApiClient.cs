@@ -13,6 +13,7 @@ public sealed class NpmApiClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private const string NpmRegistryUrl = "https://registry.npmjs.org";
     private const string NpmDownloadsUrl = "https://api.npmjs.org/downloads/point/last-week";
 
@@ -27,6 +28,7 @@ public sealed class NpmApiClient : IDisposable
         };
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -703,5 +705,6 @@ public sealed class NpmApiClient : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 }

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +17,7 @@ public sealed partial class GitHubApiClient : IDisposable
     private readonly GitHubClient _client;
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private readonly SemaphoreSlim _requestLimiter;
     private readonly string? _token;
 
@@ -65,6 +67,7 @@ public sealed partial class GitHubApiClient : IDisposable
         }
 
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -689,8 +692,15 @@ public sealed partial class GitHubApiClient : IDisposable
     /// Sanitize a string for safe use in GraphQL string literals.
     /// Escapes backslashes and double quotes to prevent injection.
     /// </summary>
+    private static readonly SearchValues<char> s_graphQLSpecialChars =
+        SearchValues.Create("\\\"\n\r\t");
+
     private static string SanitizeGraphQLString(string input)
     {
+        // Fast-path: if no special chars, return original (no allocation)
+        if (input.AsSpan().IndexOfAny(s_graphQLSpecialChars) < 0)
+            return input;
+
         return input
             .Replace("\\", "\\\\")
             .Replace("\"", "\\\"")
@@ -703,6 +713,7 @@ public sealed partial class GitHubApiClient : IDisposable
     {
         _httpClient.Dispose();
         _requestLimiter.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 
     [GeneratedRegex(@"github\.com[/:](?<owner>[^/]+)/(?<repo>[^/\s?#]+)", RegexOptions.IgnoreCase)]

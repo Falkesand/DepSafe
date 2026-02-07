@@ -13,6 +13,7 @@ public sealed class PopularPackageProvider : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly ResponseCache _cache;
+    private readonly bool _ownsCache;
     private readonly bool _offlineOnly;
 
     private const string NuGetSearchUrl = "https://azuresearch-usnc.nuget.org/query?q=&take=100&sortBy=totalDownloads-desc&prerelease=false";
@@ -23,6 +24,7 @@ public sealed class PopularPackageProvider : IDisposable
         _offlineOnly = offlineOnly;
         _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _cache = cache ?? new ResponseCache();
+        _ownsCache = cache is null;
     }
 
     /// <summary>
@@ -187,6 +189,7 @@ public sealed class PopularPackageProvider : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+        if (_ownsCache) _cache.Dispose();
     }
 
     /// <summary>Internal model for JSON deserialization of embedded data.</summary>

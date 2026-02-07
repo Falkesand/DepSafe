@@ -305,8 +305,8 @@ public static class CraReportCommand
             });
 
         // Phase 2: Fetch vulnerabilities from OSV (free, no auth required) and GitHub repo info
-        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(allNpmPackageIds.Count, StringComparer.OrdinalIgnoreCase);
+        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(allNpmPackageIds.Count, StringComparer.OrdinalIgnoreCase);
 
         // Fetch vulnerabilities from OSV (always available, no auth)
         using var osvClient = new OsvApiClient();
@@ -334,7 +334,7 @@ public static class CraReportCommand
         var packages = new List<PackageHealth>();
 
         // Build lookup of installed versions from dependency tree
-        var installedVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var installedVersions = new Dictionary<string, string>(dependencyTree?.Roots.Count ?? 0, StringComparer.OrdinalIgnoreCase);
         if (dependencyTree is not null)
         {
             foreach (var root in dependencyTree.Roots)
@@ -1107,11 +1107,10 @@ public static class CraReportCommand
         }
 
         // Phase 2: Batch fetch GitHub repo info (if not skipped)
-        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
-        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
-
         // Include dependency packages in the list for GitHub lookups
         var allPackageIdsWithDeps = allPackageIds.Concat(dependencyPackageIds).ToList();
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>(allPackageIdsWithDeps.Count, StringComparer.OrdinalIgnoreCase);
+        var allVulnerabilities = new Dictionary<string, List<VulnerabilityInfo>>(allPackageIdsWithDeps.Count, StringComparer.OrdinalIgnoreCase);
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {

@@ -108,6 +108,10 @@ public static class StringDistance
     /// </summary>
     public static string NormalizeSeparatorsCore(string lowerInput)
     {
+        // Fast-path: if no separators to replace, return original (no allocation)
+        if (lowerInput.AsSpan().IndexOfAny('.', '_') < 0)
+            return lowerInput;
+
         return lowerInput
             .Replace('.', '-')
             .Replace('_', '-');
