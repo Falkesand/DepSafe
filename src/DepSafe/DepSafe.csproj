@@ -42,6 +42,10 @@
     <EmbeddedResource Include="Resources\report-styles.css" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DepSafe.Tests" />
+  </ItemGroup>
+
   <!-- MSBuild integration files -->
   <ItemGroup>
     <None Include="build\**\*" Pack="true" PackagePath="build\" />
