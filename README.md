@@ -145,11 +145,13 @@ depsafe cra-report [<path>] [options]
 ```
 
 **Arguments:**
+
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `<path>` | Path to project, solution, or directory | `.` (current directory) |
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Html\|Json>` | Output format | `Html` |
@@ -161,6 +163,7 @@ depsafe cra-report [<path>] [options]
 | `--check-typosquat` | Run typosquatting detection on all dependencies | `false` |
 
 **Exit Codes:**
+
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
@@ -196,6 +199,7 @@ depsafe analyze [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Table\|Json\|Markdown>` | Output format | `Table` |
@@ -225,6 +229,7 @@ depsafe check <package> [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-v, --version <version>` | Specific version to check | Latest |
@@ -254,6 +259,7 @@ depsafe sbom [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Spdx\|CycloneDx>` | Output format | `Spdx` |
@@ -283,6 +289,7 @@ depsafe vex [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-o, --output <path>` | Output file path | stdout |
@@ -307,6 +314,7 @@ depsafe licenses [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-l, --project-license <license>` | Your project's SPDX license identifier | `MIT` |
@@ -339,6 +347,7 @@ depsafe typosquat [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Table\|Json>` | Output format | `Table` |
@@ -367,6 +376,7 @@ depsafe badge [<path>] [options]
 ```
 
 **Options:**
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f, --format <Markdown\|Html\|Json\|Url>` | Output format | `Markdown` |
@@ -540,6 +550,7 @@ The CRA Readiness Score is a single weighted metric (0-100) that reflects overal
 | 1 | Deprecated Components, Cryptographic Compliance, Supply Chain Integrity |
 
 **Score calculation per item:**
+
 | Item Status | Score Multiplier |
 |-------------|-----------------|
 | Compliant | 100% of weight |
