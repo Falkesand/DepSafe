@@ -36,6 +36,17 @@ Five new build gate thresholds in `.cra-config.json`, bringing the total to nine
 
 All thresholds return exit code 2 for CI/CD integration.
 
+### Complete SBOM Generation with Transitive Dependencies
+
+The standalone `depsafe sbom` command now generates complete SBOMs that include all transitive dependencies and npm packages, matching the completeness of the CRA report's SBOM output. Previously, the SBOM command only included direct NuGet packages parsed from project files.
+
+- **.NET transitive resolution** via `dotnet list package --include-transitive`, capturing the full dependency graph
+- **npm support** with dependency tree walking, package-lock.json integrity hashes, and scope-based author extraction
+- **Mixed project support** for solutions containing both .NET and npm projects, with automatic deduplication
+- **Parallel npm fetching** with semaphore-based concurrency (10 concurrent requests) for fast metadata collection
+
+For a typical mixed project, SBOM output increased from ~22 packages (direct NuGet only) to ~600+ packages (direct + transitive, NuGet + npm). This brings the standalone SBOM command into compliance with SPDX/CycloneDX completeness requirements and CRA Annex I Part II(1).
+
 ### Always-Visible Report Sections
 
 Art. 14 Reporting and Remediation Roadmap sections are now always visible in the sidebar navigation, even when no data is present. Empty sections display a success card explaining why the view is empty and what the section monitors.
