@@ -95,24 +95,3 @@ public static class CryptoComplianceChecker
         };
     }
 }
-
-/// <summary>
-/// Result of crypto compliance check.
-/// </summary>
-public sealed class CryptoComplianceResult
-{
-    public required List<CryptoIssue> Issues { get; init; }
-    public required List<string> CryptoPackagesFound { get; init; }
-    public required bool IsCompliant { get; init; }
-}
-
-/// <summary>
-/// A crypto compliance issue.
-/// </summary>
-public sealed class CryptoIssue
-{
-    public required string PackageId { get; init; }
-    public required string Version { get; init; }
-    public required string Issue { get; init; }
-    public required string Severity { get; init; }
-}
