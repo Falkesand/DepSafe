@@ -28,20 +28,20 @@ public sealed class CisaKevService : IDisposable
     /// <summary>
     /// Load the KEV catalog (cached for 24 hours).
     /// </summary>
-    public async Task LoadCatalogAsync(CancellationToken ct = default)
+    public async Task<Result> LoadCatalogAsync(CancellationToken ct = default)
     {
-        if (_kevCves is not null) return;
+        if (_kevCves is not null) return Result.Ok();
 
         await _loadLock.WaitAsync(ct);
         try
         {
-            if (_kevCves is not null) return; // double-check after acquiring lock
+            if (_kevCves is not null) return Result.Ok(); // double-check after acquiring lock
 
             var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct);
             if (cached is not null)
             {
                 _kevCves = cached;
-                return;
+                return Result.Ok();
             }
 
             try
@@ -50,7 +50,7 @@ public sealed class CisaKevService : IDisposable
                 if (!response.IsSuccessStatusCode)
                 {
                     _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    return;
+                    return Result.Fail($"CISA KEV API returned {(int)response.StatusCode}", ErrorKind.NetworkError);
                 }
 
                 var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
@@ -72,11 +72,19 @@ public sealed class CisaKevService : IDisposable
                 }
 
                 await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
+                return Result.Ok();
             }
-            catch (Exception ex)
+            catch (HttpRequestException ex)
             {
                 Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
                 _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                return Result.Fail($"Failed to fetch CISA KEV catalog: {ex.Message}", ErrorKind.NetworkError);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Console.Error.WriteLine($"[WARN] Failed to fetch CISA KEV catalog: {ex.Message}");
+                _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                return Result.Fail($"Failed to fetch CISA KEV catalog: {ex.Message}", ErrorKind.Unknown);
             }
         }
         finally

@@ -33,7 +33,7 @@ public sealed class NuGetApiClient : IDisposable
     /// <summary>
     /// Get package information from NuGet.
     /// </summary>
-    public async Task<NuGetPackageInfo?> GetPackageInfoAsync(string packageId, CancellationToken ct = default)
+    public async Task<Result<NuGetPackageInfo>> GetPackageInfoAsync(string packageId, CancellationToken ct = default)
     {
         var cacheKey = $"nuget:{packageId}";
         var cached = await _cache.GetAsync<NuGetPackageInfo>(cacheKey, ct);
@@ -51,7 +51,8 @@ public sealed class NuGetApiClient : IDisposable
                 ct);
 
             var packageList = packages.ToList();
-            if (packageList.Count == 0) return null;
+            if (packageList.Count == 0)
+                return Result.Fail<NuGetPackageInfo>($"Package '{packageId}' not found on NuGet", ErrorKind.NotFound);
 
             var latest = packageList
                 .Where(p => !p.Identity.Version.IsPrerelease)
@@ -76,7 +77,7 @@ public sealed class NuGetApiClient : IDisposable
             // Fetch dependencies using DependencyInfoResource (more reliable than DependencySets)
             var dependencies = await GetPackageDependenciesAsync(latest.Identity, ct);
 
-            var result = new NuGetPackageInfo
+            var info = new NuGetPackageInfo
             {
                 PackageId = packageId,
                 LatestVersion = latest.Identity.Version.ToNormalizedString(),
@@ -94,13 +95,23 @@ public sealed class NuGetApiClient : IDisposable
                 Dependencies = dependencies
             };
 
-            await _cache.SetAsync(cacheKey, result, TimeSpan.FromHours(12), ct);
-            return result;
+            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(12), ct);
+            return info;
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"Network error fetching NuGet info for {packageId}: {ex.Message}");
+            return Result.Fail<NuGetPackageInfo>($"Network error fetching NuGet info for {packageId}: {ex.Message}", ErrorKind.NetworkError);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"Timeout fetching NuGet info for {packageId}");
+            return Result.Fail<NuGetPackageInfo>($"Timeout fetching NuGet info for {packageId}", ErrorKind.Timeout);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"Error fetching NuGet info for {packageId}: {ex.Message}");
-            return null;
+            return Result.Fail<NuGetPackageInfo>($"Error fetching NuGet info for {packageId}: {ex.Message}", ErrorKind.Unknown);
         }
     }
 
@@ -125,10 +136,10 @@ public sealed class NuGetApiClient : IDisposable
             await semaphore.WaitAsync(ct);
             try
             {
-                var info = await GetPackageInfoAsync(packageId, ct);
-                if (info is not null)
+                var result = await GetPackageInfoAsync(packageId, ct);
+                if (result.IsSuccess)
                 {
-                    results[packageId] = info;
+                    results[packageId] = result.Value;
                 }
             }
             finally
@@ -228,14 +239,14 @@ public sealed class NuGetApiClient : IDisposable
     /// Parse package references from a project file.
     /// Falls back to packages.config if no PackageReference elements are found.
     /// </summary>
-    public static async Task<List<PackageReference>> ParseProjectFileAsync(string projectPath, CancellationToken ct = default)
+    public static async Task<Result<List<PackageReference>>> ParseProjectFileAsync(string projectPath, CancellationToken ct = default)
     {
-        var references = new List<PackageReference>();
-
-        if (!File.Exists(projectPath)) return references;
+        if (!File.Exists(projectPath))
+            return Result.Fail<List<PackageReference>>($"Project file not found: {projectPath}", ErrorKind.NotFound);
 
         try
         {
+            var references = new List<PackageReference>();
             var content = await File.ReadAllTextAsync(projectPath, ct);
             var doc = XDocument.Parse(content);
 
@@ -290,13 +301,14 @@ public sealed class NuGetApiClient : IDisposable
                     }
                 }
             }
+
+            return references;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"Error parsing project file {projectPath}: {ex.Message}");
+            return Result.Fail<List<PackageReference>>($"Error parsing project file {projectPath}: {ex.Message}", ErrorKind.ParseError);
         }
-
-        return references;
     }
 
     /// <summary>
@@ -461,12 +473,9 @@ public sealed class NuGetApiClient : IDisposable
     /// Parse packages using dotnet list package command for resolved versions and transitive dependencies.
     /// This resolves MSBuild variables like $(AspireVersion).
     /// </summary>
-    public static async Task<(List<PackageReference> TopLevel, List<PackageReference> Transitive)> ParsePackagesWithDotnetAsync(
+    public static async Task<Result<(List<PackageReference> TopLevel, List<PackageReference> Transitive)>> ParsePackagesWithDotnetAsync(
         string path, CancellationToken ct = default)
     {
-        var topLevel = new List<PackageReference>();
-        var transitive = new List<PackageReference>();
-
         try
         {
             // Determine working directory and arguments based on path type
@@ -511,6 +520,9 @@ public sealed class NuGetApiClient : IDisposable
             var output = await outputTask;
             await errorTask;
             await process.WaitForExitAsync(ct);
+
+            var topLevel = new List<PackageReference>();
+            var transitive = new List<PackageReference>();
 
             if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
             {
@@ -560,12 +572,14 @@ public sealed class NuGetApiClient : IDisposable
                     }
                 }
             }
+
+            return (topLevel, transitive);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"Error running dotnet list package: {ex.Message}");
+            return Result.Fail<(List<PackageReference> TopLevel, List<PackageReference> Transitive)>(
+                $"Error running dotnet list package: {ex.Message}", ErrorKind.Unknown);
         }
-
-        return (topLevel, transitive);
     }
 }

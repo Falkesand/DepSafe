@@ -63,8 +63,8 @@ public sealed class AnalysisPipeline : IDisposable
             {
                 foreach (var projectFile in projectFiles)
                 {
-                    var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                    foreach (var r in refs)
+                    var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                    foreach (var r in refsResult.ValueOr([]))
                     {
                         allReferences.TryAdd(r.PackageId, r);
                     }
@@ -88,10 +88,10 @@ public sealed class AnalysisPipeline : IDisposable
                 foreach (var (packageId, _) in allReferences)
                 {
                     task.Description = $"NuGet: {packageId}";
-                    var info = await _nugetClient.GetPackageInfoAsync(packageId);
-                    if (info is not null)
+                    var result = await _nugetClient.GetPackageInfoAsync(packageId);
+                    if (result.IsSuccess)
                     {
-                        NuGetInfoMap[packageId] = info;
+                        NuGetInfoMap[packageId] = result.Value;
                     }
                     task.Increment(1);
                 }

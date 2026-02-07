@@ -309,13 +309,16 @@ public sealed partial class GitHubApiClient : IDisposable
     /// <summary>
     /// Get repository information from a URL (single request, uses cache).
     /// </summary>
-    public async Task<GitHubRepoInfo?> GetRepositoryInfoAsync(string? repoUrl, CancellationToken ct = default)
+    public async Task<Result<GitHubRepoInfo>> GetRepositoryInfoAsync(string? repoUrl, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(repoUrl)) return null;
-        if (IsRateLimited) return null;
+        if (string.IsNullOrEmpty(repoUrl))
+            return Result.Fail<GitHubRepoInfo>("Repository URL is empty", ErrorKind.InvalidInput);
+        if (IsRateLimited)
+            return Result.Fail<GitHubRepoInfo>("GitHub API rate limited", ErrorKind.RateLimited);
 
         var (owner, repo) = ParseGitHubUrl(repoUrl);
-        if (owner is null || repo is null) return null;
+        if (owner is null || repo is null)
+            return Result.Fail<GitHubRepoInfo>($"Could not parse GitHub URL: {repoUrl}", ErrorKind.InvalidInput);
 
         var cacheKey = $"github:{owner}/{repo}";
         var cached = await _cache.GetAsync<GitHubRepoInfo>(cacheKey, ct);
@@ -338,7 +341,7 @@ public sealed partial class GitHubApiClient : IDisposable
             }
             catch (NotFoundException) { /* No SECURITY.md */ }
 
-            var result = new GitHubRepoInfo
+            var info = new GitHubRepoInfo
             {
                 Owner = owner,
                 Name = repo,
@@ -355,24 +358,29 @@ public sealed partial class GitHubApiClient : IDisposable
                 HasSecurityPolicy = hasSecurityPolicy
             };
 
-            await _cache.SetAsync(cacheKey, result, TimeSpan.FromHours(24), ct);
-            return result;
+            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(24), ct);
+            return info;
         }
         catch (RateLimitExceededException ex)
         {
             _isRateLimited = true;
             _rateLimitReset = ex.Reset.UtcDateTime;
             _remainingRequests = 0;
-            return null;
+            return Result.Fail<GitHubRepoInfo>("GitHub API rate limit exceeded", ErrorKind.RateLimited);
         }
         catch (NotFoundException)
         {
-            return null;
+            return Result.Fail<GitHubRepoInfo>($"Repository not found: {owner}/{repo}", ErrorKind.NotFound);
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"Network error fetching GitHub info for {owner}/{repo}: {ex.Message}");
+            return Result.Fail<GitHubRepoInfo>($"Network error fetching GitHub info for {owner}/{repo}: {ex.Message}", ErrorKind.NetworkError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"Error fetching GitHub info for {owner}/{repo}: {ex.Message}");
-            return null;
+            return Result.Fail<GitHubRepoInfo>($"Error fetching GitHub info for {owner}/{repo}: {ex.Message}", ErrorKind.Unknown);
         }
         finally
         {

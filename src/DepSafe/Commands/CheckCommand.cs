@@ -62,15 +62,17 @@ public static class CheckCommand
             AnsiConsole.WriteLine();
         }
 
-        var nugetInfo = await AnsiConsole.Status()
+        var nugetResult = await AnsiConsole.Status()
             .StartAsync($"Fetching package info for {packageId}...", async _ =>
                 await nugetClient.GetPackageInfoAsync(packageId));
 
-        if (nugetInfo is null)
+        if (nugetResult.IsFailure)
         {
-            AnsiConsole.MarkupLine($"[red]Package not found: {Markup.Escape(packageId)}[/]");
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(nugetResult.Error)}[/]");
             return 1;
         }
+
+        var nugetInfo = nugetResult.Value;
 
         version ??= nugetInfo.LatestVersion;
 
@@ -79,9 +81,10 @@ public static class CheckCommand
 
         if (githubClient is not null && !githubClient.IsRateLimited)
         {
-            repoInfo = await AnsiConsole.Status()
+            var repoResult = await AnsiConsole.Status()
                 .StartAsync("Fetching repository info...", async _ =>
                     await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl));
+            if (repoResult.IsSuccess) repoInfo = repoResult.Value;
 
             if (!githubClient.IsRateLimited && githubClient.HasToken)
             {

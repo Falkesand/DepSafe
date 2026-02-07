@@ -73,7 +73,8 @@ public static class BadgeCommand
         }
 
         // Get transitive count from dotnet list (for badge display)
-        var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
         using var pipeline = new AnalysisPipeline(skipGitHub);
         var allReferences = await pipeline.ScanProjectFilesAsync(path);

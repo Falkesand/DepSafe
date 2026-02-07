@@ -56,8 +56,8 @@ public static class TyposquatCommand
             var nugetPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var projectFile in projectFiles)
             {
-                var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                foreach (var r in refs)
+                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                foreach (var r in refsResult.ValueOr([]))
                     nugetPackages.Add(r.PackageId);
             }
 
@@ -74,8 +74,9 @@ public static class TyposquatCommand
         {
             foreach (var packageJsonPath in packageJsonFiles)
             {
-                var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-                if (packageJson is null) continue;
+                var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+                if (packageJsonResult.IsFailure) continue;
+                var packageJson = packageJsonResult.Value;
 
                 var npmPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var dep in packageJson.Dependencies)

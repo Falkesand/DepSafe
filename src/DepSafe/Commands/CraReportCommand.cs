@@ -67,7 +67,7 @@ public static class CraReportCommand
         return command;
     }
 
-    private static ProjectType DetectProjectType(string path)
+    private static Result<ProjectType> DetectProjectType(string path)
     {
         var hasNetProjects = NuGetApiClient.FindProjectFiles(path).Any();
         var hasPackageJson = NpmApiClient.FindPackageJsonFiles(path).Any();
@@ -77,11 +77,11 @@ public static class CraReportCommand
             (true, true) => ProjectType.Mixed,
             (true, false) => ProjectType.DotNet,
             (false, true) => ProjectType.Npm,
-            _ => throw new InvalidOperationException("No project files found")
+            _ => Result.Fail<ProjectType>("No project files found (no .csproj/.sln or package.json)", ErrorKind.NotFound)
         };
     }
 
-    private static async Task<CraConfig?> LoadCraConfigAsync(string path)
+    private static async Task<Result<CraConfig>> LoadCraConfigAsync(string path)
     {
         // Look for .cra-config.json in project root
         var searchDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
@@ -89,19 +89,26 @@ public static class CraReportCommand
 
         if (!File.Exists(configPath))
         {
-            return null;
+            return Result.Fail<CraConfig>("No .cra-config.json found", ErrorKind.NotFound);
         }
 
         try
         {
             var json = await File.ReadAllTextAsync(configPath);
             var config = JsonSerializer.Deserialize<CraConfig>(json, JsonDefaults.CaseInsensitive);
+            if (config is null)
+                return Result.Fail<CraConfig>("Failed to deserialize .cra-config.json", ErrorKind.ParseError);
             return config;
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
             AnsiConsole.MarkupLine($"[yellow]Warning: Failed to parse .cra-config.json: {ex.Message}[/]");
-            return null;
+            return Result.Fail<CraConfig>($"Failed to parse .cra-config.json: {ex.Message}", ErrorKind.ParseError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Warning: Failed to read .cra-config.json: {ex.Message}[/]");
+            return Result.Fail<CraConfig>($"Failed to read .cra-config.json: {ex.Message}", ErrorKind.Unknown);
         }
     }
 
@@ -145,16 +152,13 @@ public static class CraReportCommand
         }
 
         // Detect project type
-        ProjectType projectType;
-        try
-        {
-            projectType = DetectProjectType(path);
-        }
-        catch (InvalidOperationException)
+        var projectTypeResult = DetectProjectType(path);
+        if (projectTypeResult.IsFailure)
         {
             AnsiConsole.MarkupLine("[yellow]No project files found (no .csproj/.sln or package.json).[/]");
             return 0;
         }
+        var projectType = projectTypeResult.Value;
 
         AnsiConsole.MarkupLine($"[dim]Detected project type: {projectType}[/]");
         if (deepScan)
@@ -163,7 +167,8 @@ public static class CraReportCommand
         }
 
         // Load CRA config if present
-        var config = await LoadCraConfigAsync(path);
+        var configResult = await LoadCraConfigAsync(path);
+        var config = configResult.IsSuccess ? configResult.Value : null;
         if (config is not null && config.LicenseOverrides.Count > 0)
         {
             AnsiConsole.MarkupLine($"[dim]Loaded .cra-config.json with {config.LicenseOverrides.Count} license override(s)[/]");
@@ -230,13 +235,14 @@ public static class CraReportCommand
         ShowGitHubStatus(githubClient, skipGitHub);
 
         // Parse package.json
-        var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-        if (packageJson is null)
+        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+        if (packageJsonResult.IsFailure)
         {
-            AnsiConsole.MarkupLine("[red]Failed to parse package.json[/]");
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(packageJsonResult.Error)}[/]");
             return 1;
         }
 
+        var packageJson = packageJsonResult.Value;
         var allDeps = packageJson.Dependencies
             .Concat(packageJson.DevDependencies)
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -284,10 +290,10 @@ public static class CraReportCommand
                     await semaphore.WaitAsync();
                     try
                     {
-                        var info = await npmClient.GetPackageInfoAsync(packageName);
-                        if (info is not null)
+                        var result = await npmClient.GetPackageInfoAsync(packageName);
+                        if (result.IsSuccess)
                         {
-                            npmInfoMap[packageName] = info;
+                            npmInfoMap[packageName] = result.Value;
                         }
                     }
                     finally
@@ -340,7 +346,8 @@ public static class CraReportCommand
 
         // Parse lock file for integrity hashes
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDeps = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDeps = lockDepsResult.ValueOr([]);
         var integrityLookup = lockDeps
             .Where(d => !string.IsNullOrEmpty(d.Integrity))
             .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
@@ -960,7 +967,8 @@ public static class CraReportCommand
             .StartAsync("Scanning packages (resolving MSBuild variables)...", async ctx =>
             {
                 // Try dotnet list package first for resolved versions
-                var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                 if (topLevel.Count > 0)
                 {
@@ -982,8 +990,8 @@ public static class CraReportCommand
                     ctx.Status("Falling back to XML parsing...");
                     foreach (var projectFile in projectFiles)
                     {
-                        var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                        foreach (var r in refs)
+                        var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                        foreach (var r in refsResult.ValueOr([]))
                         {
                             if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
                                 hasUnresolvedVersions = true;
@@ -1037,10 +1045,10 @@ public static class CraReportCommand
                     await semaphore.WaitAsync();
                     try
                     {
-                        var info = await nugetClient.GetPackageInfoAsync(packageId);
-                        if (info is not null)
+                        var result = await nugetClient.GetPackageInfoAsync(packageId);
+                        if (result.IsSuccess)
                         {
-                            nugetInfoMap[packageId] = info;
+                            nugetInfoMap[packageId] = result.Value;
                         }
                     }
                     finally
@@ -1082,10 +1090,10 @@ public static class CraReportCommand
                         {
                             if (!nugetInfoMap.ContainsKey(packageId))
                             {
-                                var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                if (info is not null)
+                                var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                if (result.IsSuccess)
                                 {
-                                    nugetInfoMap[packageId] = info;
+                                    nugetInfoMap[packageId] = result.Value;
                                 }
                             }
                         }
@@ -1309,7 +1317,8 @@ public static class CraReportCommand
             await AnsiConsole.Status()
                 .StartAsync("Scanning .NET packages...", async ctx =>
                 {
-                    var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                    var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                     if (topLevel.Count > 0)
                     {
@@ -1330,8 +1339,8 @@ public static class CraReportCommand
                         ctx.Status("Falling back to XML parsing...");
                         foreach (var projectFile in projectFiles)
                         {
-                            var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                            foreach (var r in refs)
+                            var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                            foreach (var r in refsResult.ValueOr([]))
                             {
                                 if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
                                     hasUnresolvedVersions = true;
@@ -1362,10 +1371,10 @@ public static class CraReportCommand
                             await semaphore.WaitAsync();
                             try
                             {
-                                var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                if (info is not null)
+                                var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                if (result.IsSuccess)
                                 {
-                                    nugetInfoMap[packageId] = info;
+                                    nugetInfoMap[packageId] = result.Value;
                                 }
                             }
                             finally
@@ -1404,10 +1413,10 @@ public static class CraReportCommand
                                 {
                                     if (!nugetInfoMap.ContainsKey(packageId))
                                     {
-                                        var info = await nugetClient.GetPackageInfoAsync(packageId);
-                                        if (info is not null)
+                                        var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                        if (result.IsSuccess)
                                         {
-                                            nugetInfoMap[packageId] = info;
+                                            nugetInfoMap[packageId] = result.Value;
                                         }
                                     }
                                 }
@@ -1516,9 +1525,10 @@ public static class CraReportCommand
             var packageJsonPath = packageJsonFiles[0];
             AnsiConsole.MarkupLine($"[dim]Using: {packageJsonPath}[/]");
 
-            var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-            if (packageJson is not null)
+            var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+            if (packageJsonResult.IsSuccess)
             {
+                var packageJson = packageJsonResult.Value;
                 var allDeps = packageJson.Dependencies
                     .Concat(packageJson.DevDependencies)
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -1560,8 +1570,8 @@ public static class CraReportCommand
                                 await semaphore.WaitAsync();
                                 try
                                 {
-                                    var info = await npmClient.GetPackageInfoAsync(packageName);
-                                    if (info is not null) npmInfoMap[packageName] = info;
+                                    var result = await npmClient.GetPackageInfoAsync(packageName);
+                                    if (result.IsSuccess) npmInfoMap[packageName] = result.Value;
                                 }
                                 finally
                                 {
@@ -1627,7 +1637,8 @@ public static class CraReportCommand
 
                     // Parse lock file for integrity hashes
                     var npmLockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-                    var npmLockDeps = await NpmApiClient.ParsePackageLockAsync(npmLockPath);
+                    var npmLockDepsResult = await NpmApiClient.ParsePackageLockAsync(npmLockPath);
+                    var npmLockDeps = npmLockDepsResult.ValueOr([]);
                     var npmIntegrityLookup = npmLockDeps
                         .Where(d => !string.IsNullOrEmpty(d.Integrity))
                         .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)

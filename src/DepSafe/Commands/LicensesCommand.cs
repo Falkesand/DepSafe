@@ -55,7 +55,8 @@ public static class LicensesCommand
         }
 
         // Get packages using dotnet list
-        var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
         if (topLevel.Count == 0)
         {
@@ -63,8 +64,8 @@ public static class LicensesCommand
             var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
             foreach (var projectFile in projectFiles)
             {
-                var refs = await NuGetApiClient.ParseProjectFileAsync(projectFile);
-                topLevel.AddRange(refs);
+                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                topLevel.AddRange(refsResult.ValueOr([]));
             }
         }
 
@@ -96,8 +97,8 @@ public static class LicensesCommand
                     await semaphore.WaitAsync();
                     try
                     {
-                        var info = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
-                        results.Add((pkg.PackageId, info?.License));
+                        var result = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
+                        results.Add((pkg.PackageId, result.IsSuccess ? result.Value.License : null));
                     }
                     finally
                     {

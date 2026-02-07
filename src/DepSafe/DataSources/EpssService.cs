@@ -64,8 +64,8 @@ public sealed class EpssService : IDisposable
         // Fetch uncached CVEs in batches
         foreach (var batch in Batch(uncached, BatchSize))
         {
-            var scores = await FetchBatchAsync(batch, ct);
-            foreach (var score in scores)
+            var fetchResult = await FetchBatchAsync(batch, ct);
+            foreach (var score in fetchResult.ValueOr([]))
             {
                 result[score.Cve] = score;
                 await _cache.SetAsync($"epss:{score.Cve}", score, TimeSpan.FromHours(24), ct);
@@ -85,7 +85,7 @@ public sealed class EpssService : IDisposable
         return result;
     }
 
-    private async Task<List<EpssScore>> FetchBatchAsync(
+    private async Task<Result<List<EpssScore>>> FetchBatchAsync(
         List<string> cveIds, CancellationToken ct)
     {
         try
@@ -97,16 +97,22 @@ public sealed class EpssService : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 Console.Error.WriteLine($"[WARN] EPSS API returned {(int)response.StatusCode} for batch of {cveIds.Count} CVEs");
-                return [];
+                return Result.Fail<List<EpssScore>>(
+                    $"EPSS API returned {(int)response.StatusCode} for batch of {cveIds.Count} CVEs", ErrorKind.NetworkError);
             }
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
             return ParseResponse(json);
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
         {
             Console.Error.WriteLine($"[WARN] Failed to fetch EPSS scores: {ex.Message}");
-            return [];
+            return Result.Fail<List<EpssScore>>($"Failed to fetch EPSS scores: {ex.Message}", ErrorKind.NetworkError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] Failed to fetch EPSS scores: {ex.Message}");
+            return Result.Fail<List<EpssScore>>($"Failed to fetch EPSS scores: {ex.Message}", ErrorKind.Unknown);
         }
     }
 

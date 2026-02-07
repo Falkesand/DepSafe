@@ -159,7 +159,8 @@ public static class SbomCommand
             {
                 foreach (var projectFile in projectFiles)
                 {
-                    var (topLevel, transitive) = await NuGetApiClient.ParsePackagesWithDotnetAsync(projectFile);
+                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(projectFile);
+                    var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                     foreach (var r in topLevel)
                         allReferences.TryAdd(r.PackageId, r);
@@ -196,13 +197,14 @@ public static class SbomCommand
         AnsiConsole.MarkupLine($"[dim]Using: {packageJsonPath}[/]");
 
         // Parse package.json for direct deps
-        var packageJson = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
-        if (packageJson is null)
+        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+        if (packageJsonResult.IsFailure)
         {
-            AnsiConsole.MarkupLine("[red]Failed to parse package.json[/]");
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(packageJsonResult.Error)}[/]");
             return [];
         }
 
+        var packageJson = packageJsonResult.Value;
         var allDeps = packageJson.Dependencies
             .Concat(packageJson.DevDependencies)
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -254,10 +256,10 @@ public static class SbomCommand
                     await semaphore.WaitAsync();
                     try
                     {
-                        var info = await npmClient.GetPackageInfoAsync(packageName);
-                        if (info is not null)
+                        var result = await npmClient.GetPackageInfoAsync(packageName);
+                        if (result.IsSuccess)
                         {
-                            npmInfoMap[packageName] = info;
+                            npmInfoMap[packageName] = result.Value;
                         }
                     }
                     finally
@@ -324,7 +326,8 @@ public static class SbomCommand
 
         // Parse lock file for integrity hashes
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDeps = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDeps = lockDepsResult.ValueOr([]);
         var integrityLookup = lockDeps
             .Where(d => !string.IsNullOrEmpty(d.Integrity))
             .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
