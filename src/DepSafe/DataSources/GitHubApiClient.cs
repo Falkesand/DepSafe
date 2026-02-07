@@ -227,9 +227,36 @@ public sealed partial class GitHubApiClient : IDisposable
                     results[url] = null;
             }
         }
-        catch (Exception ex)
+        catch (RateLimitExceededException ex)
         {
-            Console.Error.WriteLine($"Error in batch repository fetch: {ex.Message}");
+            _isRateLimited = true;
+            _rateLimitReset = ex.Reset.UtcDateTime;
+            _remainingRequests = 0;
+            Console.Error.WriteLine($"[WARN] GitHub rate limit exceeded in batch repository fetch");
+            foreach (var (url, _, _) in repoList)
+                results.TryAdd(url, null);
+        }
+        catch (ApiException ex)
+        {
+            Console.Error.WriteLine($"[WARN] GitHub API error in batch repository fetch: {ex.Message}");
+            foreach (var (url, _, _) in repoList)
+                results.TryAdd(url, null);
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Network error in batch repository fetch: {ex.Message}");
+            foreach (var (url, _, _) in repoList)
+                results.TryAdd(url, null);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine("[WARN] Timeout in batch repository fetch");
+            foreach (var (url, _, _) in repoList)
+                results.TryAdd(url, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] Error in batch repository fetch: {ex.Message}");
             foreach (var (url, _, _) in repoList)
                 results.TryAdd(url, null);
         }
@@ -514,9 +541,36 @@ public sealed partial class GitHubApiClient : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch (RateLimitExceededException ex)
         {
-            Console.Error.WriteLine($"Error fetching vulnerabilities batch: {ex.Message}");
+            _isRateLimited = true;
+            _rateLimitReset = ex.Reset.UtcDateTime;
+            _remainingRequests = 0;
+            Console.Error.WriteLine("[WARN] GitHub rate limit exceeded fetching vulnerabilities batch");
+            foreach (var pkg in packages)
+                results.TryAdd(pkg, []);
+        }
+        catch (ApiException ex)
+        {
+            Console.Error.WriteLine($"[WARN] GitHub API error fetching vulnerabilities batch: {ex.Message}");
+            foreach (var pkg in packages)
+                results.TryAdd(pkg, []);
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Network error fetching vulnerabilities batch: {ex.Message}");
+            foreach (var pkg in packages)
+                results.TryAdd(pkg, []);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine("[WARN] Timeout fetching vulnerabilities batch");
+            foreach (var pkg in packages)
+                results.TryAdd(pkg, []);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] Error fetching vulnerabilities batch: {ex.Message}");
             foreach (var pkg in packages)
                 results.TryAdd(pkg, []);
         }
@@ -611,7 +665,7 @@ public sealed partial class GitHubApiClient : IDisposable
             _rateLimitReset = rateLimit.Resources.Core.Reset.UtcDateTime;
             _isRateLimited = _remainingRequests <= 0;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"[WARN] Failed to check GitHub rate limit: {ex.Message}");
         }

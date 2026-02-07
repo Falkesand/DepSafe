@@ -227,7 +227,19 @@ public sealed class NuGetApiClient : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Network error fetching dependencies for {packageIdentity.Id}: {ex.Message}");
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Parse error fetching dependencies for {packageIdentity.Id}: {ex.Message}");
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"[WARN] Timeout fetching dependencies for {packageIdentity.Id}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"[WARN] Failed to fetch dependencies for {packageIdentity.Id}: {ex.Message}");
         }
@@ -345,9 +357,17 @@ public sealed class NuGetApiClient : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch (System.Xml.XmlException ex)
         {
-            Console.Error.WriteLine($"Error parsing packages.config {configPath}: {ex.Message}");
+            Console.Error.WriteLine($"[WARN] XML parse error in packages.config {configPath}: {ex.Message}");
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"[WARN] IO error reading packages.config {configPath}: {ex.Message}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] Error parsing packages.config {configPath}: {ex.Message}");
         }
 
         return references;
@@ -389,7 +409,15 @@ public sealed class NuGetApiClient : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch (System.Xml.XmlException ex)
+        {
+            Console.Error.WriteLine($"[WARN] XML parse error in {propsPath}: {ex.Message}");
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"[WARN] IO error reading {propsPath}: {ex.Message}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"[WARN] Failed to parse {propsPath}: {ex.Message}");
         }

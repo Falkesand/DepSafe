@@ -222,9 +222,21 @@ public sealed partial class OsvApiClient : IDisposable
                 }
             }
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
         {
-            Console.Error.WriteLine($"OSV API error: {ex.Message}");
+            Console.Error.WriteLine($"[WARN] OSV API network error: {ex.Message}");
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"[WARN] OSV API parse error: {ex.Message}");
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine("[WARN] OSV API request timed out");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[WARN] OSV API error: {ex.Message}");
         }
 
         return results;

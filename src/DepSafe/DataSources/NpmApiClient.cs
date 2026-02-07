@@ -204,7 +204,22 @@ public sealed class NpmApiClient : IDisposable
 
             return doc?["downloads"]?.GetValue<long>() ?? 0;
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Network error fetching download count for {packageName}: {ex.Message}");
+            return 0;
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"[WARN] Parse error fetching download count for {packageName}: {ex.Message}");
+            return 0;
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"[WARN] Timeout fetching download count for {packageName}");
+            return 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Console.Error.WriteLine($"[WARN] Failed to fetch download count for {packageName}: {ex.Message}");
             return 0;
@@ -425,9 +440,13 @@ public sealed class NpmApiClient : IDisposable
                     queue.Enqueue(subDir);
                 }
             }
-            catch
+            catch (IOException)
             {
                 // Ignore directories we can't access
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Ignore directories we don't have permission for
             }
         }
     }
