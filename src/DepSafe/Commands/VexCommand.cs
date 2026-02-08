@@ -5,6 +5,7 @@ using DepSafe.Compliance;
 using DepSafe.DataSources;
 using DepSafe.Models;
 using DepSafe.Scoring;
+using DepSafe.Signing;
 using Spectre.Console;
 
 namespace DepSafe.Commands;
@@ -22,24 +23,36 @@ public static class VexCommand
             ["--output", "-o"],
             "Output file path (default: stdout)");
 
+        var signOption = new Option<bool>(
+            ["--sign"],
+            "Sign the generated artifact with sigil");
+
+        var signKeyOption = new Option<string?>(
+            ["--sign-key"],
+            "Path to the signing key for sigil (uses default if not specified)");
+
         var command = new Command("vex", "Generate VEX (Vulnerability Exploitability eXchange) document")
         {
             pathArg,
-            outputOption
+            outputOption,
+            signOption,
+            signKeyOption
         };
 
         command.SetHandler(async context =>
         {
             var path = context.ParseResult.GetValueForArgument(pathArg);
             var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var sign = context.ParseResult.GetValueForOption(signOption);
+            var signKey = context.ParseResult.GetValueForOption(signKeyOption);
             var ct = context.GetCancellationToken();
-            context.ExitCode = await ExecuteAsync(path, outputPath, ct);
+            context.ExitCode = await ExecuteAsync(path, outputPath, sign, signKey, ct);
         });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, string? outputPath, CancellationToken ct)
+    private static async Task<int> ExecuteAsync(string? path, string? outputPath, bool sign, string? signKey, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -86,6 +99,15 @@ public static class VexCommand
         {
             await File.WriteAllTextAsync(outputPath, output, ct);
             AnsiConsole.MarkupLine($"[green]VEX document written to {Markup.Escape(outputPath)}[/]");
+
+            if (sign)
+            {
+                var sigilService = await SigningHelper.TryCreateAsync(ct);
+                if (sigilService is not null)
+                {
+                    await SigningHelper.TrySignArtifactAsync(sigilService, outputPath, signKey, ct);
+                }
+            }
         }
         else
         {

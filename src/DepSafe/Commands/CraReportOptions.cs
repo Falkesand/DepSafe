@@ -8,4 +8,7 @@ public sealed record CraReportOptions(
     bool Deep,
     LicenseOutputFormat? Licenses,
     SbomFormat? Sbom,
-    bool CheckTyposquat);
+    bool CheckTyposquat,
+    bool Sign,
+    string? SignKey,
+    string? TrustBundle);

@@ -12,6 +12,7 @@ public enum ErrorKind
     RateLimited,
     InvalidInput,
     Timeout,
+    ExternalToolNotFound,
     Unknown
 }
 

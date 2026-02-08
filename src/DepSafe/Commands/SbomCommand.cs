@@ -6,6 +6,7 @@ using DepSafe.Compliance;
 using DepSafe.DataSources;
 using DepSafe.Models;
 using DepSafe.Scoring;
+using DepSafe.Signing;
 using Spectre.Console;
 
 namespace DepSafe.Commands;
@@ -32,12 +33,22 @@ public static class SbomCommand
             ["--skip-github"],
             "Skip GitHub API calls (faster, but no vulnerability data in SBOM)");
 
+        var signOption = new Option<bool>(
+            ["--sign"],
+            "Sign the generated artifact with sigil");
+
+        var signKeyOption = new Option<string?>(
+            ["--sign-key"],
+            "Path to the signing key for sigil (uses default if not specified)");
+
         var command = new Command("sbom", "Generate Software Bill of Materials (SBOM)")
         {
             pathArg,
             formatOption,
             outputOption,
-            skipGitHubOption
+            skipGitHubOption,
+            signOption,
+            signKeyOption
         };
 
         command.SetHandler(async context =>
@@ -46,14 +57,16 @@ public static class SbomCommand
             var format = context.ParseResult.GetValueForOption(formatOption);
             var outputPath = context.ParseResult.GetValueForOption(outputOption);
             var skipGitHub = context.ParseResult.GetValueForOption(skipGitHubOption);
+            var sign = context.ParseResult.GetValueForOption(signOption);
+            var signKey = context.ParseResult.GetValueForOption(signKeyOption);
             var ct = context.GetCancellationToken();
-            context.ExitCode = await ExecuteAsync(path, format, outputPath, skipGitHub, ct);
+            context.ExitCode = await ExecuteAsync(path, format, outputPath, skipGitHub, sign, signKey, ct);
         });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, SbomFormat format, string? outputPath, bool skipGitHub, CancellationToken ct)
+    private static async Task<int> ExecuteAsync(string? path, SbomFormat format, string? outputPath, bool skipGitHub, bool sign, string? signKey, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -143,6 +156,15 @@ public static class SbomCommand
         {
             await File.WriteAllTextAsync(outputPath, output, ct);
             AnsiConsole.MarkupLine($"[green]SBOM written to {Markup.Escape(outputPath)}[/]");
+
+            if (sign)
+            {
+                var sigilService = await SigningHelper.TryCreateAsync(ct);
+                if (sigilService is not null)
+                {
+                    await SigningHelper.TrySignArtifactAsync(sigilService, outputPath, signKey, ct);
+                }
+            }
         }
         else
         {

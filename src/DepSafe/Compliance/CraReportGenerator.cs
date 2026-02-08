@@ -501,6 +501,51 @@ public sealed partial class CraReportGenerator
             });
         }
 
+        // Artifact Integrity (signing via sigil)
+        {
+            var signedCount = _artifactSigningResults.Count(r => r.IsSigned);
+            var verifiedCount = _artifactSigningResults.Count(r => r.IsVerified);
+            var totalArtifacts = _artifactSigningResults.Count;
+
+            CraComplianceStatus integrityStatus;
+            string evidence;
+            string? recommendation;
+
+            if (totalArtifacts == 0)
+            {
+                integrityStatus = CraComplianceStatus.Review;
+                evidence = "No artifact signatures found. Use --sign to sign compliance artifacts.";
+                recommendation = "Sign generated artifacts with sigil to provide cryptographic integrity guarantees.";
+            }
+            else if (verifiedCount == totalArtifacts)
+            {
+                integrityStatus = CraComplianceStatus.Compliant;
+                evidence = $"All {totalArtifacts} artifact(s) are signed and verified.";
+                recommendation = null;
+            }
+            else if (signedCount > 0)
+            {
+                integrityStatus = CraComplianceStatus.ActionRequired;
+                evidence = $"{signedCount}/{totalArtifacts} artifact(s) signed, {verifiedCount} verified.";
+                recommendation = "Some artifacts could not be verified. Check signing key and trust bundle configuration.";
+            }
+            else
+            {
+                integrityStatus = CraComplianceStatus.NonCompliant;
+                evidence = "Artifact signing attempted but no signatures were produced.";
+                recommendation = "Ensure sigil is installed and a valid signing key is configured.";
+            }
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 10 - Artifact Integrity",
+                Description = "Cryptographic signing of compliance artifacts (SBOM, VEX, CRA report)",
+                Status = integrityStatus,
+                Evidence = evidence,
+                Recommendation = recommendation
+            });
+        }
+
         // Calculate CRA Readiness Score
         var craReadinessScore = CalculateCraReadinessScore(complianceItems);
 
@@ -576,6 +621,7 @@ public sealed partial class CraReportGenerator
         ["CRA Art. 10 - Cryptographic Compliance"] = 1,
         ["CRA Art. 10 - Supply Chain Integrity"] = 1,
         ["CRA Art. 14 - Incident Reporting"] = 12,
+        ["CRA Art. 10 - Artifact Integrity"] = 2,
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     public static int CalculateCraReadinessScore(List<CraComplianceItem> items)
@@ -743,6 +789,14 @@ public sealed partial class CraReportGenerator
                 : "";
             sb.AppendLine($"          Remediation Roadmap{roadmapBadge}</a></li>");
         }
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('artifact-integrity')\" data-section=\"artifact-integrity\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/><polyline points=\"9 12 11 14 15 10\"/></svg>");
+            var integrityBadge = _artifactSigningResults.Count > 0
+                ? $"<span class=\"nav-badge\">{_artifactSigningResults.Count}</span>"
+                : "";
+            sb.AppendLine($"          Artifact Integrity{integrityBadge}</a></li>");
+        }
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
@@ -860,6 +914,10 @@ public sealed partial class CraReportGenerator
 
         sb.AppendLine("<section id=\"remediation-roadmap\" class=\"section\">");
         GenerateRemediationRoadmapSection(sb);
+        sb.AppendLine("</section>");
+
+        sb.AppendLine("<section id=\"artifact-integrity\" class=\"section\">");
+        GenerateArtifactIntegritySection(sb);
         sb.AppendLine("</section>");
 
         if (_remediationData.Count > 0)
@@ -983,6 +1041,9 @@ public sealed partial class CraReportGenerator
     // Phase 5: Art. 14 Reporting Obligations and Remediation Roadmap (v1.5)
     private List<ReportingObligation> _reportingObligations = [];
     private List<Scoring.RemediationRoadmapItem> _remediationRoadmap = [];
+
+    // Phase 6: Artifact Integrity (sigil signing)
+    private List<ArtifactSigningResult> _artifactSigningResults = [];
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1151,6 +1212,14 @@ public sealed partial class CraReportGenerator
     public void SetRemediationRoadmap(List<RemediationRoadmapItem> roadmap)
     {
         _remediationRoadmap = roadmap;
+    }
+
+    /// <summary>
+    /// Set artifact signing/verification results for CRA Art. 10 - Artifact Integrity.
+    /// </summary>
+    public void SetArtifactIntegrity(List<ArtifactSigningResult> results)
+    {
+        _artifactSigningResults = results;
     }
 
     /// <summary>
