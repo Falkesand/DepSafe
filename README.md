@@ -6,7 +6,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 
 [![NuGet](https://img.shields.io/nuget/v/DepSafe.svg)](https://www.nuget.org/packages/DepSafe)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/DepSafe.svg)](https://www.nuget.org/packages/DepSafe)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat)
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat)
 
 ---
 
@@ -867,7 +867,7 @@ The compliance assessments, health scores, vulnerability reports, and other outp
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+AGPL-3.0 - see [LICENSE](LICENSE) for details.
 
 ---
 
