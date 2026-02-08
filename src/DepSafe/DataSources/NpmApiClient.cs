@@ -375,7 +375,7 @@ public sealed class NpmApiClient : IDisposable
         }
     }
 
-    private static string? ExtractPackageNameFromPath(string path)
+    internal static string? ExtractPackageNameFromPath(string path)
     {
         // path format: "node_modules/@scope/package" or "node_modules/package"
         const string prefix = "node_modules/";
@@ -574,7 +574,7 @@ public sealed class NpmApiClient : IDisposable
         return node;
     }
 
-    private static int CalculateMaxDepth(List<DependencyTreeNode> roots)
+    internal static int CalculateMaxDepth(List<DependencyTreeNode> roots)
     {
         var maxDepth = 0;
 
@@ -595,7 +595,7 @@ public sealed class NpmApiClient : IDisposable
         return maxDepth;
     }
 
-    private static Dictionary<string, string> ParseDependencyObject(JsonNode? node)
+    internal static Dictionary<string, string> ParseDependencyObject(JsonNode? node)
     {
         var deps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -633,7 +633,7 @@ public sealed class NpmApiClient : IDisposable
         return result;
     }
 
-    private static string? ExtractAuthorName(JsonNode? node)
+    internal static string? ExtractAuthorName(JsonNode? node)
     {
         if (node is null) return null;
 
@@ -677,7 +677,7 @@ public sealed class NpmApiClient : IDisposable
         return null;
     }
 
-    private static string? NormalizeGitUrl(string? url)
+    internal static string? NormalizeGitUrl(string? url)
     {
         if (string.IsNullOrEmpty(url)) return null;
 

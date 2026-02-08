@@ -289,14 +289,14 @@ public sealed partial class OsvApiClient : IDisposable
         return results;
     }
 
-    private static string MapEcosystem(PackageEcosystem ecosystem) => ecosystem switch
+    internal static string MapEcosystem(PackageEcosystem ecosystem) => ecosystem switch
     {
         PackageEcosystem.Npm => "npm",
         PackageEcosystem.NuGet => "NuGet",
         _ => "npm"
     };
 
-    private static VulnerabilityInfo MapToVulnerabilityInfo(OsvVulnerability vuln, string packageName = "")
+    internal static VulnerabilityInfo MapToVulnerabilityInfo(OsvVulnerability vuln, string packageName = "")
     {
         // Determine severity from CVSS or database-specific severity
         var severity = DetermineSeverity(vuln);
@@ -332,7 +332,7 @@ public sealed partial class OsvApiClient : IDisposable
         };
     }
 
-    private static List<string> ExtractCves(OsvVulnerability vuln)
+    internal static List<string> ExtractCves(OsvVulnerability vuln)
     {
         var cves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -362,7 +362,7 @@ public sealed partial class OsvApiClient : IDisposable
         return [.. cves];
     }
 
-    private static string DetermineSeverity(OsvVulnerability vuln)
+    internal static string DetermineSeverity(OsvVulnerability vuln)
     {
         // Try CVSS first
         if (vuln.Severity is { Count: > 0 })
@@ -392,7 +392,7 @@ public sealed partial class OsvApiClient : IDisposable
         return "UNKNOWN";
     }
 
-    private static double ParseCvssScore(string cvssVector)
+    internal static double ParseCvssScore(string cvssVector)
     {
         // CVSS vectors look like: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
         // We need to calculate the score from the vector components
@@ -416,7 +416,7 @@ public sealed partial class OsvApiClient : IDisposable
         return 5.0; // Default medium
     }
 
-    private static DateTime? ParseDate(string? dateStr)
+    internal static DateTime? ParseDate(string? dateStr)
     {
         if (string.IsNullOrEmpty(dateStr))
             return null;
@@ -427,7 +427,7 @@ public sealed partial class OsvApiClient : IDisposable
         return null;
     }
 
-    private static List<string> ExtractAffectedVersions(OsvVulnerability vuln)
+    internal static List<string> ExtractAffectedVersions(OsvVulnerability vuln)
     {
         var versions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -473,7 +473,7 @@ public sealed partial class OsvApiClient : IDisposable
         return [.. versions];
     }
 
-    private static List<string> ExtractFixedVersions(OsvVulnerability vuln)
+    internal static List<string> ExtractFixedVersions(OsvVulnerability vuln)
     {
         var versions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -506,13 +506,13 @@ public sealed partial class OsvApiClient : IDisposable
     }
 
     // OSV API request/response models
-    private sealed class OsvBatchRequest
+    internal sealed class OsvBatchRequest
     {
         [JsonPropertyName("queries")]
         public required List<OsvQuery> Queries { get; init; }
     }
 
-    private sealed class OsvQuery
+    internal sealed class OsvQuery
     {
         [JsonPropertyName("package")]
         public required OsvPackage Package { get; init; }
@@ -522,7 +522,7 @@ public sealed partial class OsvApiClient : IDisposable
         public string? Version { get; init; }
     }
 
-    private sealed class OsvPackage
+    internal sealed class OsvPackage
     {
         [JsonPropertyName("name")]
         public required string Name { get; init; }
@@ -531,19 +531,19 @@ public sealed partial class OsvApiClient : IDisposable
         public required string Ecosystem { get; init; }
     }
 
-    private sealed class OsvBatchResponse
+    internal sealed class OsvBatchResponse
     {
         [JsonPropertyName("results")]
         public List<OsvQueryResult>? Results { get; init; }
     }
 
-    private sealed class OsvQueryResult
+    internal sealed class OsvQueryResult
     {
         [JsonPropertyName("vulns")]
         public List<OsvVulnerability>? Vulns { get; init; }
     }
 
-    private sealed class OsvVulnerability
+    internal sealed class OsvVulnerability
     {
         [JsonPropertyName("id")]
         public string? Id { get; init; }
@@ -573,7 +573,7 @@ public sealed partial class OsvApiClient : IDisposable
         public OsvDatabaseSpecific? DatabaseSpecific { get; init; }
     }
 
-    private sealed class OsvSeverity
+    internal sealed class OsvSeverity
     {
         [JsonPropertyName("type")]
         public string? Type { get; init; }
@@ -582,7 +582,7 @@ public sealed partial class OsvApiClient : IDisposable
         public string? Score { get; init; }
     }
 
-    private sealed class OsvAffected
+    internal sealed class OsvAffected
     {
         [JsonPropertyName("package")]
         public OsvPackage? Package { get; init; }
@@ -594,7 +594,7 @@ public sealed partial class OsvApiClient : IDisposable
         public List<string>? Versions { get; init; }
     }
 
-    private sealed class OsvRange
+    internal sealed class OsvRange
     {
         [JsonPropertyName("type")]
         public string? Type { get; init; }
@@ -603,7 +603,7 @@ public sealed partial class OsvApiClient : IDisposable
         public List<OsvEvent>? Events { get; init; }
     }
 
-    private sealed class OsvEvent
+    internal sealed class OsvEvent
     {
         [JsonPropertyName("introduced")]
         public string? Introduced { get; init; }
@@ -612,7 +612,7 @@ public sealed partial class OsvApiClient : IDisposable
         public string? Fixed { get; init; }
     }
 
-    private sealed class OsvReference
+    internal sealed class OsvReference
     {
         [JsonPropertyName("type")]
         public string? Type { get; init; }
@@ -621,7 +621,7 @@ public sealed partial class OsvApiClient : IDisposable
         public string? Url { get; init; }
     }
 
-    private sealed class OsvDatabaseSpecific
+    internal sealed class OsvDatabaseSpecific
     {
         [JsonPropertyName("severity")]
         public string? Severity { get; init; }

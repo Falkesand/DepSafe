@@ -271,7 +271,7 @@ public sealed partial class GitHubApiClient : IDisposable
         return results;
     }
 
-    private static GitHubRepoInfo ParseRepoFromGraphQL(JsonElement repoData, string owner, string repo)
+    internal static GitHubRepoInfo ParseRepoFromGraphQL(JsonElement repoData, string owner, string repo)
     {
         var stars = repoData.TryGetProperty("stargazerCount", out var s) ? s.GetInt32() : 0;
         var forks = repoData.TryGetProperty("forkCount", out var f) ? f.GetInt32() : 0;
@@ -585,7 +585,7 @@ public sealed partial class GitHubApiClient : IDisposable
         return results;
     }
 
-    private static VulnerabilityInfo? ParseVulnerabilityFromGraphQL(JsonElement node, string packageId)
+    internal static VulnerabilityInfo? ParseVulnerabilityFromGraphQL(JsonElement node, string packageId)
     {
         if (!node.TryGetProperty("advisory", out var advisory) || advisory.ValueKind == JsonValueKind.Null)
             return null;
@@ -674,7 +674,7 @@ public sealed partial class GitHubApiClient : IDisposable
         }
     }
 
-    private static (string? owner, string? repo) ParseGitHubUrl(string url)
+    internal static (string? owner, string? repo) ParseGitHubUrl(string url)
     {
         var match = GitHubUrlRegex().Match(url);
         if (match.Success)
@@ -695,7 +695,7 @@ public sealed partial class GitHubApiClient : IDisposable
     private static readonly SearchValues<char> s_graphQLSpecialChars =
         SearchValues.Create("\\\"\n\r\t");
 
-    private static string SanitizeGraphQLString(string input)
+    internal static string SanitizeGraphQLString(string input)
     {
         // Fast-path: if no special chars, return original (no allocation)
         if (input.AsSpan().IndexOfAny(s_graphQLSpecialChars) < 0)

@@ -6,7 +6,7 @@ namespace DepSafe.Compliance;
 
 public sealed partial class CraReportGenerator
 {
-    private static string GetScoreClass(int score) => score switch
+    internal static string GetScoreClass(int score) => score switch
     {
         >= 80 => "healthy",
         >= 60 => "watch",
@@ -14,7 +14,7 @@ public sealed partial class CraReportGenerator
         _ => "critical"
     };
 
-    private static string GetCraScoreClass(int score) => score switch
+    internal static string GetCraScoreClass(int score) => score switch
     {
         >= 90 => "healthy",
         >= 70 => "watch",
@@ -77,7 +77,7 @@ public sealed partial class CraReportGenerator
         return s_knownSpdxLicenses.Contains(normalized);
     }
 
-    private static string FormatNumber(long number) => number switch
+    internal static string FormatNumber(long number) => number switch
     {
         >= 1_000_000_000 => $"{number / 1_000_000_000.0:F1}B",
         >= 1_000_000 => $"{number / 1_000_000.0:F1}M",
@@ -85,10 +85,10 @@ public sealed partial class CraReportGenerator
         _ => number.ToString()
     };
 
-    private static string FormatDownloads(long downloads) =>
+    internal static string FormatDownloads(long downloads) =>
         downloads == 0 ? "N/A" : FormatNumber(downloads);
 
-    private static string FormatDuration(TimeSpan duration) => duration.TotalSeconds switch
+    internal static string FormatDuration(TimeSpan duration) => duration.TotalSeconds switch
     {
         < 1 => $"{duration.TotalMilliseconds:F0}ms",
         < 60 => $"{duration.TotalSeconds:F1}s",
@@ -323,7 +323,7 @@ public sealed partial class CraReportGenerator
 
     private static readonly char[] HtmlSpecialChars = ['&', '<', '>', '"', '\''];
 
-    private static string EscapeHtml(string input)
+    internal static string EscapeHtml(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
 
@@ -348,7 +348,7 @@ public sealed partial class CraReportGenerator
 
     private static readonly char[] JsSpecialChars = ['\\', '\'', '"', '\n', '\r'];
 
-    private static string EscapeJs(string input)
+    internal static string EscapeJs(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
 
@@ -371,7 +371,7 @@ public sealed partial class CraReportGenerator
         return sb.ToString();
     }
 
-    private static string MinifyCss(string css)
+    internal static string MinifyCss(string css)
     {
         var sb = new StringBuilder(css.Length);
         var inComment = false;
