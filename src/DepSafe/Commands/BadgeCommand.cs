@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text;
 using System.Text.Json;
 using System.Web;
@@ -45,12 +46,21 @@ public static class BadgeCommand
             skipGitHubOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, styleOption, skipGitHubOption);
+        command.SetHandler(async context =>
+        {
+            var path = context.ParseResult.GetValueForArgument(pathArg);
+            var format = context.ParseResult.GetValueForOption(formatOption);
+            var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var style = context.ParseResult.GetValueForOption(styleOption)!;
+            var skipGitHub = context.ParseResult.GetValueForOption(skipGitHubOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(path, format, outputPath, style, skipGitHub, ct);
+        });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, BadgeFormat format, string? outputPath, string style, bool skipGitHub)
+    private static async Task<int> ExecuteAsync(string? path, BadgeFormat format, string? outputPath, string style, bool skipGitHub, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -73,11 +83,11 @@ public static class BadgeCommand
         }
 
         // Get transitive count from dotnet list (for badge display)
-        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path, ct);
         var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
         using var pipeline = new AnalysisPipeline(skipGitHub);
-        var allReferences = await pipeline.ScanProjectFilesAsync(path);
+        var allReferences = await pipeline.ScanProjectFilesAsync(path, ct);
 
         // Merge in any packages from dotnet list that weren't found via project file parsing
         foreach (var pkg in topLevel)
@@ -91,7 +101,7 @@ public static class BadgeCommand
             return 0;
         }
 
-        await pipeline.RunAsync(allReferences);
+        await pipeline.RunAsync(allReferences, ct);
 
         var packages = pipeline.Packages;
         var vulnCount = pipeline.VulnerabilityMap.Values.Sum(v => v.Count);
@@ -120,7 +130,7 @@ public static class BadgeCommand
 
         if (!string.IsNullOrEmpty(outputPath))
         {
-            await File.WriteAllTextAsync(outputPath, output);
+            await File.WriteAllTextAsync(outputPath, output, ct);
             AnsiConsole.MarkupLine($"[green]Badges written to {Markup.Escape(outputPath)}[/]");
         }
         else

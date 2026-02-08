@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
@@ -39,12 +40,20 @@ public static class SbomCommand
             skipGitHubOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, outputOption, skipGitHubOption);
+        command.SetHandler(async context =>
+        {
+            var path = context.ParseResult.GetValueForArgument(pathArg);
+            var format = context.ParseResult.GetValueForOption(formatOption);
+            var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var skipGitHub = context.ParseResult.GetValueForOption(skipGitHubOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(path, format, outputPath, skipGitHub, ct);
+        });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, SbomFormat format, string? outputPath, bool skipGitHub)
+    private static async Task<int> ExecuteAsync(string? path, SbomFormat format, string? outputPath, bool skipGitHub, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -89,13 +98,13 @@ public static class SbomCommand
 
         if (projectType is ProjectType.DotNet or ProjectType.Mixed)
         {
-            var dotnetPackages = await ResolveDotNetPackagesAsync(path, skipGitHub);
+            var dotnetPackages = await ResolveDotNetPackagesAsync(path, skipGitHub, ct);
             packages.AddRange(dotnetPackages);
         }
 
         if (projectType is ProjectType.Npm or ProjectType.Mixed)
         {
-            var npmPackages = await ResolveNpmPackagesAsync(path, skipGitHub);
+            var npmPackages = await ResolveNpmPackagesAsync(path, skipGitHub, ct);
             packages.AddRange(npmPackages);
         }
 
@@ -132,7 +141,7 @@ public static class SbomCommand
 
         if (!string.IsNullOrEmpty(outputPath))
         {
-            await File.WriteAllTextAsync(outputPath, output);
+            await File.WriteAllTextAsync(outputPath, output, ct);
             AnsiConsole.MarkupLine($"[green]SBOM written to {Markup.Escape(outputPath)}[/]");
         }
         else
@@ -146,7 +155,7 @@ public static class SbomCommand
     /// <summary>
     /// Resolve .NET packages including transitive dependencies via dotnet list package.
     /// </summary>
-    private static async Task<List<PackageHealth>> ResolveDotNetPackagesAsync(string path, bool skipGitHub)
+    private static async Task<List<PackageHealth>> ResolveDotNetPackagesAsync(string path, bool skipGitHub, CancellationToken ct)
     {
         // Phase 1: Resolve direct + transitive packages
         var allReferences = new Dictionary<string, PackageReference>(StringComparer.OrdinalIgnoreCase);
@@ -159,7 +168,7 @@ public static class SbomCommand
             {
                 foreach (var projectFile in projectFiles)
                 {
-                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(projectFile);
+                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(projectFile, ct);
                     var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                     foreach (var r in topLevel)
@@ -179,7 +188,7 @@ public static class SbomCommand
         using var pipeline = new AnalysisPipeline(skipGitHub);
         pipeline.ShowGitHubStatus("No vulnerability data in SBOM.");
 
-        await pipeline.RunAsync(allReferences);
+        await pipeline.RunAsync(allReferences, ct);
 
         return pipeline.Packages;
     }
@@ -187,7 +196,7 @@ public static class SbomCommand
     /// <summary>
     /// Resolve npm packages including transitive dependencies via dependency tree.
     /// </summary>
-    private static async Task<List<PackageHealth>> ResolveNpmPackagesAsync(string path, bool skipGitHub)
+    private static async Task<List<PackageHealth>> ResolveNpmPackagesAsync(string path, bool skipGitHub, CancellationToken ct)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -197,7 +206,7 @@ public static class SbomCommand
         AnsiConsole.MarkupLine($"[dim]Using: {packageJsonPath}[/]");
 
         // Parse package.json for direct deps
-        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath, ct);
         if (packageJsonResult.IsFailure)
         {
             AnsiConsole.MarkupLine($"[red]{Markup.Escape(packageJsonResult.Error)}[/]");
@@ -224,7 +233,7 @@ public static class SbomCommand
         await AnsiConsole.Status()
             .StartAsync("Building npm dependency tree...", async _ =>
             {
-                dependencyTree = await npmClient.BuildDependencyTreeAsync(packageJsonPath, maxDepth: 10);
+                dependencyTree = await npmClient.BuildDependencyTreeAsync(packageJsonPath, maxDepth: 10, ct);
             });
 
         // Collect transitive package IDs
@@ -253,10 +262,10 @@ public static class SbomCommand
                 using var semaphore = new SemaphoreSlim(10);
                 var tasks = allNpmPackageIds.Select(async packageName =>
                 {
-                    await semaphore.WaitAsync();
+                    await semaphore.WaitAsync(ct);
                     try
                     {
-                        var result = await npmClient.GetPackageInfoAsync(packageName);
+                        var result = await npmClient.GetPackageInfoAsync(packageName, ct);
                         if (result.IsSuccess)
                         {
                             npmInfoMap[packageName] = result.Value;
@@ -288,7 +297,7 @@ public static class SbomCommand
 
                     if (repoUrls.Count > 0)
                     {
-                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!);
+                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!, ct);
                         foreach (var (packageId, info) in npmInfoMap)
                         {
                             if (info.RepositoryUrl is not null && results.TryGetValue(info.RepositoryUrl, out var repoInfo))
@@ -307,7 +316,7 @@ public static class SbomCommand
         await AnsiConsole.Status()
             .StartAsync($"Checking vulnerabilities via OSV ({allNpmPackageIds.Count} packages)...", async _ =>
             {
-                var vulns = await osvClient.QueryNpmPackagesAsync(allNpmPackageIds);
+                var vulns = await osvClient.QueryNpmPackagesAsync(allNpmPackageIds, ct);
                 foreach (var (name, v) in vulns)
                 {
                     allVulnerabilities[name] = v;
@@ -326,7 +335,7 @@ public static class SbomCommand
 
         // Parse lock file for integrity hashes
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath, ct);
         var lockDeps = lockDepsResult.ValueOr([]);
         var integrityLookup = lockDeps
             .Where(d => !string.IsNullOrEmpty(d.Integrity))

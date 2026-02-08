@@ -48,16 +48,16 @@ public sealed class PackageProvenanceChecker : IDisposable
     /// Uses the NuGet V3 registration API to check for signature info.
     /// </summary>
     public async Task<List<ProvenanceResult>> CheckNuGetProvenanceAsync(
-        IReadOnlyList<(string PackageId, string Version)> packages)
+        IReadOnlyList<(string PackageId, string Version)> packages, CancellationToken ct = default)
     {
         using var semaphore = new SemaphoreSlim(5);
 
         var tasks = packages.Select(async pkg =>
         {
-            await semaphore.WaitAsync().ConfigureAwait(false);
+            await semaphore.WaitAsync(ct);
             try
             {
-                return await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version).ConfigureAwait(false);
+                return await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version, ct);
             }
             finally
             {
@@ -65,11 +65,11 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
         });
 
-        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        var results = await Task.WhenAll(tasks);
         return [.. results];
     }
 
-    private async Task<ProvenanceResult> CheckSingleNuGetPackageAsync(string packageId, string version)
+    private async Task<ProvenanceResult> CheckSingleNuGetPackageAsync(string packageId, string version, CancellationToken ct = default)
     {
         try
         {
@@ -77,7 +77,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             // Check the registration endpoint for signature metadata
             var url = $"https://api.nuget.org/v3/registration5-gz-semver2/{Uri.EscapeDataString(packageId.ToLowerInvariant())}/{Uri.EscapeDataString(version.ToLowerInvariant())}.json";
 
-            using var response = await _httpClient.GetAsync(url).ConfigureAwait(false);
+            using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
             {
                 return new ProvenanceResult
@@ -90,7 +90,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 };
             }
 
-            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -109,10 +109,10 @@ public sealed class PackageProvenanceChecker : IDisposable
                     var catalogUrl = catalog.GetString();
                     if (!string.IsNullOrEmpty(catalogUrl) && IsAllowedUrl(catalogUrl))
                     {
-                        using var catalogResponse = await _httpClient.GetAsync(catalogUrl).ConfigureAwait(false);
+                        using var catalogResponse = await _httpClient.GetAsync(catalogUrl, ct);
                         if (catalogResponse.IsSuccessStatusCode)
                         {
-                            var catalogJson = await catalogResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            var catalogJson = await catalogResponse.Content.ReadAsStringAsync(ct);
                             using var catalogDoc = JsonDocument.Parse(catalogJson);
                             if (catalogDoc.RootElement.TryGetProperty("packageHash", out var hashProp))
                             {
@@ -157,16 +157,16 @@ public sealed class PackageProvenanceChecker : IDisposable
     /// Uses the npm registry per-version endpoint to check for signatures and attestations.
     /// </summary>
     public async Task<List<ProvenanceResult>> CheckNpmProvenanceAsync(
-        IReadOnlyList<(string PackageId, string Version)> packages)
+        IReadOnlyList<(string PackageId, string Version)> packages, CancellationToken ct = default)
     {
         using var semaphore = new SemaphoreSlim(10);
 
         var tasks = packages.Select(async pkg =>
         {
-            await semaphore.WaitAsync().ConfigureAwait(false);
+            await semaphore.WaitAsync(ct);
             try
             {
-                return await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version).ConfigureAwait(false);
+                return await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version, ct);
             }
             finally
             {
@@ -174,11 +174,11 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
         });
 
-        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        var results = await Task.WhenAll(tasks);
         return [.. results];
     }
 
-    private async Task<ProvenanceResult> CheckSingleNpmPackageAsync(string packageId, string version)
+    private async Task<ProvenanceResult> CheckSingleNpmPackageAsync(string packageId, string version, CancellationToken ct = default)
     {
         try
         {
@@ -187,7 +187,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             var encodedVersion = Uri.EscapeDataString(version);
             var url = $"https://registry.npmjs.org/{encodedName}/{encodedVersion}";
 
-            using var response = await _httpClient.GetAsync(url).ConfigureAwait(false);
+            using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
             {
                 return new ProvenanceResult
@@ -200,7 +200,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 };
             }
 
-            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -266,7 +266,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         }
     }
 
-    private static bool IsAllowedUrl(string url)
+    internal static bool IsAllowedUrl(string url)
     {
         return Uri.TryCreate(url, UriKind.Absolute, out var uri)
             && uri.Scheme == Uri.UriSchemeHttps

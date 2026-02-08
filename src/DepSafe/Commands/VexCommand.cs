@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
@@ -27,12 +28,18 @@ public static class VexCommand
             outputOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, outputOption);
+        command.SetHandler(async context =>
+        {
+            var path = context.ParseResult.GetValueForArgument(pathArg);
+            var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(path, outputPath, ct);
+        });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, string? outputPath)
+    private static async Task<int> ExecuteAsync(string? path, string? outputPath, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -58,14 +65,14 @@ public static class VexCommand
         using var pipeline = new AnalysisPipeline(skipGitHub: false);
         pipeline.ShowGitHubStatus("VEX generation requires GitHub API for vulnerability data.");
 
-        var allReferences = await pipeline.ScanProjectFilesAsync(path);
+        var allReferences = await pipeline.ScanProjectFilesAsync(path, ct);
         if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");
             return 0;
         }
 
-        await pipeline.RunAsync(allReferences);
+        await pipeline.RunAsync(allReferences, ct);
 
         var packages = pipeline.Packages;
         var allVulnerabilities = pipeline.VulnerabilityMap;
@@ -77,7 +84,7 @@ public static class VexCommand
 
         if (!string.IsNullOrEmpty(outputPath))
         {
-            await File.WriteAllTextAsync(outputPath, output);
+            await File.WriteAllTextAsync(outputPath, output, ct);
             AnsiConsole.MarkupLine($"[green]VEX document written to {Markup.Escape(outputPath)}[/]");
         }
         else

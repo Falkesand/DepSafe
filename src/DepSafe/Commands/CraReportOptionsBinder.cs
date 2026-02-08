@@ -34,6 +34,8 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         _checkTyposquat = checkTyposquat;
     }
 
+    public CraReportOptions Bind(BindingContext bindingContext) => GetBoundValue(bindingContext);
+
     protected override CraReportOptions GetBoundValue(BindingContext bindingContext) => new(
         bindingContext.ParseResult.GetValueForArgument(_path),
         bindingContext.ParseResult.GetValueForOption(_format),

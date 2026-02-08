@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.DataSources;
 using DepSafe.Models;
@@ -42,12 +43,21 @@ public static class AnalyzeCommand
             checkTyposquatOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, failBelowOption, skipGitHubOption, checkTyposquatOption);
+        command.SetHandler(async context =>
+        {
+            var path = context.ParseResult.GetValueForArgument(pathArg);
+            var format = context.ParseResult.GetValueForOption(formatOption);
+            var failBelow = context.ParseResult.GetValueForOption(failBelowOption);
+            var skipGitHub = context.ParseResult.GetValueForOption(skipGitHubOption);
+            var checkTyposquat = context.ParseResult.GetValueForOption(checkTyposquatOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(path, format, failBelow, skipGitHub, checkTyposquat, ct);
+        });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, int? failBelow, bool skipGitHub, bool checkTyposquat)
+    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, int? failBelow, bool skipGitHub, bool checkTyposquat, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -60,15 +70,15 @@ public static class AnalyzeCommand
         using var pipeline = new AnalysisPipeline(skipGitHub);
         pipeline.ShowGitHubStatus("No repo activity or vulnerability data.");
 
-        var allReferences = await pipeline.ScanProjectFilesAsync(path);
+        var allReferences = await pipeline.ScanProjectFilesAsync(path, ct);
         if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");
             return 0;
         }
 
-        await pipeline.RunAsync(allReferences);
-        await pipeline.EnrichWithEpssAsync();
+        await pipeline.RunAsync(allReferences, ct);
+        await pipeline.EnrichWithEpssAsync(ct);
 
         var packages = pipeline.Packages;
 
@@ -130,7 +140,7 @@ public static class AnalyzeCommand
         // Typosquatting check (optional)
         if (checkTyposquat)
         {
-            var typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false);
+            var typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false, ct);
             if (typosquatResults.Count > 0)
             {
                 AnsiConsole.WriteLine();

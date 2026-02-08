@@ -50,7 +50,7 @@ public sealed class AnalysisPipeline : IDisposable
     /// <summary>
     /// Scan project files and collect package references with deduplication.
     /// </summary>
-    public async Task<Dictionary<string, PackageReference>> ScanProjectFilesAsync(string path)
+    public async Task<Dictionary<string, PackageReference>> ScanProjectFilesAsync(string path, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -63,7 +63,7 @@ public sealed class AnalysisPipeline : IDisposable
             {
                 foreach (var projectFile in projectFiles)
                 {
-                    var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                    var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile, ct);
                     foreach (var r in refsResult.ValueOr([]))
                     {
                         allReferences.TryAdd(r.PackageId, r);
@@ -77,7 +77,7 @@ public sealed class AnalysisPipeline : IDisposable
     /// <summary>
     /// Run the full analysis pipeline: NuGet info, GitHub repo info, vulnerabilities, and health scores.
     /// </summary>
-    public async Task RunAsync(Dictionary<string, PackageReference> allReferences)
+    public async Task RunAsync(Dictionary<string, PackageReference> allReferences, CancellationToken ct = default)
     {
         // Phase 1: Fetch NuGet info
         await AnsiConsole.Progress()
@@ -88,7 +88,7 @@ public sealed class AnalysisPipeline : IDisposable
                 foreach (var (packageId, _) in allReferences)
                 {
                     task.Description = $"NuGet: {packageId}";
-                    var result = await _nugetClient.GetPackageInfoAsync(packageId);
+                    var result = await _nugetClient.GetPackageInfoAsync(packageId, ct);
                     if (result.IsSuccess)
                     {
                         NuGetInfoMap[packageId] = result.Value;
@@ -110,7 +110,7 @@ public sealed class AnalysisPipeline : IDisposable
 
                     if (repoUrls.Count > 0)
                     {
-                        var results = await _githubClient.GetRepositoriesBatchAsync(repoUrls);
+                        var results = await _githubClient.GetRepositoriesBatchAsync(repoUrls, ct);
 
                         foreach (var (packageId, info) in NuGetInfoMap)
                         {
@@ -134,7 +134,7 @@ public sealed class AnalysisPipeline : IDisposable
                 await AnsiConsole.Status()
                     .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
                     {
-                        var vulns = await _githubClient.GetVulnerabilitiesBatchAsync(allReferences.Keys);
+                        var vulns = await _githubClient.GetVulnerabilitiesBatchAsync(allReferences.Keys, ct);
                         foreach (var kvp in vulns)
                         {
                             VulnerabilityMap[kvp.Key] = kvp.Value;
@@ -172,7 +172,7 @@ public sealed class AnalysisPipeline : IDisposable
     /// <summary>
     /// Enrich vulnerabilities with EPSS exploit probability scores.
     /// </summary>
-    public async Task EnrichWithEpssAsync()
+    public async Task EnrichWithEpssAsync(CancellationToken ct = default)
     {
         var allCveSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var vulnList in VulnerabilityMap.Values)
@@ -187,7 +187,7 @@ public sealed class AnalysisPipeline : IDisposable
         using var epssService = new EpssService();
         var epssScores = await AnsiConsole.Status()
             .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
-                await epssService.GetScoresAsync(allCves));
+                await epssService.GetScoresAsync(allCves, ct));
 
         // Build O(1) lookup for Packages by PackageId
         var packageLookup = new Dictionary<string, PackageHealth>(Packages.Count, StringComparer.OrdinalIgnoreCase);

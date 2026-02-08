@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.DataSources;
 using DepSafe.Scoring;
@@ -35,12 +36,20 @@ public static class CheckCommand
             skipGitHubOption
         };
 
-        command.SetHandler(ExecuteAsync, packageArg, versionOption, formatOption, skipGitHubOption);
+        command.SetHandler(async context =>
+        {
+            var packageId = context.ParseResult.GetValueForArgument(packageArg);
+            var version = context.ParseResult.GetValueForOption(versionOption);
+            var format = context.ParseResult.GetValueForOption(formatOption);
+            var skipGitHub = context.ParseResult.GetValueForOption(skipGitHubOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(packageId, version, format, skipGitHub, ct);
+        });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string packageId, string? version, OutputFormat format, bool skipGitHub)
+    private static async Task<int> ExecuteAsync(string packageId, string? version, OutputFormat format, bool skipGitHub, CancellationToken ct)
     {
         using var nugetClient = new NuGetApiClient();
         using var githubClient = skipGitHub ? null : new GitHubApiClient();
@@ -64,7 +73,7 @@ public static class CheckCommand
 
         var nugetResult = await AnsiConsole.Status()
             .StartAsync($"Fetching package info for {packageId}...", async _ =>
-                await nugetClient.GetPackageInfoAsync(packageId));
+                await nugetClient.GetPackageInfoAsync(packageId, ct));
 
         if (nugetResult.IsFailure)
         {
@@ -83,14 +92,14 @@ public static class CheckCommand
         {
             var repoResult = await AnsiConsole.Status()
                 .StartAsync("Fetching repository info...", async _ =>
-                    await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl));
+                    await githubClient.GetRepositoryInfoAsync(nugetInfo.RepositoryUrl ?? nugetInfo.ProjectUrl, ct));
             if (repoResult.IsSuccess) repoInfo = repoResult.Value;
 
             if (!githubClient.IsRateLimited && githubClient.HasToken)
             {
                 vulnerabilities = await AnsiConsole.Status()
                     .StartAsync("Checking vulnerabilities...", async _ =>
-                        await githubClient.GetVulnerabilitiesAsync(packageId, version));
+                        await githubClient.GetVulnerabilitiesAsync(packageId, version, ct));
             }
         }
 
@@ -105,7 +114,7 @@ public static class CheckCommand
                 using var epssService = new EpssService();
                 var epssScores = await AnsiConsole.Status()
                     .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
-                        await epssService.GetScoresAsync(allCves));
+                        await epssService.GetScoresAsync(allCves, ct));
 
                 foreach (var vuln in vulnerabilities)
                 {
