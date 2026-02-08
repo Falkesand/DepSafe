@@ -266,7 +266,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         }
     }
 
-    private static bool IsAllowedUrl(string url)
+    internal static bool IsAllowedUrl(string url)
     {
         return Uri.TryCreate(url, UriKind.Absolute, out var uri)
             && uri.Scheme == Uri.UriSchemeHttps

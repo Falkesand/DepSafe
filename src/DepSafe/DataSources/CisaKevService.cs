@@ -34,12 +34,12 @@ public sealed class CisaKevService : IDisposable
     {
         if (_kevCves is not null) return Result.Ok();
 
-        await _loadLock.WaitAsync(ct);
+        await _loadLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (_kevCves is not null) return Result.Ok(); // double-check after acquiring lock
 
-            var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct);
+            var cached = await _cache.GetAsync<HashSet<string>>("cisa:kev", ct).ConfigureAwait(false);
             if (cached is not null)
             {
                 _kevCves = cached;
@@ -48,14 +48,14 @@ public sealed class CisaKevService : IDisposable
 
             try
             {
-                using var response = await _httpClient.GetAsync(KevUrl, ct);
+                using var response = await _httpClient.GetAsync(KevUrl, ct).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
                     _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     return Result.Fail($"CISA KEV API returned {(int)response.StatusCode}", ErrorKind.NetworkError);
                 }
 
-                var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+                var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct).ConfigureAwait(false);
                 _kevCves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 if (json.TryGetProperty("vulnerabilities", out var vulns))
@@ -73,7 +73,7 @@ public sealed class CisaKevService : IDisposable
                     }
                 }
 
-                await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct);
+                await _cache.SetAsync("cisa:kev", _kevCves, TimeSpan.FromHours(24), ct).ConfigureAwait(false);
                 return Result.Ok();
             }
             catch (HttpRequestException ex)
