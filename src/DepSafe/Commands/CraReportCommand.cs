@@ -58,10 +58,6 @@ public static class CraReportCommand
             ["--sign-key"],
             "Path to the signing key for sigil (uses default if not specified)");
 
-        var trustBundleOption = new Option<string?>(
-            ["--trust-bundle"],
-            "Path to a trust bundle for verifying existing signatures");
-
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -73,11 +69,10 @@ public static class CraReportCommand
             sbomOption,
             checkTyposquatOption,
             signOption,
-            signKeyOption,
-            trustBundleOption
+            signKeyOption
         };
 
-        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, trustBundleOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption);
         command.SetHandler(async context =>
         {
             var options = binder.Bind(context.BindingContext);
@@ -154,7 +149,6 @@ public static class CraReportCommand
         var checkTyposquat = options.CheckTyposquat;
         var sign = options.Sign;
         var signKey = options.SignKey;
-        var trustBundle = options.TrustBundle;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -208,9 +202,9 @@ public static class CraReportCommand
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, trustBundle, ct),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, trustBundle, ct),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, trustBundle, ct),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, ct),
             _ => 0
         };
 
@@ -235,7 +229,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, string? trustBundle = null, CancellationToken ct = default)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -475,7 +469,6 @@ public static class CraReportCommand
             config,
             sign,
             signKey,
-            trustBundle,
             ct);
     }
 
@@ -967,7 +960,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, string? trustBundle = null, CancellationToken ct = default)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1305,11 +1298,10 @@ public static class CraReportCommand
             config,
             sign,
             signKey,
-            trustBundle,
             ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, string? trustBundle = null, CancellationToken ct = default)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1756,7 +1748,6 @@ public static class CraReportCommand
             config,
             sign,
             signKey,
-            trustBundle,
             ct);
     }
 
@@ -1781,7 +1772,6 @@ public static class CraReportCommand
         CraConfig? config = null,
         bool sign = false,
         string? signKey = null,
-        string? trustBundle = null,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2099,11 +2089,8 @@ public static class CraReportCommand
 
         await File.WriteAllTextAsync(outputPath, output, ct);
 
-        // Sign artifacts if requested, then verify and re-render report with integrity data
-        (craReport, output) = await SignAndVerifyArtifactsAsync(
-            sign, signKey, trustBundle, outputPath, licenseFilePath, sbomFilePath,
-            reportGenerator, craReport, output, format,
-            healthReport, allVulnerabilities, sbom, vex, startTime, ct);
+        // Sign artifacts if requested
+        await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -2589,7 +2576,6 @@ public static class CraReportCommand
         CraConfig? config = null,
         bool sign = false,
         string? signKey = null,
-        string? trustBundle = null,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2913,11 +2899,8 @@ public static class CraReportCommand
 
         await File.WriteAllTextAsync(outputPath, output, ct);
 
-        // Sign artifacts if requested, then verify and re-render report with integrity data
-        (craReport, output) = await SignAndVerifyArtifactsAsync(
-            sign, signKey, trustBundle, outputPath, licenseFilePath, sbomFilePath,
-            reportGenerator, craReport, output, format,
-            healthReport, allVulnerabilities, sbom, vex, startTime, ct);
+        // Sign artifacts if requested
+        await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -3255,34 +3238,20 @@ public static class CraReportCommand
         return true;
     }
 
-    /// <summary>
-    /// Sign all artifacts, verify signatures, update report with integrity data, and re-sign.
-    /// Returns updated (craReport, output) if signing occurred, or originals if not.
-    /// </summary>
-    private static async Task<(CraReport Report, string Output)> SignAndVerifyArtifactsAsync(
+    private static async Task SignArtifactsAsync(
         bool sign,
         string? signKey,
-        string? trustBundle,
         string outputPath,
         string? licenseFilePath,
         string? sbomFilePath,
-        CraReportGenerator reportGenerator,
-        CraReport craReport,
-        string output,
-        CraOutputFormat format,
-        ProjectReport healthReport,
-        IReadOnlyDictionary<string, List<VulnerabilityInfo>> allVulnerabilities,
-        SbomDocument sbom,
-        VexDocument vex,
-        DateTime? startTime,
         CancellationToken ct)
     {
         if (!sign)
-            return (craReport, output);
+            return;
 
         var sigilService = await SigningHelper.TryCreateAsync(ct);
         if (sigilService is null)
-            return (craReport, output);
+            return;
 
         var artifactPaths = new List<string> { outputPath };
         if (licenseFilePath is not null) artifactPaths.Add(licenseFilePath);
@@ -3290,90 +3259,5 @@ public static class CraReportCommand
 
         foreach (var artifact in artifactPaths)
             await SigningHelper.TrySignArtifactAsync(sigilService, artifact, signKey, ct);
-
-        // Verify the freshly-signed artifacts (only our known artifacts, not stale sig files)
-        var sigFiles = artifactPaths
-            .Select(a => $"{a}.sig.json")
-            .Where(File.Exists)
-            .ToList();
-
-        if (sigFiles.Count > 0)
-        {
-            var sigResults = await VerifySignatureFilesAsync(sigilService, sigFiles, trustBundle, ct);
-            reportGenerator.SetArtifactIntegrity(sigResults);
-
-            // Re-generate report and compliance items with artifact integrity data
-            craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
-            output = format == CraOutputFormat.Json
-                ? reportGenerator.GenerateJson(craReport)
-                : reportGenerator.GenerateHtml(craReport, licenseFilePath);
-            await File.WriteAllTextAsync(outputPath, output, ct);
-
-            // Re-sign the updated report
-            await SigningHelper.TrySignArtifactAsync(sigilService, outputPath, signKey, ct);
-        }
-
-        return (craReport, output);
-    }
-
-    /// <summary>
-    /// Verify .sig.json files and build ArtifactSigningResult list.
-    /// </summary>
-    private static async Task<List<ArtifactSigningResult>> VerifySignatureFilesAsync(
-        SigilService service, List<string> signatureFiles, string? trustBundle, CancellationToken ct)
-    {
-        var results = new List<ArtifactSigningResult>();
-
-        foreach (var sigFile in signatureFiles)
-        {
-            var artifactPath = sigFile.EndsWith(".sig.json", StringComparison.OrdinalIgnoreCase)
-                ? sigFile[..^".sig.json".Length]
-                : sigFile;
-            var artifactType = InferArtifactType(artifactPath);
-
-            var verifyResult = await service.VerifyAsync(sigFile, trustBundle, ct);
-            if (verifyResult.IsSuccess)
-            {
-                var v = verifyResult.Value;
-                results.Add(new ArtifactSigningResult
-                {
-                    ArtifactPath = artifactPath,
-                    ArtifactType = artifactType,
-                    IsSigned = true,
-                    IsVerified = v.IsValid,
-                    Algorithm = v.Algorithm,
-                    Fingerprint = v.Fingerprint,
-                    SignedAt = v.SignedAt,
-                    Error = v.Error
-                });
-            }
-            else
-            {
-                results.Add(new ArtifactSigningResult
-                {
-                    ArtifactPath = artifactPath,
-                    ArtifactType = artifactType,
-                    IsSigned = true,
-                    IsVerified = false,
-                    Error = verifyResult.Error
-                });
-            }
-        }
-
-        return results;
-    }
-
-    private static string InferArtifactType(string path)
-    {
-        var fileName = Path.GetFileName(path);
-        if (fileName.Contains("cra-report", StringComparison.OrdinalIgnoreCase))
-            return "CRA Report";
-        if (fileName.Contains("sbom", StringComparison.OrdinalIgnoreCase))
-            return "SBOM";
-        if (fileName.Contains("vex", StringComparison.OrdinalIgnoreCase))
-            return "VEX";
-        if (fileName.Contains("license", StringComparison.OrdinalIgnoreCase) || fileName.Contains("LICENSES", StringComparison.OrdinalIgnoreCase))
-            return "License Attribution";
-        return "Artifact";
     }
 }

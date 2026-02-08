@@ -161,6 +161,8 @@ depsafe cra-report [<path>] [options]
 | `-l, --licenses <Html\|Md\|Txt>` | Generate license attribution file | - |
 | `-s, --sbom <CycloneDx\|Spdx>` | Export SBOM in specified format | - |
 | `--check-typosquat` | Run typosquatting detection on all dependencies | `false` |
+| `--sign` | Sign all generated artifacts with sigil | `false` |
+| `--sign-key <path>` | Path to signing key (uses sigil default if omitted) | - |
 
 **Exit Codes:**
 
@@ -186,6 +188,12 @@ depsafe cra-report --format json --output compliance.json
 
 # Analyze specific solution
 depsafe cra-report ./src/MyApp.sln --deep
+
+# Sign all generated artifacts
+depsafe cra-report --sbom spdx --sign
+
+# Sign with a specific key
+depsafe cra-report --sign --sign-key ./keys/signing.pem
 ```
 
 ---
@@ -266,6 +274,8 @@ depsafe sbom [<path>] [options]
 | `-f, --format <Spdx\|CycloneDx>` | Output format | `Spdx` |
 | `-o, --output <path>` | Output file path | stdout |
 | `--skip-github` | Skip vulnerability enrichment | `false` |
+| `--sign` | Sign the generated SBOM with sigil | `false` |
+| `--sign-key <path>` | Path to signing key | - |
 
 **Examples:**
 ```bash
@@ -277,6 +287,9 @@ depsafe sbom --format cyclonedx --output bom.json
 
 # SPDX with full vulnerability data
 depsafe sbom --output sbom.spdx.json
+
+# Sign the SBOM
+depsafe sbom --output sbom.spdx.json --sign
 ```
 
 ---
@@ -294,6 +307,8 @@ depsafe vex [<path>] [options]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-o, --output <path>` | Output file path | stdout |
+| `--sign` | Sign the generated VEX document with sigil | `false` |
+| `--sign-key <path>` | Path to signing key | - |
 
 **Examples:**
 ```bash
@@ -302,6 +317,57 @@ depsafe vex
 
 # Save to file
 depsafe vex --output vulnerabilities.vex.json
+
+# Sign the VEX document
+depsafe vex --output vulnerabilities.vex.json --sign
+```
+
+---
+
+### Artifact Signing & Verification
+
+DepSafe uses [Sigil.Sign](https://github.com/Falkesand/Sigil.Sign) for detached artifact signing. When you pass `--sign`, each generated artifact gets a `.sig.json` envelope file alongside it containing a cryptographic signature.
+
+**Signing produces:**
+
+| Artifact | Signature File |
+|----------|----------------|
+| `cra-report.html` | `cra-report.html.sig.json` |
+| `sbom.spdx.json` | `sbom.spdx.json.sig.json` |
+| `vulnerabilities.vex.json` | `vulnerabilities.vex.json.sig.json` |
+| `LICENSES.txt` | `LICENSES.txt.sig.json` |
+
+**Prerequisites:**
+
+Install [Sigil.Sign](https://github.com/Falkesand/Sigil.Sign) as a global tool:
+
+```bash
+dotnet tool install -g Sigil.Sign
+```
+
+**Signing artifacts:**
+
+```bash
+# Sign with default key
+depsafe cra-report --sbom spdx --licenses txt --sign
+
+# Sign with a specific key
+depsafe cra-report --sign --sign-key ./keys/signing.pem
+```
+
+**Verifying artifacts (consumer responsibility):**
+
+Verification is performed externally by the consumer using the `sigil` CLI:
+
+```bash
+# Basic verification
+sigil verify cra-report.html.sig.json
+
+# Verify with a trust bundle
+sigil verify cra-report.html.sig.json --trust-bundle keys.pem
+
+# Verify with DNS discovery
+sigil verify cra-report.html.sig.json --discover example.com
 ```
 
 ---
@@ -880,3 +946,4 @@ AGPL-3.0 - see [LICENSE](LICENSE) for details.
 - [SPDX](https://spdx.dev/) - Software Package Data Exchange
 - [CycloneDX](https://cyclonedx.org/) - Software Bill of Materials standard
 - [OpenVEX](https://openvex.dev/) - Vulnerability Exploitability eXchange
+- [Sigil.Sign](https://github.com/Falkesand/Sigil.Sign) - Artifact signing and verification
