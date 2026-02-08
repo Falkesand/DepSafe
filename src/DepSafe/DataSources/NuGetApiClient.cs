@@ -38,19 +38,19 @@ public sealed class NuGetApiClient : IDisposable
     public async Task<Result<NuGetPackageInfo>> GetPackageInfoAsync(string packageId, CancellationToken ct = default)
     {
         var cacheKey = $"nuget:{packageId}";
-        var cached = await _cache.GetAsync<NuGetPackageInfo>(cacheKey, ct);
+        var cached = await _cache.GetAsync<NuGetPackageInfo>(cacheKey, ct).ConfigureAwait(false);
         if (cached is not null) return cached;
 
         try
         {
-            var metadataResource = await _repository.GetResourceAsync<PackageMetadataResource>(ct);
+            var metadataResource = await _repository.GetResourceAsync<PackageMetadataResource>(ct).ConfigureAwait(false);
             var packages = await metadataResource.GetMetadataAsync(
                 packageId,
                 includePrerelease: true,
                 includeUnlisted: false,
                 _cacheContext,
                 _logger,
-                ct);
+                ct).ConfigureAwait(false);
 
             var packageList = packages.ToList();
             if (packageList.Count == 0)
@@ -74,10 +74,10 @@ public sealed class NuGetApiClient : IDisposable
                 .ToList();
 
             // Fetch deprecation info once (async)
-            var deprecationInfo = await latest.GetDeprecationMetadataAsync();
+            var deprecationInfo = await latest.GetDeprecationMetadataAsync().ConfigureAwait(false);
 
             // Fetch dependencies using DependencyInfoResource (more reliable than DependencySets)
-            var dependencies = await GetPackageDependenciesAsync(latest.Identity, ct);
+            var dependencies = await GetPackageDependenciesAsync(latest.Identity, ct).ConfigureAwait(false);
 
             var info = new NuGetPackageInfo
             {
@@ -97,7 +97,7 @@ public sealed class NuGetApiClient : IDisposable
                 Dependencies = dependencies
             };
 
-            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(12), ct);
+            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(12), ct).ConfigureAwait(false);
             return info;
         }
         catch (HttpRequestException ex)
@@ -135,10 +135,10 @@ public sealed class NuGetApiClient : IDisposable
 
         var tasks = packageList.Select(async packageId =>
         {
-            await semaphore.WaitAsync(ct);
+            await semaphore.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                var result = await GetPackageInfoAsync(packageId, ct);
+                var result = await GetPackageInfoAsync(packageId, ct).ConfigureAwait(false);
                 if (result.IsSuccess)
                 {
                     results[packageId] = result.Value;
@@ -150,7 +150,7 @@ public sealed class NuGetApiClient : IDisposable
             }
         });
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
         return new Dictionary<string, NuGetPackageInfo>(results);
     }
 
@@ -200,7 +200,7 @@ public sealed class NuGetApiClient : IDisposable
 
         try
         {
-            var dependencyInfoResource = await _repository.GetResourceAsync<DependencyInfoResource>(ct);
+            var dependencyInfoResource = await _repository.GetResourceAsync<DependencyInfoResource>(ct).ConfigureAwait(false);
             if (dependencyInfoResource == null) return dependencies;
 
             foreach (var framework in s_preferredFrameworks)
@@ -210,7 +210,7 @@ public sealed class NuGetApiClient : IDisposable
                     framework,
                     _cacheContext,
                     _logger,
-                    ct);
+                    ct).ConfigureAwait(false);
 
                 if (dependencyInfo?.Dependencies != null)
                 {
@@ -261,7 +261,7 @@ public sealed class NuGetApiClient : IDisposable
         try
         {
             var references = new List<PackageReference>();
-            var content = await File.ReadAllTextAsync(projectPath, ct);
+            var content = await File.ReadAllTextAsync(projectPath, ct).ConfigureAwait(false);
             var doc = XDocument.Parse(content);
 
             // Check for central package management
@@ -270,7 +270,7 @@ public sealed class NuGetApiClient : IDisposable
 
             if (centralPackagesPath is not null && File.Exists(centralPackagesPath))
             {
-                centralVersions = await ParseCentralPackageVersionsAsync(centralPackagesPath, ct);
+                centralVersions = await ParseCentralPackageVersionsAsync(centralPackagesPath, ct).ConfigureAwait(false);
             }
 
             // Parse PackageReference elements
@@ -311,7 +311,7 @@ public sealed class NuGetApiClient : IDisposable
                     var packagesConfigPath = Path.Combine(dir, "packages.config");
                     if (File.Exists(packagesConfigPath))
                     {
-                        references = await ParsePackagesConfigAsync(packagesConfigPath, ct);
+                        references = await ParsePackagesConfigAsync(packagesConfigPath, ct).ConfigureAwait(false);
                     }
                 }
             }
@@ -337,7 +337,7 @@ public sealed class NuGetApiClient : IDisposable
 
         try
         {
-            var content = await File.ReadAllTextAsync(configPath, ct);
+            var content = await File.ReadAllTextAsync(configPath, ct).ConfigureAwait(false);
             var doc = XDocument.Parse(content);
 
             var packages = doc.Descendants()
@@ -394,7 +394,7 @@ public sealed class NuGetApiClient : IDisposable
 
         try
         {
-            var content = await File.ReadAllTextAsync(propsPath, ct);
+            var content = await File.ReadAllTextAsync(propsPath, ct).ConfigureAwait(false);
             var doc = XDocument.Parse(content);
 
             var packageVersions = doc.Descendants()
@@ -548,9 +548,9 @@ public sealed class NuGetApiClient : IDisposable
 
             var outputTask = process.StandardOutput.ReadToEndAsync(ct);
             var errorTask = process.StandardError.ReadToEndAsync(ct);
-            var output = await outputTask;
-            await errorTask;
-            await process.WaitForExitAsync(ct);
+            var output = await outputTask.ConfigureAwait(false);
+            await errorTask.ConfigureAwait(false);
+            await process.WaitForExitAsync(ct).ConfigureAwait(false);
 
             var topLevel = new List<PackageReference>();
             var transitive = new List<PackageReference>();

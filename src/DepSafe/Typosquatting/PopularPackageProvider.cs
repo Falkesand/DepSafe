@@ -44,8 +44,8 @@ public sealed class PopularPackageProvider : IDisposable
         // Online refresh if not offline-only
         if (!_offlineOnly)
         {
-            var onlineNuGet = await FetchOnlineNuGetAsync(ct);
-            var onlineNpm = await FetchOnlineNpmAsync(ct);
+            var onlineNuGet = await FetchOnlineNuGetAsync(ct).ConfigureAwait(false);
+            var onlineNpm = await FetchOnlineNpmAsync(ct).ConfigureAwait(false);
 
             index.AddRange(onlineNuGet);
             index.AddRange(onlineNpm);
@@ -97,15 +97,15 @@ public sealed class PopularPackageProvider : IDisposable
 
     private async Task<List<PopularPackageEntry>> FetchOnlineNuGetAsync(CancellationToken ct)
     {
-        var cached = await _cache.GetAsync<List<PopularPackageEntry>>("typosquat:nuget-popular", ct);
+        var cached = await _cache.GetAsync<List<PopularPackageEntry>>("typosquat:nuget-popular", ct).ConfigureAwait(false);
         if (cached is not null) return cached;
 
         try
         {
-            var response = await _httpClient.GetAsync(NuGetSearchUrl, ct);
+            var response = await _httpClient.GetAsync(NuGetSearchUrl, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return [];
 
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var doc = JsonSerializer.Deserialize<JsonElement>(json);
 
             var entries = new List<PopularPackageEntry>();
@@ -129,7 +129,7 @@ public sealed class PopularPackageProvider : IDisposable
             }
 
             if (entries.Count > 0)
-                await _cache.SetAsync("typosquat:nuget-popular", entries, TimeSpan.FromDays(7), ct);
+                await _cache.SetAsync("typosquat:nuget-popular", entries, TimeSpan.FromDays(7), ct).ConfigureAwait(false);
 
             return entries;
         }
@@ -142,15 +142,15 @@ public sealed class PopularPackageProvider : IDisposable
 
     private async Task<List<PopularPackageEntry>> FetchOnlineNpmAsync(CancellationToken ct)
     {
-        var cached = await _cache.GetAsync<List<PopularPackageEntry>>("typosquat:npm-popular", ct);
+        var cached = await _cache.GetAsync<List<PopularPackageEntry>>("typosquat:npm-popular", ct).ConfigureAwait(false);
         if (cached is not null) return cached;
 
         try
         {
-            var response = await _httpClient.GetAsync(NpmRegistryUrl, ct);
+            var response = await _httpClient.GetAsync(NpmRegistryUrl, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return [];
 
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var doc = JsonSerializer.Deserialize<JsonElement>(json);
 
             var entries = new List<PopularPackageEntry>();
@@ -175,7 +175,7 @@ public sealed class PopularPackageProvider : IDisposable
             }
 
             if (entries.Count > 0)
-                await _cache.SetAsync("typosquat:npm-popular", entries, TimeSpan.FromDays(7), ct);
+                await _cache.SetAsync("typosquat:npm-popular", entries, TimeSpan.FromDays(7), ct).ConfigureAwait(false);
 
             return entries;
         }
