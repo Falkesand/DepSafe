@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.DataSources;
 using DepSafe.Models;
@@ -32,7 +33,14 @@ public static class TyposquatCommand
             offlineOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, formatOption, offlineOption);
+        command.SetHandler(async context =>
+        {
+            var path = context.ParseResult.GetValueForArgument(pathArg);
+            var format = context.ParseResult.GetValueForOption(formatOption);
+            var offline = context.ParseResult.GetValueForOption(offlineOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(path, format, offline, ct);
+        });
 
         return command;
     }
@@ -56,7 +64,7 @@ public static class TyposquatCommand
             var nugetPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var projectFile in projectFiles)
             {
-                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile, ct);
                 foreach (var r in refsResult.ValueOr([]))
                     nugetPackages.Add(r.PackageId);
             }
@@ -74,7 +82,7 @@ public static class TyposquatCommand
         {
             foreach (var packageJsonPath in packageJsonFiles)
             {
-                var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+                var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath, ct);
                 if (packageJsonResult.IsFailure) continue;
                 var packageJson = packageJsonResult.Value;
 
@@ -95,7 +103,7 @@ public static class TyposquatCommand
         return allResults;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, bool offline)
+    private static async Task<int> ExecuteAsync(string? path, OutputFormat format, bool offline, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -105,7 +113,7 @@ public static class TyposquatCommand
             return 1;
         }
 
-        var results = await RunAnalysisAsync(path, offline);
+        var results = await RunAnalysisAsync(path, offline, ct);
 
         if (format == OutputFormat.Json)
         {

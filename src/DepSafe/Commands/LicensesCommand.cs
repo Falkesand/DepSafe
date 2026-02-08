@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
@@ -39,12 +40,20 @@ public static class LicensesCommand
             includeTransitiveOption
         };
 
-        command.SetHandler(ExecuteAsync, pathArg, projectLicenseOption, formatOption, includeTransitiveOption);
+        command.SetHandler(async context =>
+        {
+            var path = context.ParseResult.GetValueForArgument(pathArg);
+            var projectLicense = context.ParseResult.GetValueForOption(projectLicenseOption)!;
+            var format = context.ParseResult.GetValueForOption(formatOption)!;
+            var includeTransitive = context.ParseResult.GetValueForOption(includeTransitiveOption);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(path, projectLicense, format, includeTransitive, ct);
+        });
 
         return command;
     }
 
-    private static async Task<int> ExecuteAsync(string? path, string projectLicense, string format, bool includeTransitive)
+    private static async Task<int> ExecuteAsync(string? path, string projectLicense, string format, bool includeTransitive, CancellationToken ct)
     {
         path = string.IsNullOrEmpty(path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(path);
 
@@ -55,7 +64,7 @@ public static class LicensesCommand
         }
 
         // Get packages using dotnet list
-        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+        var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path, ct);
         var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
         if (topLevel.Count == 0)
@@ -64,7 +73,7 @@ public static class LicensesCommand
             var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
             foreach (var projectFile in projectFiles)
             {
-                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile, ct);
                 topLevel.AddRange(refsResult.ValueOr([]));
             }
         }
@@ -94,10 +103,10 @@ public static class LicensesCommand
                 var results = new ConcurrentBag<(string PackageId, string? License)>();
                 var tasks = allPackages.Select(async pkg =>
                 {
-                    await semaphore.WaitAsync();
+                    await semaphore.WaitAsync(ct);
                     try
                     {
-                        var result = await nugetClient.GetPackageInfoAsync(pkg.PackageId);
+                        var result = await nugetClient.GetPackageInfoAsync(pkg.PackageId, ct);
                         results.Add((pkg.PackageId, result.IsSuccess ? result.Value.License : null));
                     }
                     finally

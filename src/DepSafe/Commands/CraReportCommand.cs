@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
@@ -61,7 +62,12 @@ public static class CraReportCommand
         };
 
         var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption);
-        command.SetHandler(options => ExecuteAsync(options), binder);
+        command.SetHandler(async context =>
+        {
+            var options = binder.Bind(context.BindingContext);
+            var ct = context.GetCancellationToken();
+            context.ExitCode = await ExecuteAsync(options, ct);
+        });
 
         return command;
     }
@@ -80,7 +86,7 @@ public static class CraReportCommand
         };
     }
 
-    private static async Task<Result<CraConfig>> LoadCraConfigAsync(string path)
+    private static async Task<Result<CraConfig>> LoadCraConfigAsync(string path, CancellationToken ct = default)
     {
         // Look for .cra-config.json in project root
         var searchDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
@@ -93,7 +99,7 @@ public static class CraReportCommand
 
         try
         {
-            var json = await File.ReadAllTextAsync(configPath);
+            var json = await File.ReadAllTextAsync(configPath, ct);
             var config = JsonSerializer.Deserialize<CraConfig>(json, JsonDefaults.CaseInsensitive);
             if (config is null)
                 return Result.Fail<CraConfig>("Failed to deserialize .cra-config.json", ErrorKind.ParseError);
@@ -119,7 +125,7 @@ public static class CraReportCommand
         return config.LicenseOverrides.TryGetValue(packageId, out var license) ? license : null;
     }
 
-    private static async Task<int> ExecuteAsync(CraReportOptions options)
+    private static async Task<int> ExecuteAsync(CraReportOptions options, CancellationToken ct)
     {
         var startTime = DateTime.UtcNow;
         var path = string.IsNullOrEmpty(options.Path) ? Directory.GetCurrentDirectory() : Path.GetFullPath(options.Path);
@@ -166,7 +172,7 @@ public static class CraReportCommand
         }
 
         // Load CRA config if present
-        var configResult = await LoadCraConfigAsync(path);
+        var configResult = await LoadCraConfigAsync(path, ct);
         var config = configResult.IsSuccess ? configResult.Value : null;
         if (config is not null && config.LicenseOverrides.Count > 0)
         {
@@ -177,15 +183,15 @@ public static class CraReportCommand
         List<TyposquatResult>? typosquatResults = null;
         if (checkTyposquat)
         {
-            typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false);
+            typosquatResults = await TyposquatCommand.RunAnalysisAsync(path, offline: false, ct);
         }
 
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, ct),
             _ => 0
         };
 
@@ -210,7 +216,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -234,7 +240,7 @@ public static class CraReportCommand
         ShowGitHubStatus(githubClient, skipGitHub);
 
         // Parse package.json
-        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+        var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath, ct);
         if (packageJsonResult.IsFailure)
         {
             AnsiConsole.MarkupLine($"[red]{Markup.Escape(packageJsonResult.Error)}[/]");
@@ -259,7 +265,7 @@ public static class CraReportCommand
         await AnsiConsole.Status()
             .StartAsync("Building dependency tree...", async _ =>
             {
-                dependencyTree = await npmClient.BuildDependencyTreeAsync(packageJsonPath, maxDepth: 10);
+                dependencyTree = await npmClient.BuildDependencyTreeAsync(packageJsonPath, maxDepth: 10, ct);
             });
 
         // Collect transitive package IDs from tree for vulnerability scanning
@@ -286,10 +292,10 @@ public static class CraReportCommand
                 using var semaphore = new SemaphoreSlim(10);
                 var tasks = packagesToFetch.Select(async packageName =>
                 {
-                    await semaphore.WaitAsync();
+                    await semaphore.WaitAsync(ct);
                     try
                     {
-                        var result = await npmClient.GetPackageInfoAsync(packageName);
+                        var result = await npmClient.GetPackageInfoAsync(packageName, ct);
                         if (result.IsSuccess)
                         {
                             npmInfoMap[packageName] = result.Value;
@@ -313,7 +319,7 @@ public static class CraReportCommand
         await AnsiConsole.Status()
             .StartAsync($"Checking vulnerabilities via OSV ({allNpmPackageIds.Count} packages)...", async _ =>
             {
-                var vulns = await osvClient.QueryNpmPackagesAsync(allNpmPackageIds);
+                var vulns = await osvClient.QueryNpmPackagesAsync(allNpmPackageIds, ct);
                 foreach (var (name, v) in vulns)
                 {
                     allVulnerabilities[name] = v;
@@ -327,7 +333,8 @@ public static class CraReportCommand
                 githubClient,
                 npmInfoMap.Values.Select(n => n.RepositoryUrl).Where(u => u is not null).ToList()!,
                 npmInfoMap,
-                repoInfoMap);
+                repoInfoMap,
+                ct);
         }
 
         // Phase 3: Calculate health scores
@@ -345,7 +352,7 @@ public static class CraReportCommand
 
         // Parse lock file for integrity hashes
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath);
+        var lockDepsResult = await NpmApiClient.ParsePackageLockAsync(lockPath, ct);
         var lockDeps = lockDepsResult.ValueOr([]);
         var integrityLookup = lockDeps
             .Where(d => !string.IsNullOrEmpty(d.Integrity))
@@ -446,7 +453,8 @@ public static class CraReportCommand
             pkgsWithRepo,
             typosquatResults,
             repoInfoMap,
-            config);
+            config,
+            ct);
     }
 
     private static List<PackageHealth> ExtractTransitivePackagesFromTree(
@@ -937,7 +945,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -966,7 +974,7 @@ public static class CraReportCommand
             .StartAsync("Scanning packages (resolving MSBuild variables)...", async ctx =>
             {
                 // Try dotnet list package first for resolved versions
-                var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path, ct);
                 var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                 if (topLevel.Count > 0)
@@ -989,7 +997,7 @@ public static class CraReportCommand
                     ctx.Status("Falling back to XML parsing...");
                     foreach (var projectFile in projectFiles)
                     {
-                        var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                        var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile, ct);
                         foreach (var r in refsResult.ValueOr([]))
                         {
                             if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
@@ -1041,10 +1049,10 @@ public static class CraReportCommand
                 using var semaphore = new SemaphoreSlim(10);
                 var tasks = allPackageIds.Select(async packageId =>
                 {
-                    await semaphore.WaitAsync();
+                    await semaphore.WaitAsync(ct);
                     try
                     {
-                        var result = await nugetClient.GetPackageInfoAsync(packageId);
+                        var result = await nugetClient.GetPackageInfoAsync(packageId, ct);
                         if (result.IsSuccess)
                         {
                             nugetInfoMap[packageId] = result.Value;
@@ -1084,12 +1092,12 @@ public static class CraReportCommand
                     using var semaphore = new SemaphoreSlim(10);
                     var tasks = dependencyPackageIds.Select(async packageId =>
                     {
-                        await semaphore.WaitAsync();
+                        await semaphore.WaitAsync(ct);
                         try
                         {
                             if (!nugetInfoMap.ContainsKey(packageId))
                             {
-                                var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                var result = await nugetClient.GetPackageInfoAsync(packageId, ct);
                                 if (result.IsSuccess)
                                 {
                                     nugetInfoMap[packageId] = result.Value;
@@ -1124,7 +1132,7 @@ public static class CraReportCommand
 
                     if (repoUrls.Count > 0)
                     {
-                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!);
+                        var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!, ct);
 
                         foreach (var (packageId, info) in nugetInfoMap)
                         {
@@ -1148,7 +1156,7 @@ public static class CraReportCommand
                 await AnsiConsole.Status()
                     .StartAsync("Checking vulnerabilities (batch)...", async ctx =>
                     {
-                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allPackageIdsWithDeps);
+                        allVulnerabilities = await githubClient.GetVulnerabilitiesBatchAsync(allPackageIdsWithDeps, ct);
 
                         if (githubClient.IsRateLimited)
                         {
@@ -1272,10 +1280,11 @@ public static class CraReportCommand
             pkgsWithRepo,
             typosquatResults,
             repoInfoMap,
-            config);
+            config,
+            ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1315,7 +1324,7 @@ public static class CraReportCommand
             await AnsiConsole.Status()
                 .StartAsync("Scanning .NET packages...", async ctx =>
                 {
-                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path);
+                    var dotnetResult = await NuGetApiClient.ParsePackagesWithDotnetAsync(path, ct);
                     var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
                     if (topLevel.Count > 0)
@@ -1337,7 +1346,7 @@ public static class CraReportCommand
                         ctx.Status("Falling back to XML parsing...");
                         foreach (var projectFile in projectFiles)
                         {
-                            var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile);
+                            var refsResult = await NuGetApiClient.ParseProjectFileAsync(projectFile, ct);
                             foreach (var r in refsResult.ValueOr([]))
                             {
                                 if (allReferences.TryAdd(r.PackageId, r) && r.Version.Contains("$("))
@@ -1366,10 +1375,10 @@ public static class CraReportCommand
                         using var semaphore = new SemaphoreSlim(10);
                         var tasks = allPackageIds.Select(async packageId =>
                         {
-                            await semaphore.WaitAsync();
+                            await semaphore.WaitAsync(ct);
                             try
                             {
-                                var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                var result = await nugetClient.GetPackageInfoAsync(packageId, ct);
                                 if (result.IsSuccess)
                                 {
                                     nugetInfoMap[packageId] = result.Value;
@@ -1406,12 +1415,12 @@ public static class CraReportCommand
                             using var semaphore = new SemaphoreSlim(10);
                             var tasks = dependencyPackageIds.Select(async packageId =>
                             {
-                                await semaphore.WaitAsync();
+                                await semaphore.WaitAsync(ct);
                                 try
                                 {
                                     if (!nugetInfoMap.ContainsKey(packageId))
                                     {
-                                        var result = await nugetClient.GetPackageInfoAsync(packageId);
+                                        var result = await nugetClient.GetPackageInfoAsync(packageId, ct);
                                         if (result.IsSuccess)
                                         {
                                             nugetInfoMap[packageId] = result.Value;
@@ -1436,7 +1445,7 @@ public static class CraReportCommand
                 await AnsiConsole.Status()
                     .StartAsync($"Checking NuGet vulnerabilities via OSV ({allNuGetPackageIds.Count} packages)...", async _ =>
                     {
-                        var vulns = await osvNuGetClient.QueryNuGetPackagesAsync(allNuGetPackageIds);
+                        var vulns = await osvNuGetClient.QueryNuGetPackagesAsync(allNuGetPackageIds, ct);
                         foreach (var (name, v) in vulns)
                             allVulnerabilities[name] = v;
                     });
@@ -1454,7 +1463,7 @@ public static class CraReportCommand
 
                             if (repoUrls.Count > 0)
                             {
-                                var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!);
+                                var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!, ct);
                                 foreach (var (packageId, info) in nugetInfoMap)
                                 {
                                     var url = info.RepositoryUrl ?? info.ProjectUrl;
@@ -1523,7 +1532,7 @@ public static class CraReportCommand
             var packageJsonPath = packageJsonFiles[0];
             AnsiConsole.MarkupLine($"[dim]Using: {packageJsonPath}[/]");
 
-            var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath);
+            var packageJsonResult = await NpmApiClient.ParsePackageJsonAsync(packageJsonPath, ct);
             if (packageJsonResult.IsSuccess)
             {
                 var packageJson = packageJsonResult.Value;
@@ -1540,7 +1549,7 @@ public static class CraReportCommand
                     await AnsiConsole.Status()
                         .StartAsync("Building npm dependency tree...", async _ =>
                         {
-                            npmTree = await npmClient.BuildDependencyTreeAsync(packageJsonPath, maxDepth: 10);
+                            npmTree = await npmClient.BuildDependencyTreeAsync(packageJsonPath, maxDepth: 10, ct);
                         });
 
                     // Extract transitive package IDs from tree BEFORE fetching
@@ -1565,10 +1574,10 @@ public static class CraReportCommand
                             using var semaphore = new SemaphoreSlim(10);
                             var tasks = npmPackagesToFetch.Select(async packageName =>
                             {
-                                await semaphore.WaitAsync();
+                                await semaphore.WaitAsync(ct);
                                 try
                                 {
-                                    var result = await npmClient.GetPackageInfoAsync(packageName);
+                                    var result = await npmClient.GetPackageInfoAsync(packageName, ct);
                                     if (result.IsSuccess) npmInfoMap[packageName] = result.Value;
                                 }
                                 finally
@@ -1585,7 +1594,7 @@ public static class CraReportCommand
                     await AnsiConsole.Status()
                         .StartAsync($"Checking npm vulnerabilities via OSV ({allNpmPackageIds.Count} packages)...", async _ =>
                         {
-                            var vulns = await osvNpmClient.QueryNpmPackagesAsync(allNpmPackageIds);
+                            var vulns = await osvNpmClient.QueryNpmPackagesAsync(allNpmPackageIds, ct);
                             foreach (var (name, v) in vulns)
                             {
                                 allVulnerabilities.TryAdd(name, v);
@@ -1607,7 +1616,7 @@ public static class CraReportCommand
 
                                 if (repoUrls.Count > 0)
                                 {
-                                    var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!);
+                                    var results = await githubClient.GetRepositoriesBatchAsync(repoUrls!, ct);
                                     foreach (var (packageName, info) in npmInfoMap)
                                     {
                                         if (info.RepositoryUrl is not null && results.TryGetValue(info.RepositoryUrl, out var repoInfo))
@@ -1635,7 +1644,7 @@ public static class CraReportCommand
 
                     // Parse lock file for integrity hashes
                     var npmLockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-                    var npmLockDepsResult = await NpmApiClient.ParsePackageLockAsync(npmLockPath);
+                    var npmLockDepsResult = await NpmApiClient.ParsePackageLockAsync(npmLockPath, ct);
                     var npmLockDeps = npmLockDepsResult.ValueOr([]);
                     var npmIntegrityLookup = npmLockDeps
                         .Where(d => !string.IsNullOrEmpty(d.Integrity))
@@ -1719,7 +1728,8 @@ public static class CraReportCommand
             totalPackagesWithRepo,
             typosquatResults,
             allRepoInfoMap,
-            config);
+            config,
+            ct);
     }
 
     private static async Task<int> GenerateMixedReportAsync(
@@ -1740,7 +1750,8 @@ public static class CraReportCommand
         int packagesWithRepo = 0,
         List<TyposquatResult>? typosquatResults = null,
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
-        CraConfig? config = null)
+        CraConfig? config = null,
+        CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
         var allPackages = packages.Concat(transitivePackages).ToList();
@@ -1878,7 +1889,7 @@ public static class CraReportCommand
 
         // CISA KEV check (map CVEs to packages, but only if current version is affected)
         using var kevService = new CisaKevService();
-        await kevService.LoadCatalogAsync();
+        await kevService.LoadCatalogAsync(ct);
 
         var kevCvePackages = allVulnerabilities
             .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
@@ -1920,7 +1931,7 @@ public static class CraReportCommand
             using var epssService = new EpssService();
             var epssScores = await AnsiConsole.Status()
                 .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
-                    await epssService.GetScoresAsync(allCves));
+                    await epssService.GetScoresAsync(allCves, ct));
 
             EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
             reportGenerator.SetEpssScores(epssScores);
@@ -1985,7 +1996,7 @@ public static class CraReportCommand
             {
                 var nugetResults = await AnsiConsole.Status()
                     .StartAsync("Checking NuGet package provenance...", async _ =>
-                        await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages));
+                        await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages, ct));
                 allProvenanceResults.AddRange(nugetResults);
             }
 
@@ -1997,7 +2008,7 @@ public static class CraReportCommand
             {
                 var npmResults = await AnsiConsole.Status()
                     .StartAsync("Checking npm package provenance...", async _ =>
-                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages));
+                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages, ct));
                 allProvenanceResults.AddRange(npmResults);
             }
 
@@ -2041,21 +2052,21 @@ public static class CraReportCommand
         string? licenseFilePath = null;
         if (licensesFormat.HasValue)
         {
-            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
+            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path, ct);
         }
 
         // Generate SBOM if requested
         string? sbomFilePath = null;
         if (sbomFormat.HasValue)
         {
-            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path);
+            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, ct);
         }
 
         var output = format == CraOutputFormat.Json
             ? reportGenerator.GenerateJson(craReport)
             : reportGenerator.GenerateHtml(craReport, licenseFilePath);
 
-        await File.WriteAllTextAsync(outputPath, output);
+        await File.WriteAllTextAsync(outputPath, output, ct);
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -2489,7 +2500,8 @@ public static class CraReportCommand
         GitHubApiClient githubClient,
         List<string> repoUrls,
         IDictionary<string, NpmPackageInfo> npmInfoMap,
-        Dictionary<string, GitHubRepoInfo?> repoInfoMap)
+        Dictionary<string, GitHubRepoInfo?> repoInfoMap,
+        CancellationToken ct = default)
     {
         await AnsiConsole.Status()
             .StartAsync("Fetching GitHub repository info (batch)...", async ctx =>
@@ -2500,7 +2512,7 @@ public static class CraReportCommand
 
                 if (validUrls.Count > 0)
                 {
-                    var results = await githubClient.GetRepositoriesBatchAsync(validUrls);
+                    var results = await githubClient.GetRepositoriesBatchAsync(validUrls, ct);
 
                     foreach (var (packageName, info) in npmInfoMap)
                     {
@@ -2537,7 +2549,8 @@ public static class CraReportCommand
         int packagesWithRepo = 0,
         List<TyposquatResult>? typosquatResults = null,
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
-        CraConfig? config = null)
+        CraConfig? config = null,
+        CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
         var allPackages = packages.Concat(transitivePackages).ToList();
@@ -2673,7 +2686,7 @@ public static class CraReportCommand
 
         // CISA KEV check (map CVEs to packages, but only if current version is affected)
         using var kevService = new CisaKevService();
-        await kevService.LoadCatalogAsync();
+        await kevService.LoadCatalogAsync(ct);
 
         var kevCvePackages = allVulnerabilities
             .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
@@ -2716,7 +2729,7 @@ public static class CraReportCommand
             using var epssService = new EpssService();
             var epssScores = await AnsiConsole.Status()
                 .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
-                    await epssService.GetScoresAsync(allCves));
+                    await epssService.GetScoresAsync(allCves, ct));
 
             EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
             reportGenerator.SetEpssScores(epssScores);
@@ -2781,7 +2794,7 @@ public static class CraReportCommand
             {
                 var nugetResults = await AnsiConsole.Status()
                     .StartAsync("Checking NuGet package provenance...", async _ =>
-                        await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages));
+                        await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages, ct));
                 allProvenanceResults.AddRange(nugetResults);
             }
 
@@ -2793,7 +2806,7 @@ public static class CraReportCommand
             {
                 var npmResults = await AnsiConsole.Status()
                     .StartAsync("Checking npm package provenance...", async _ =>
-                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages));
+                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages, ct));
                 allProvenanceResults.AddRange(npmResults);
             }
 
@@ -2838,14 +2851,14 @@ public static class CraReportCommand
         string? licenseFilePath = null;
         if (licensesFormat.HasValue)
         {
-            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path);
+            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path, ct);
         }
 
         // Generate SBOM if requested
         string? sbomFilePath = null;
         if (sbomFormat.HasValue)
         {
-            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path);
+            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, ct);
         }
 
         string output;
@@ -2858,7 +2871,7 @@ public static class CraReportCommand
             output = reportGenerator.GenerateHtml(craReport, licenseFilePath);
         }
 
-        await File.WriteAllTextAsync(outputPath, output);
+        await File.WriteAllTextAsync(outputPath, output, ct);
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -2980,7 +2993,8 @@ public static class CraReportCommand
         List<PackageHealth> packages,
         List<PackageHealth> transitivePackages,
         LicenseOutputFormat format,
-        string basePath)
+        string basePath,
+        CancellationToken ct = default)
     {
         var allPackages = packages.Concat(transitivePackages)
             .DistinctBy(p => p.PackageId)
@@ -2998,7 +3012,7 @@ public static class CraReportCommand
         var outputDir = File.Exists(basePath) ? Path.GetDirectoryName(basePath)! : basePath;
         var outputPath = Path.Combine(outputDir, fileName);
 
-        await File.WriteAllTextAsync(outputPath, content);
+        await File.WriteAllTextAsync(outputPath, content, ct);
         AnsiConsole.MarkupLine($"[green]License attribution written to {outputPath}[/]");
         return outputPath;
     }
@@ -3129,7 +3143,8 @@ public static class CraReportCommand
         List<PackageHealth> packages,
         List<PackageHealth> transitivePackages,
         SbomFormat format,
-        string basePath)
+        string basePath,
+        CancellationToken ct = default)
     {
         var allPackages = packages.Concat(transitivePackages)
             .DistinctBy(p => $"{p.PackageId}@{p.Version}")
@@ -3159,7 +3174,7 @@ public static class CraReportCommand
         }
 
         var outputPath = Path.Combine(outputDir, fileName);
-        await File.WriteAllTextAsync(outputPath, content);
+        await File.WriteAllTextAsync(outputPath, content, ct);
         AnsiConsole.MarkupLine($"[green]SBOM written to {outputPath}[/]");
         return outputPath;
     }
