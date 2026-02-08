@@ -205,6 +205,7 @@ depsafe analyze [<path>] [options]
 | `-f, --format <Table\|Json\|Markdown>` | Output format | `Table` |
 | `--fail-below <score>` | Exit with error if project score below threshold | - |
 | `--skip-github` | Skip GitHub API calls | `false` |
+| `--check-typosquat` | Run typosquatting detection on all dependencies | `false` |
 
 **Examples:**
 ```bash
@@ -350,7 +351,7 @@ depsafe typosquat [<path>] [options]
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-f, --format <Table\|Json>` | Output format | `Table` |
+| `-f, --format <Table\|Json\|Markdown>` | Output format | `Table` |
 | `--offline` | Use embedded popular package data only (skip online refresh) | `false` |
 
 **Examples:**
@@ -686,7 +687,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Install DepSafe
         run: dotnet tool install -g DepSafe
@@ -723,7 +724,7 @@ pool:
 steps:
   - task: UseDotNet@2
     inputs:
-      version: '8.0.x'
+      version: '10.0.x'
 
   - script: dotnet tool install -g DepSafe
     displayName: 'Install DepSafe'
@@ -748,7 +749,7 @@ steps:
 
 ```yaml
 dependency-health:
-  image: mcr.microsoft.com/dotnet/sdk:8.0
+  image: mcr.microsoft.com/dotnet/sdk:10.0
   script:
     - dotnet tool install -g DepSafe
     - export PATH="$PATH:$HOME/.dotnet/tools"
