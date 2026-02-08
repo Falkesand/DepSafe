@@ -48,7 +48,7 @@ public sealed partial class OsvApiClient : IDisposable
     {
         var results = await QueryBatchAsync(
             [(packageName, version, ecosystem)],
-            ct);
+            ct).ConfigureAwait(false);
 
         return results.TryGetValue(packageName, out var vulns) ? vulns : [];
     }
@@ -71,7 +71,7 @@ public sealed partial class OsvApiClient : IDisposable
         foreach (var pkg in packageList)
         {
             var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
-            var cached = await _cache.GetAsync<List<VulnerabilityInfo>>(cacheKey, ct);
+            var cached = await _cache.GetAsync<List<VulnerabilityInfo>>(cacheKey, ct).ConfigureAwait(false);
             if (cached is not null)
             {
                 results[pkg.Name] = cached;
@@ -91,7 +91,7 @@ public sealed partial class OsvApiClient : IDisposable
             int take = Math.Min(BatchSize, packagesToFetch.Count - i);
             var batch = packagesToFetch.GetRange(i, take);
             var batchLookup = batch.ToDictionary(p => p.Name, p => p, StringComparer.OrdinalIgnoreCase);
-            var batchResults = await QueryBatchInternalAsync(batch, ct);
+            var batchResults = await QueryBatchInternalAsync(batch, ct).ConfigureAwait(false);
 
             foreach (var (name, vulns) in batchResults)
             {
@@ -106,7 +106,7 @@ public sealed partial class OsvApiClient : IDisposable
                 if (batchLookup.TryGetValue(name, out var pkg))
                 {
                     var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
-                    await _cache.SetAsync(cacheKey, vulns, TimeSpan.FromHours(6), ct);
+                    await _cache.SetAsync(cacheKey, vulns, TimeSpan.FromHours(6), ct).ConfigureAwait(false);
                 }
             }
 
@@ -116,7 +116,7 @@ public sealed partial class OsvApiClient : IDisposable
                 if (results.TryAdd(pkg.Name, []))
                 {
                     var cacheKey = $"osv:{pkg.Ecosystem}:{pkg.Name}:{pkg.Version ?? "any"}";
-                    await _cache.SetAsync(cacheKey, new List<VulnerabilityInfo>(), TimeSpan.FromHours(6), ct);
+                    await _cache.SetAsync(cacheKey, new List<VulnerabilityInfo>(), TimeSpan.FromHours(6), ct).ConfigureAwait(false);
                 }
             }
         }
@@ -170,14 +170,14 @@ public sealed partial class OsvApiClient : IDisposable
             using var response = await _httpClient.PostAsJsonAsync(
                 $"{OsvApiUrl}/querybatch",
                 request,
-                ct);
+                ct).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
                 return results;
             }
 
-            var batchResponse = await response.Content.ReadFromJsonAsync<OsvBatchResponse>(ct);
+            var batchResponse = await response.Content.ReadFromJsonAsync<OsvBatchResponse>(ct).ConfigureAwait(false);
 
             if (batchResponse?.Results is null)
                 return results;
@@ -205,7 +205,7 @@ public sealed partial class OsvApiClient : IDisposable
                 return results;
 
             // Step 3: Fetch full details for each unique vulnerability
-            var vulnDetails = await FetchVulnerabilityDetailsAsync(vulnIdToPackages.Keys.ToList(), ct);
+            var vulnDetails = await FetchVulnerabilityDetailsAsync(vulnIdToPackages.Keys.ToList(), ct).ConfigureAwait(false);
 
             // Step 4: Map vulnerabilities back to packages
             foreach (var (vulnId, affectedPackages) in vulnIdToPackages)
@@ -258,13 +258,13 @@ public sealed partial class OsvApiClient : IDisposable
         using var semaphore = new SemaphoreSlim(10); // Max 10 concurrent requests
         var tasks = vulnIds.Select(async vulnId =>
         {
-            await semaphore.WaitAsync(ct);
+            await semaphore.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                using var response = await _httpClient.GetAsync($"{OsvApiUrl}/vulns/{Uri.EscapeDataString(vulnId)}", ct);
+                using var response = await _httpClient.GetAsync($"{OsvApiUrl}/vulns/{Uri.EscapeDataString(vulnId)}", ct).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)
                 {
-                    var vuln = await response.Content.ReadFromJsonAsync<OsvVulnerability>(ct);
+                    var vuln = await response.Content.ReadFromJsonAsync<OsvVulnerability>(ct).ConfigureAwait(false);
                     if (vuln is not null)
                     {
                         lock (resultsLock)
@@ -285,7 +285,7 @@ public sealed partial class OsvApiClient : IDisposable
             }
         });
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
         return results;
     }
 

@@ -42,7 +42,7 @@ public sealed class ResponseCache : IDisposable
 
         // L2: Check disk cache with striped locking
         var keyLock = _stripedLocks[(uint)key.GetHashCode() % (uint)_stripedLocks.Length];
-        await keyLock.WaitAsync(ct);
+        await keyLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             // Double-check memory after acquiring lock (another thread may have populated it)
@@ -55,7 +55,7 @@ public sealed class ResponseCache : IDisposable
             var metaPath = path + ".meta";
             if (File.Exists(metaPath))
             {
-                var meta = await File.ReadAllTextAsync(metaPath, ct);
+                var meta = await File.ReadAllTextAsync(metaPath, ct).ConfigureAwait(false);
                 var expiry = DateTime.Parse(meta, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind);
                 if (DateTime.UtcNow > expiry)
                 {
@@ -66,7 +66,7 @@ public sealed class ResponseCache : IDisposable
                 }
 
                 await using var stream = File.OpenRead(path);
-                var result = await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct);
+                var result = await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false);
 
                 // Promote to L1
                 if (result is not null)
@@ -96,15 +96,15 @@ public sealed class ResponseCache : IDisposable
 
         // Write to L2 (disk) with striped locking
         var keyLock = _stripedLocks[(uint)key.GetHashCode() % (uint)_stripedLocks.Length];
-        await keyLock.WaitAsync(ct);
+        await keyLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var path = GetCachePath(key);
             var metaPath = path + ".meta";
 
             await using var stream = File.Create(path);
-            await JsonSerializer.SerializeAsync(stream, value, cancellationToken: ct);
-            await File.WriteAllTextAsync(metaPath, expiry.ToString("O"), ct);
+            await JsonSerializer.SerializeAsync(stream, value, cancellationToken: ct).ConfigureAwait(false);
+            await File.WriteAllTextAsync(metaPath, expiry.ToString("O"), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or JsonException)
         {

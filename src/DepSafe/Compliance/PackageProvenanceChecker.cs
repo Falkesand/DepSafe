@@ -54,10 +54,10 @@ public sealed class PackageProvenanceChecker : IDisposable
 
         var tasks = packages.Select(async pkg =>
         {
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync().ConfigureAwait(false);
             try
             {
-                return await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version);
+                return await CheckSingleNuGetPackageAsync(pkg.PackageId, pkg.Version).ConfigureAwait(false);
             }
             finally
             {
@@ -65,7 +65,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
         });
 
-        var results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
         return [.. results];
     }
 
@@ -77,7 +77,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             // Check the registration endpoint for signature metadata
             var url = $"https://api.nuget.org/v3/registration5-gz-semver2/{Uri.EscapeDataString(packageId.ToLowerInvariant())}/{Uri.EscapeDataString(version.ToLowerInvariant())}.json";
 
-            using var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return new ProvenanceResult
@@ -90,7 +90,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 };
             }
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -109,10 +109,10 @@ public sealed class PackageProvenanceChecker : IDisposable
                     var catalogUrl = catalog.GetString();
                     if (!string.IsNullOrEmpty(catalogUrl) && IsAllowedUrl(catalogUrl))
                     {
-                        using var catalogResponse = await _httpClient.GetAsync(catalogUrl);
+                        using var catalogResponse = await _httpClient.GetAsync(catalogUrl).ConfigureAwait(false);
                         if (catalogResponse.IsSuccessStatusCode)
                         {
-                            var catalogJson = await catalogResponse.Content.ReadAsStringAsync();
+                            var catalogJson = await catalogResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
                             using var catalogDoc = JsonDocument.Parse(catalogJson);
                             if (catalogDoc.RootElement.TryGetProperty("packageHash", out var hashProp))
                             {
@@ -163,10 +163,10 @@ public sealed class PackageProvenanceChecker : IDisposable
 
         var tasks = packages.Select(async pkg =>
         {
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync().ConfigureAwait(false);
             try
             {
-                return await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version);
+                return await CheckSingleNpmPackageAsync(pkg.PackageId, pkg.Version).ConfigureAwait(false);
             }
             finally
             {
@@ -174,7 +174,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             }
         });
 
-        var results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
         return [.. results];
     }
 
@@ -187,7 +187,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             var encodedVersion = Uri.EscapeDataString(version);
             var url = $"https://registry.npmjs.org/{encodedName}/{encodedVersion}";
 
-            using var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return new ProvenanceResult
@@ -200,7 +200,7 @@ public sealed class PackageProvenanceChecker : IDisposable
                 };
             }
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 

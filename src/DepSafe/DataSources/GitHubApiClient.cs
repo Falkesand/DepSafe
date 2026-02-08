@@ -91,7 +91,7 @@ public sealed partial class GitHubApiClient : IDisposable
             }
 
             var cacheKey = $"github:{owner}/{repo}";
-            var cached = await _cache.GetAsync<GitHubRepoInfo>(cacheKey, ct);
+            var cached = await _cache.GetAsync<GitHubRepoInfo>(cacheKey, ct).ConfigureAwait(false);
             if (cached is not null)
             {
                 results[url!] = cached;
@@ -118,14 +118,14 @@ public sealed partial class GitHubApiClient : IDisposable
         {
             if (IsRateLimited) break;
 
-            var batchResults = await FetchRepositoriesBatchGraphQLAsync(batch, ct);
+            var batchResults = await FetchRepositoriesBatchGraphQLAsync(batch, ct).ConfigureAwait(false);
             foreach (var (url, info) in batchResults)
             {
                 results[url] = info;
                 if (info is not null)
                 {
                     var (owner, repo) = ParseGitHubUrl(url);
-                    await _cache.SetAsync($"github:{owner}/{repo}", info, TimeSpan.FromHours(24), ct);
+                    await _cache.SetAsync($"github:{owner}/{repo}", info, TimeSpan.FromHours(24), ct).ConfigureAwait(false);
                 }
             }
         }
@@ -153,7 +153,7 @@ public sealed partial class GitHubApiClient : IDisposable
             return results;
         }
 
-        await _requestLimiter.WaitAsync(ct);
+        await _requestLimiter.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             // Build GraphQL query for multiple repositories using StringBuilder
@@ -189,7 +189,7 @@ public sealed partial class GitHubApiClient : IDisposable
             using var response = await _httpClient.PostAsJsonAsync(
                 "https://api.github.com/graphql",
                 new { query },
-                ct);
+                ct).ConfigureAwait(false);
 
             UpdateRateLimitFromResponse(response);
 
@@ -204,7 +204,7 @@ public sealed partial class GitHubApiClient : IDisposable
                 return results;
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonDefaults.CaseInsensitive, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonDefaults.CaseInsensitive, ct).ConfigureAwait(false);
 
             if (json.TryGetProperty("data", out var data))
             {
@@ -351,14 +351,14 @@ public sealed partial class GitHubApiClient : IDisposable
             return Result.Fail<GitHubRepoInfo>($"Could not parse GitHub URL: {repoUrl}", ErrorKind.InvalidInput);
 
         var cacheKey = $"github:{owner}/{repo}";
-        var cached = await _cache.GetAsync<GitHubRepoInfo>(cacheKey, ct);
+        var cached = await _cache.GetAsync<GitHubRepoInfo>(cacheKey, ct).ConfigureAwait(false);
         if (cached is not null) return cached;
 
-        await _requestLimiter.WaitAsync(ct);
+        await _requestLimiter.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var repository = await _client.Repository.Get(owner, repo);
-            await UpdateRateLimitFromOctokitAsync();
+            var repository = await _client.Repository.Get(owner, repo).ConfigureAwait(false);
+            await UpdateRateLimitFromOctokitAsync().ConfigureAwait(false);
 
             var lastCommitDate = repository.PushedAt?.UtcDateTime ?? DateTime.MinValue;
 
@@ -366,7 +366,7 @@ public sealed partial class GitHubApiClient : IDisposable
             var hasSecurityPolicy = false;
             try
             {
-                await _client.Repository.Content.GetAllContents(owner, repo, "SECURITY.md");
+                await _client.Repository.Content.GetAllContents(owner, repo, "SECURITY.md").ConfigureAwait(false);
                 hasSecurityPolicy = true;
             }
             catch (NotFoundException) { /* No SECURITY.md */ }
@@ -388,7 +388,7 @@ public sealed partial class GitHubApiClient : IDisposable
                 HasSecurityPolicy = hasSecurityPolicy
             };
 
-            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(24), ct);
+            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(24), ct).ConfigureAwait(false);
             return info;
         }
         catch (RateLimitExceededException ex)
@@ -431,7 +431,7 @@ public sealed partial class GitHubApiClient : IDisposable
         foreach (var packageId in packageIds.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var cacheKey = $"vuln:{packageId}:all";
-            var cached = await _cache.GetAsync<List<VulnerabilityInfo>>(cacheKey, ct);
+            var cached = await _cache.GetAsync<List<VulnerabilityInfo>>(cacheKey, ct).ConfigureAwait(false);
             if (cached is not null)
             {
                 results[packageId] = cached;
@@ -455,11 +455,11 @@ public sealed partial class GitHubApiClient : IDisposable
         {
             if (IsRateLimited) break;
 
-            var batchResults = await FetchVulnerabilitiesBatchAsync(batch, ct);
+            var batchResults = await FetchVulnerabilitiesBatchAsync(batch, ct).ConfigureAwait(false);
             foreach (var (packageId, vulns) in batchResults)
             {
                 results[packageId] = vulns;
-                await _cache.SetAsync($"vuln:{packageId}:all", vulns, TimeSpan.FromHours(1), ct);
+                await _cache.SetAsync($"vuln:{packageId}:all", vulns, TimeSpan.FromHours(1), ct).ConfigureAwait(false);
             }
         }
 
@@ -476,7 +476,7 @@ public sealed partial class GitHubApiClient : IDisposable
         var results = new Dictionary<string, List<VulnerabilityInfo>>(StringComparer.OrdinalIgnoreCase);
         var packages = packageIds.ToList();
 
-        await _requestLimiter.WaitAsync(ct);
+        await _requestLimiter.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             // Build query for multiple packages using StringBuilder
@@ -506,7 +506,7 @@ public sealed partial class GitHubApiClient : IDisposable
             using var response = await _httpClient.PostAsJsonAsync(
                 "https://api.github.com/graphql",
                 new { query },
-                ct);
+                ct).ConfigureAwait(false);
 
             UpdateRateLimitFromResponse(response);
 
@@ -520,7 +520,7 @@ public sealed partial class GitHubApiClient : IDisposable
                 return results;
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonDefaults.CaseInsensitive, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonDefaults.CaseInsensitive, ct).ConfigureAwait(false);
 
             if (json.TryGetProperty("data", out var data))
             {
@@ -637,7 +637,7 @@ public sealed partial class GitHubApiClient : IDisposable
         string? version = null,
         CancellationToken ct = default)
     {
-        var results = await GetVulnerabilitiesBatchAsync([packageId], ct);
+        var results = await GetVulnerabilitiesBatchAsync([packageId], ct).ConfigureAwait(false);
         return results.TryGetValue(packageId, out var vulns) ? vulns : [];
     }
 
@@ -663,7 +663,7 @@ public sealed partial class GitHubApiClient : IDisposable
     {
         try
         {
-            var rateLimit = await _client.RateLimit.GetRateLimits();
+            var rateLimit = await _client.RateLimit.GetRateLimits().ConfigureAwait(false);
             _remainingRequests = rateLimit.Resources.Core.Remaining;
             _rateLimitReset = rateLimit.Resources.Core.Reset.UtcDateTime;
             _isRateLimited = _remainingRequests <= 0;

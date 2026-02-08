@@ -37,14 +37,14 @@ public sealed class NpmApiClient : IDisposable
     public async Task<Result<NpmPackageInfo>> GetPackageInfoAsync(string packageName, CancellationToken ct = default)
     {
         var cacheKey = $"npm:{packageName}";
-        var cached = await _cache.GetAsync<NpmPackageInfo>(cacheKey, ct);
+        var cached = await _cache.GetAsync<NpmPackageInfo>(cacheKey, ct).ConfigureAwait(false);
         if (cached is not null) return cached;
 
         try
         {
             // URL encode package name (handles scoped packages like @org/package)
             var encodedName = Uri.EscapeDataString(packageName);
-            using var response = await _httpClient.GetAsync($"{NpmRegistryUrl}/{encodedName}", ct);
+            using var response = await _httpClient.GetAsync($"{NpmRegistryUrl}/{encodedName}", ct).ConfigureAwait(false);
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
@@ -53,8 +53,8 @@ public sealed class NpmApiClient : IDisposable
 
             response.EnsureSuccessStatusCode();
             // Parse directly from stream to avoid large string allocation
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct);
+            using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
 
             if (doc is null)
                 return Result.Fail<NpmPackageInfo>($"Failed to parse npm response for '{packageName}'", ErrorKind.ParseError);
@@ -102,7 +102,7 @@ public sealed class NpmApiClient : IDisposable
             var deprecationMessage = latestVersionNode?["deprecated"]?.GetValue<string>();
 
             // Fetch download count separately
-            var weeklyDownloads = await GetDownloadCountAsync(packageName, ct);
+            var weeklyDownloads = await GetDownloadCountAsync(packageName, ct).ConfigureAwait(false);
 
             // Extract author - can be a string or an object with "name" property
             var authorName = ExtractAuthorName(latestVersionNode?["author"] ?? doc["author"]);
@@ -126,7 +126,7 @@ public sealed class NpmApiClient : IDisposable
                 PeerDependencies = peerDependencies
             };
 
-            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(12), ct);
+            await _cache.SetAsync(cacheKey, info, TimeSpan.FromHours(12), ct).ConfigureAwait(false);
             return info;
         }
         catch (HttpRequestException ex)
@@ -169,10 +169,10 @@ public sealed class NpmApiClient : IDisposable
 
         var tasks = packageList.Select(async packageName =>
         {
-            await semaphore.WaitAsync(ct);
+            await semaphore.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                var result = await GetPackageInfoAsync(packageName, ct);
+                var result = await GetPackageInfoAsync(packageName, ct).ConfigureAwait(false);
                 if (result.IsSuccess)
                 {
                     results[packageName] = result.Value;
@@ -184,7 +184,7 @@ public sealed class NpmApiClient : IDisposable
             }
         });
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
         return new Dictionary<string, NpmPackageInfo>(results);
     }
 
@@ -196,13 +196,13 @@ public sealed class NpmApiClient : IDisposable
         try
         {
             var encodedName = Uri.EscapeDataString(packageName);
-            using var response = await _httpClient.GetAsync($"{NpmDownloadsUrl}/{encodedName}", ct);
+            using var response = await _httpClient.GetAsync($"{NpmDownloadsUrl}/{encodedName}", ct).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode) return 0;
 
             // Parse directly from stream to avoid string allocation
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct);
+            using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var doc = await JsonNode.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
 
             return doc?["downloads"]?.GetValue<long>() ?? 0;
         }
@@ -238,7 +238,7 @@ public sealed class NpmApiClient : IDisposable
 
         try
         {
-            var json = await File.ReadAllTextAsync(path, ct);
+            var json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
             var doc = JsonNode.Parse(json);
 
             if (doc is null)
@@ -279,7 +279,7 @@ public sealed class NpmApiClient : IDisposable
         try
         {
             var dependencies = new List<NpmLockDependency>();
-            var json = await File.ReadAllTextAsync(path, ct);
+            var json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
             var doc = JsonNode.Parse(json);
 
             if (doc is null)
@@ -461,9 +461,9 @@ public sealed class NpmApiClient : IDisposable
         int maxDepth = 10,
         CancellationToken ct = default)
     {
-        var packageJsonResult = await ParsePackageJsonAsync(packageJsonPath, ct);
+        var packageJsonResult = await ParsePackageJsonAsync(packageJsonPath, ct).ConfigureAwait(false);
         var lockPath = Path.Combine(Path.GetDirectoryName(packageJsonPath) ?? ".", "package-lock.json");
-        var lockDepsResult = await ParsePackageLockAsync(lockPath, ct);
+        var lockDepsResult = await ParsePackageLockAsync(lockPath, ct).ConfigureAwait(false);
         var lockDeps = lockDepsResult.ValueOr([]);
 
         var lockLookup = lockDeps
@@ -480,7 +480,7 @@ public sealed class NpmApiClient : IDisposable
             var packageJson = packageJsonResult.Value;
             foreach (var dep in packageJson.Dependencies)
             {
-                var node = await BuildTreeNodeAsync(dep.Key, dep.Value, 0, maxDepth, lockLookup, seen, licenseLookup, false, ct);
+                var node = await BuildTreeNodeAsync(dep.Key, dep.Value, 0, maxDepth, lockLookup, seen, licenseLookup, false, ct).ConfigureAwait(false);
                 if (node is not null)
                 {
                     roots.Add(node);
@@ -489,7 +489,7 @@ public sealed class NpmApiClient : IDisposable
 
             foreach (var dep in packageJson.DevDependencies)
             {
-                var node = await BuildTreeNodeAsync(dep.Key, dep.Value, 0, maxDepth, lockLookup, seen, licenseLookup, true, ct);
+                var node = await BuildTreeNodeAsync(dep.Key, dep.Value, 0, maxDepth, lockLookup, seen, licenseLookup, true, ct).ConfigureAwait(false);
                 if (node is not null)
                 {
                     roots.Add(node);
@@ -544,7 +544,7 @@ public sealed class NpmApiClient : IDisposable
         // Fetch health info for this package or get from cache
         if (!isDuplicate)
         {
-            var npmResult = await GetPackageInfoAsync(name, ct);
+            var npmResult = await GetPackageInfoAsync(name, ct).ConfigureAwait(false);
             if (npmResult.IsSuccess)
             {
                 node.License = npmResult.Value.License;
@@ -563,7 +563,7 @@ public sealed class NpmApiClient : IDisposable
             foreach (var childDep in lockDep.Dependencies)
             {
                 var child = await BuildTreeNodeAsync(
-                    childDep.Key, childDep.Value, depth + 1, maxDepth, lockLookup, seen, licenseLookup, isDev, ct);
+                    childDep.Key, childDep.Value, depth + 1, maxDepth, lockLookup, seen, licenseLookup, isDev, ct).ConfigureAwait(false);
                 if (child is not null)
                 {
                     node.Children.Add(child);
