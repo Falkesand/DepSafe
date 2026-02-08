@@ -30,7 +30,6 @@ public class CraReportGeneratorTests
             MakeItem("CRA Art. 10 - Cryptographic Compliance", CraComplianceStatus.Compliant),
             MakeItem("CRA Art. 10 - Supply Chain Integrity", CraComplianceStatus.Compliant),
             MakeItem("CRA Art. 14 - Incident Reporting", CraComplianceStatus.Compliant),
-            MakeItem("CRA Art. 10 - Artifact Integrity", CraComplianceStatus.Compliant),
         };
 
         var score = CraReportGenerator.CalculateCraReadinessScore(items);
@@ -61,28 +60,11 @@ public class CraReportGeneratorTests
             MakeItem("CRA Art. 10 - Cryptographic Compliance", CraComplianceStatus.NonCompliant),
             MakeItem("CRA Art. 10 - Supply Chain Integrity", CraComplianceStatus.NonCompliant),
             MakeItem("CRA Art. 14 - Incident Reporting", CraComplianceStatus.NonCompliant),
-            MakeItem("CRA Art. 10 - Artifact Integrity", CraComplianceStatus.NonCompliant),
         };
 
         var score = CraReportGenerator.CalculateCraReadinessScore(items);
 
         Assert.Equal(0, score);
-    }
-
-    // --- Artifact Integrity Compliance Item ---
-
-    [Fact]
-    public void CalculateCraReadinessScore_ArtifactIntegrity_HasWeight2()
-    {
-        // Artifact Integrity with weight 2, Compliant: earned=2, total=2, score=100
-        var items = new List<CraComplianceItem>
-        {
-            MakeItem("CRA Art. 10 - Artifact Integrity", CraComplianceStatus.Compliant),
-        };
-
-        var score = CraReportGenerator.CalculateCraReadinessScore(items);
-
-        Assert.Equal(100, score);
     }
 
     [Fact]

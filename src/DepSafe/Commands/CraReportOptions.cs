@@ -10,5 +10,4 @@ public sealed record CraReportOptions(
     SbomFormat? Sbom,
     bool CheckTyposquat,
     bool Sign,
-    string? SignKey,
-    string? TrustBundle);
+    string? SignKey);
