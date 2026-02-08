@@ -13,6 +13,9 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
     private readonly Option<LicenseOutputFormat?> _licenses;
     private readonly Option<SbomFormat?> _sbom;
     private readonly Option<bool> _checkTyposquat;
+    private readonly Option<bool> _sign;
+    private readonly Option<string?> _signKey;
+    private readonly Option<string?> _trustBundle;
 
     public CraReportOptionsBinder(
         Argument<string?> path,
@@ -22,7 +25,10 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         Option<bool> deep,
         Option<LicenseOutputFormat?> licenses,
         Option<SbomFormat?> sbom,
-        Option<bool> checkTyposquat)
+        Option<bool> checkTyposquat,
+        Option<bool> sign,
+        Option<string?> signKey,
+        Option<string?> trustBundle)
     {
         _path = path;
         _format = format;
@@ -32,6 +38,9 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         _licenses = licenses;
         _sbom = sbom;
         _checkTyposquat = checkTyposquat;
+        _sign = sign;
+        _signKey = signKey;
+        _trustBundle = trustBundle;
     }
 
     public CraReportOptions Bind(BindingContext bindingContext) => GetBoundValue(bindingContext);
@@ -44,5 +53,8 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         bindingContext.ParseResult.GetValueForOption(_deep),
         bindingContext.ParseResult.GetValueForOption(_licenses),
         bindingContext.ParseResult.GetValueForOption(_sbom),
-        bindingContext.ParseResult.GetValueForOption(_checkTyposquat));
+        bindingContext.ParseResult.GetValueForOption(_checkTyposquat),
+        bindingContext.ParseResult.GetValueForOption(_sign),
+        bindingContext.ParseResult.GetValueForOption(_signKey),
+        bindingContext.ParseResult.GetValueForOption(_trustBundle));
 }

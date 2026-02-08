@@ -1782,4 +1782,85 @@ public sealed partial class CraReportGenerator
         }
         sb.AppendLine("</div>");
     }
+
+    private void GenerateArtifactIntegritySection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>CRA Art. 10 \u2014 Artifact Integrity</h2>");
+        sb.AppendLine("</div>");
+
+        if (_artifactSigningResults.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2139</div>");
+            sb.AppendLine("  <h3>No Signed Artifacts</h3>");
+            sb.AppendLine("  <p>No artifact signatures were generated in this run. Use the <code>--sign</code> flag to cryptographically sign compliance artifacts (SBOM, VEX, CRA report) with <strong>sigil</strong>.</p>");
+            sb.AppendLine("  <p style=\"margin-top:8px;\">Signing provides tamper detection and integrity verification for your compliance artifacts as recommended by CRA Art. 10.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        var verifiedCount = _artifactSigningResults.Count(r => r.IsVerified);
+        var signedCount = _artifactSigningResults.Count(r => r.IsSigned);
+
+        if (verifiedCount == _artifactSigningResults.Count)
+        {
+            sb.AppendLine("<div class=\"info-box\" style=\"border-left-color:var(--success);\">");
+            sb.AppendLine("  <div class=\"info-box-title\" style=\"color:var(--success);\">All Artifacts Verified</div>");
+            sb.AppendLine($"  <p>All {verifiedCount} artifact(s) have been cryptographically signed and verified. Artifact integrity is assured.</p>");
+            sb.AppendLine("</div>");
+        }
+        else
+        {
+            sb.AppendLine("<div class=\"info-box\" style=\"border-left-color:var(--warning);\">");
+            sb.AppendLine("  <div class=\"info-box-title\" style=\"color:var(--warning);\">Partial Verification</div>");
+            sb.AppendLine($"  <p>{signedCount}/{_artifactSigningResults.Count} artifact(s) signed, {verifiedCount} verified. Check signing key and trust bundle configuration.</p>");
+            sb.AppendLine("</div>");
+        }
+
+        sb.AppendLine("<table class=\"detail-table\">");
+        sb.AppendLine("  <thead><tr>");
+        sb.AppendLine("    <th>Artifact</th>");
+        sb.AppendLine("    <th>Type</th>");
+        sb.AppendLine("    <th>Status</th>");
+        sb.AppendLine("    <th>Algorithm</th>");
+        sb.AppendLine("    <th>Fingerprint</th>");
+        sb.AppendLine("    <th>Signed At</th>");
+        sb.AppendLine("  </tr></thead>");
+        sb.AppendLine("  <tbody>");
+
+        foreach (var result in _artifactSigningResults)
+        {
+            var statusBadge = result switch
+            {
+                { IsVerified: true } => "<span class=\"days-overdue ok\">\u2713 Verified</span>",
+                { IsSigned: true } => "<span class=\"days-overdue warning\">Signed (unverified)</span>",
+                _ => "<span class=\"days-overdue critical\">Not signed</span>"
+            };
+
+            var fileName = Path.GetFileName(result.ArtifactPath);
+            var algorithm = result.Algorithm ?? "\u2014";
+            var fingerprint = result.Fingerprint ?? "\u2014";
+            var signedAt = result.SignedAt?.ToString("yyyy-MM-dd HH:mm") ?? "\u2014";
+
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td><code>{EscapeHtml(fileName)}</code></td>");
+            sb.AppendLine($"      <td>{EscapeHtml(result.ArtifactType)}</td>");
+            sb.AppendLine($"      <td>{statusBadge}</td>");
+            sb.AppendLine($"      <td>{EscapeHtml(algorithm)}</td>");
+            sb.AppendLine($"      <td style=\"font-family:var(--font-mono);font-size:0.85em;\">{EscapeHtml(fingerprint)}</td>");
+            sb.AppendLine($"      <td>{EscapeHtml(signedAt)}</td>");
+            sb.AppendLine("    </tr>");
+
+            if (!string.IsNullOrEmpty(result.Error))
+            {
+                sb.AppendLine("    <tr>");
+                sb.AppendLine($"      <td colspan=\"6\" style=\"color:var(--danger);font-size:0.85em;padding-left:24px;\">{EscapeHtml(result.Error)}</td>");
+                sb.AppendLine("    </tr>");
+            }
+        }
+
+        sb.AppendLine("  </tbody>");
+        sb.AppendLine("</table>");
+    }
 }
