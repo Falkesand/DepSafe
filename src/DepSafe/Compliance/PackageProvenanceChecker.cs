@@ -20,6 +20,9 @@ public sealed class PackageProvenanceChecker : IDisposable
         "www.npmjs.com"
     };
 
+    private const string NuGetRegistrationUrl = "https://api.nuget.org/v3/registration5-gz-semver2";
+    private const string NpmRegistryUrl = "https://registry.npmjs.org";
+
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
     private bool _disposed;
@@ -75,7 +78,7 @@ public sealed class PackageProvenanceChecker : IDisposable
         {
             // NuGet.org signs all packages with a repository signature
             // Check the registration endpoint for signature metadata
-            var url = $"https://api.nuget.org/v3/registration5-gz-semver2/{Uri.EscapeDataString(packageId.ToLowerInvariant())}/{Uri.EscapeDataString(version.ToLowerInvariant())}.json";
+            var url = $"{NuGetRegistrationUrl}/{Uri.EscapeDataString(packageId.ToLowerInvariant())}/{Uri.EscapeDataString(version.ToLowerInvariant())}.json";
 
             using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
@@ -185,7 +188,7 @@ public sealed class PackageProvenanceChecker : IDisposable
             // Scoped packages like @scope/name need URL encoding
             var encodedName = Uri.EscapeDataString(packageId);
             var encodedVersion = Uri.EscapeDataString(version);
-            var url = $"https://registry.npmjs.org/{encodedName}/{encodedVersion}";
+            var url = $"{NpmRegistryUrl}/{encodedName}/{encodedVersion}";
 
             using var response = await _httpClient.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
