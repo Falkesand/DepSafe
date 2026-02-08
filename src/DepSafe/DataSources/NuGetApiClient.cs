@@ -165,7 +165,7 @@ public sealed class NuGetApiClient : IDisposable
         return projectUrl;
     }
 
-    private static string? NormalizeGitHubUrl(string url)
+    internal static string? NormalizeGitHubUrl(string url)
     {
         // Convert various GitHub URL formats to owner/repo
         var uri = new Uri(url);

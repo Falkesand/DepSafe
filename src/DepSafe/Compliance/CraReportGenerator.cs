@@ -601,7 +601,7 @@ public sealed partial class CraReportGenerator
         return totalWeight > 0 ? (int)Math.Round(100.0 * earnedWeight / totalWeight) : 0;
     }
 
-    private static CraComplianceStatus DetermineOverallStatus(List<CraComplianceItem> items)
+    internal static CraComplianceStatus DetermineOverallStatus(List<CraComplianceItem> items)
     {
         if (items.Any(i => i.Status == CraComplianceStatus.NonCompliant))
             return CraComplianceStatus.NonCompliant;
