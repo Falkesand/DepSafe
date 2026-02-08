@@ -1,5 +1,19 @@
 # DepSafe Release Notes
 
+## v1.5.1
+
+### License Change
+
+DepSafe is now licensed under the GNU Affero General Public License v3.0 (AGPL-3.0), replacing the previous MIT license. This ensures that modifications to DepSafe — including use as a network service — must be shared under the same terms, strengthening alignment with the open-source transparency principles of the EU Cyber Resilience Act.
+
+### Code Quality
+
+- Extracted OSV DTO models to a partial class file (`OsvApiClient.Models.cs`), reducing `OsvApiClient.cs` to pure HTTP/business logic
+- Replaced hardcoded API URLs with named constants in `PackageProvenanceChecker`
+- Fixed README documentation discrepancies (outdated command examples, incorrect default values, missing options)
+
+---
+
 ## v1.5.0
 
 ### CRA Art. 14 — Reporting Obligation Detection
