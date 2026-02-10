@@ -2056,8 +2056,9 @@ public static class CraReportCommand
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
         // Remediation Roadmap (needs CRA score from report for prioritization)
+        List<RemediationRoadmapItem> roadmap;
         {
-            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
@@ -2141,6 +2142,9 @@ public static class CraReportCommand
         AnsiConsole.Write(complianceTable);
 
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
+
+        DisplaySecurityBudgetSummary(roadmap);
+
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
         var (exitCode, _) = EvaluateExitCode(craReport, config, allPackages);
@@ -2860,8 +2864,9 @@ public static class CraReportCommand
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
         // Remediation Roadmap (needs CRA score from report for prioritization)
+        List<RemediationRoadmapItem> roadmap;
         {
-            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
@@ -2951,6 +2956,9 @@ public static class CraReportCommand
         AnsiConsole.Write(complianceTable);
 
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
+
+        DisplaySecurityBudgetSummary(roadmap);
+
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
         var (exitCode, _) = EvaluateExitCode(craReport, config, allPackages);
@@ -3039,6 +3047,50 @@ public static class CraReportCommand
 
         var exitCode = report.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
         return (exitCode, violations);
+    }
+
+    private static void DisplaySecurityBudgetSummary(List<RemediationRoadmapItem> roadmap)
+    {
+        if (roadmap.Count == 0)
+            return;
+
+        var budget = SecurityBudgetOptimizer.Optimize(roadmap);
+        var highRoiItems = budget.Items.Where(i => i.Tier == RemediationTier.HighROI).ToList();
+
+        if (highRoiItems.Count == 0)
+            return;
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Rule("[bold]Security Budget Optimizer[/]").LeftJustified());
+        AnsiConsole.MarkupLine($"[bold]Fix {highRoiItems.Count} item(s) to reduce [green]{budget.HighROIPercentage:F0}%[/] of risk[/]");
+
+        var table = new Table()
+            .Border(TableBorder.Simple)
+            .AddColumn("Package")
+            .AddColumn("Effort")
+            .AddColumn("ROI Score")
+            .AddColumn("Cumulative");
+
+        foreach (var item in highRoiItems)
+        {
+            var effortColor = item.Item.Effort switch
+            {
+                UpgradeEffort.Patch => "green",
+                UpgradeEffort.Minor => "yellow",
+                _ => "red"
+            };
+            table.AddRow(
+                item.Item.PackageId,
+                $"[{effortColor}]{item.Item.Effort}[/]",
+                $"{item.RoiScore:F0}",
+                $"{item.CumulativeRiskReductionPercent:F0}%");
+        }
+
+        AnsiConsole.Write(table);
+
+        var lowRoiCount = budget.Items.Count - highRoiItems.Count;
+        if (lowRoiCount > 0)
+            AnsiConsole.MarkupLine($"[dim]+{lowRoiCount} lower-ROI item(s) reducing remaining {100 - budget.HighROIPercentage:F0}% of risk[/]");
     }
 
     private static async Task<string> GenerateLicenseAttributionAsync(
