@@ -2649,3 +2649,259 @@
       background: var(--danger);
       color: #fff;
     }
+
+    .nav-badge.success {
+      background: var(--success);
+      color: #fff;
+    }
+
+    /* ===== Phase 1: Release Readiness ===== */
+
+    .release-gate-go {
+      background: var(--success-light);
+      border: 2px solid var(--success);
+      border-radius: 12px;
+      padding: 32px;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .release-gate-go .gate-icon {
+      font-size: 3rem;
+      color: var(--success);
+      margin-bottom: 12px;
+    }
+
+    .release-gate-go .gate-label {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--success);
+      margin-bottom: 8px;
+    }
+
+    .release-gate-go .gate-detail {
+      font-size: 1rem;
+      color: var(--text-secondary);
+    }
+
+    .release-gate-nogo {
+      background: var(--danger-light);
+      border: 2px solid var(--danger);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .release-gate-nogo .gate-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .release-gate-nogo .gate-icon {
+      font-size: 2rem;
+      color: var(--danger);
+    }
+
+    .release-gate-nogo .gate-label {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--danger);
+    }
+
+    .release-gate-nogo .gate-detail {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      margin-bottom: 16px;
+    }
+
+    .blocker-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+
+    .blocker-table th {
+      background: var(--bg-tertiary);
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-secondary);
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .blocker-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .blocker-table tr:hover {
+      background: var(--bg-secondary);
+    }
+
+    .advisory-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .advisory-list li {
+      padding: 8px 12px;
+      border-left: 3px solid var(--warning);
+      margin-bottom: 8px;
+      background: var(--warning-light);
+      border-radius: 0 6px 6px 0;
+      font-size: 0.9rem;
+    }
+
+    /* ===== Phase 1: Security Budget ===== */
+
+    .budget-summary {
+      background: var(--accent-light);
+      border: 1px solid var(--accent);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .budget-summary .budget-text {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .budget-summary .budget-headline {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .budget-summary .budget-detail {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .budget-bar-container {
+      flex: 1;
+      min-width: 200px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      height: 28px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .budget-bar-fill {
+      height: 100%;
+      background: var(--success);
+      border-radius: 8px;
+      transition: width 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .tier-high td {
+      background: rgba(25, 135, 84, 0.06);
+    }
+
+    .tier-low td {
+      opacity: 0.65;
+    }
+
+    .tier-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .tier-badge.high {
+      background: var(--success-light);
+      color: var(--success);
+    }
+
+    .tier-badge.low {
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+    }
+
+    /* ===== Phase 1: Policy Violations ===== */
+
+    .policy-violation-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: var(--danger-light);
+      color: var(--danger);
+    }
+
+    .policy-category {
+      margin-bottom: 24px;
+    }
+
+    .policy-category h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .policy-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .policy-table th {
+      background: var(--bg-tertiary);
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-secondary);
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .policy-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .policy-table tr:hover {
+      background: var(--bg-secondary);
+    }
+
+    .policy-pkg-list {
+      list-style: none;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .policy-pkg-list li {
+      padding: 4px 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }

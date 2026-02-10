@@ -747,6 +747,37 @@ public sealed partial class CraReportGenerator
                 : "";
             sb.AppendLine($"          Remediation Roadmap{roadmapBadge}</a></li>");
         }
+        {
+            // Release Readiness nav — always visible
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('release-readiness')\" data-section=\"release-readiness\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M22 11.08V12a10 10 0 11-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/></svg>");
+            var readinessBadge = _releaseReadiness is not null
+                ? _releaseReadiness.IsReady
+                    ? "<span class=\"nav-badge success\">GO</span>"
+                    : $"<span class=\"nav-badge critical\">{_releaseReadiness.BlockingItems.Count}</span>"
+                : "";
+            sb.AppendLine($"          Release Readiness{readinessBadge}</a></li>");
+        }
+        {
+            // Security Budget nav — always visible
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('security-budget')\" data-section=\"security-budget\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><line x1=\"12\" y1=\"1\" x2=\"12\" y2=\"23\"/><path d=\"M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6\"/></svg>");
+            var budgetBadge = _securityBudget is not null
+                ? $"<span class=\"nav-badge\">{_securityBudget.Items.Count(i => i.Tier == RemediationTier.HighROI)}</span>"
+                : "";
+            sb.AppendLine($"          Security Budget{budgetBadge}</a></li>");
+        }
+        if (HasPolicyData())
+        {
+            // Policy Violations nav — only if policy configured
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('policy-violations')\" data-section=\"policy-violations\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/></svg>");
+            var policyCount = GetPolicyViolationCount();
+            var policyBadge = policyCount > 0
+                ? $"<span class=\"nav-badge critical\">{policyCount}</span>"
+                : "";
+            sb.AppendLine($"          Policy Violations{policyBadge}</a></li>");
+        }
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
@@ -865,6 +896,22 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("<section id=\"remediation-roadmap\" class=\"section\">");
         GenerateRemediationRoadmapSection(sb);
         sb.AppendLine("</section>");
+
+        // Phase 1 Actionable Findings sections
+        sb.AppendLine("<section id=\"release-readiness\" class=\"section\">");
+        GenerateReleaseReadinessSection(sb);
+        sb.AppendLine("</section>");
+
+        sb.AppendLine("<section id=\"security-budget\" class=\"section\">");
+        GenerateSecurityBudgetSection(sb);
+        sb.AppendLine("</section>");
+
+        if (HasPolicyData())
+        {
+            sb.AppendLine("<section id=\"policy-violations\" class=\"section\">");
+            GeneratePolicyViolationsSection(sb);
+            sb.AppendLine("</section>");
+        }
 
         if (_remediationData.Count > 0)
         {
@@ -987,6 +1034,12 @@ public sealed partial class CraReportGenerator
     // Phase 5: Art. 14 Reporting Obligations and Remediation Roadmap (v1.5)
     private List<ReportingObligation> _reportingObligations = [];
     private List<Scoring.RemediationRoadmapItem> _remediationRoadmap = [];
+
+    // Phase 1 Actionable Findings — dashboard sections
+    private SecurityBudgetResult? _securityBudget;
+    private ReleaseReadinessResult? _releaseReadiness;
+    private LicensePolicyResult? _licensePolicyResult;
+    private CraConfig? _policyConfig;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1155,6 +1208,55 @@ public sealed partial class CraReportGenerator
     public void SetRemediationRoadmap(List<RemediationRoadmapItem> roadmap)
     {
         _remediationRoadmap = roadmap;
+    }
+
+    /// <summary>
+    /// Set the security budget optimization result for the dashboard.
+    /// </summary>
+    public void SetSecurityBudget(SecurityBudgetResult budget)
+    {
+        _securityBudget = budget;
+    }
+
+    /// <summary>
+    /// Set the release readiness evaluation result for the dashboard.
+    /// </summary>
+    public void SetReleaseReadiness(ReleaseReadinessResult result)
+    {
+        _releaseReadiness = result;
+    }
+
+    /// <summary>
+    /// Set the license policy evaluation result and config for the dashboard.
+    /// </summary>
+    public void SetPolicyViolations(LicensePolicyResult? licenseResult, CraConfig? config)
+    {
+        _licensePolicyResult = licenseResult;
+        _policyConfig = config;
+    }
+
+    private bool HasPolicyData()
+    {
+        if (_policyConfig is null) return false;
+        return _policyConfig.AllowedLicenses.Count > 0
+            || _policyConfig.BlockedLicenses.Count > 0
+            || _policyConfig.FailOnDeprecatedPackages
+            || _policyConfig.MinHealthScore.HasValue;
+    }
+
+    private int GetPolicyViolationCount()
+    {
+        var count = _licensePolicyResult?.Violations.Count ?? 0;
+        if (_policyConfig is not null)
+        {
+            if (_policyConfig.FailOnDeprecatedPackages)
+                count += _deprecatedPackages.Count;
+            if (_policyConfig.MinHealthScore.HasValue && _healthDataCache is not null)
+            {
+                count += _healthDataCache.Count(p => p.Score < _policyConfig.MinHealthScore.Value);
+            }
+        }
+        return count;
     }
 
     /// <summary>

@@ -2082,6 +2082,20 @@ public static class CraReportCommand
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
+        // Phase 1 actionable findings for HTML dashboard
+        {
+            var budget = SecurityBudgetOptimizer.Optimize(roadmap);
+            reportGenerator.SetSecurityBudget(budget);
+
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, []);
+            reportGenerator.SetReleaseReadiness(readiness);
+
+            LicensePolicyResult? licenseResult = null;
+            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
+                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
+            reportGenerator.SetPolicyViolations(licenseResult, config);
+        }
+
         if (string.IsNullOrEmpty(outputPath))
         {
             var projectName = Path.GetFileNameWithoutExtension(path);
@@ -2900,6 +2914,20 @@ public static class CraReportCommand
         {
             roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
+        }
+
+        // Phase 1 actionable findings for HTML dashboard
+        {
+            var budget = SecurityBudgetOptimizer.Optimize(roadmap);
+            reportGenerator.SetSecurityBudget(budget);
+
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, []);
+            reportGenerator.SetReleaseReadiness(readiness);
+
+            LicensePolicyResult? licenseResult = null;
+            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
+                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
+            reportGenerator.SetPolicyViolations(licenseResult, config);
         }
 
         // Determine output path

@@ -1783,4 +1783,243 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("</div>");
     }
 
+    private void GenerateReleaseReadinessSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Release Readiness</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">\u2139 What is this?</div>");
+        sb.AppendLine("  <p>This section checks whether your software meets the minimum requirements for a safe release under the EU Cyber Resilience Act. Blocking issues must be resolved before release. Advisory items should be addressed but do not prevent release.</p>");
+        sb.AppendLine("</div>");
+
+        if (_releaseReadiness is null)
+        {
+            sb.AppendLine("<div class=\"card empty-state\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2014</div>");
+            sb.AppendLine("  <p>Release readiness data not available.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        if (_releaseReadiness.IsReady)
+        {
+            sb.AppendLine("<div class=\"release-gate-go\">");
+            sb.AppendLine("  <div class=\"gate-icon\">\u2713</div>");
+            sb.AppendLine("  <div class=\"gate-label\">GO</div>");
+            sb.AppendLine("  <div class=\"gate-detail\">All compliance checks passed. No blocking issues found.</div>");
+            sb.AppendLine("</div>");
+        }
+        else
+        {
+            sb.AppendLine("<div class=\"release-gate-nogo\">");
+            sb.AppendLine("  <div class=\"gate-header\">");
+            sb.AppendLine("    <div class=\"gate-icon\">\u2716</div>");
+            sb.AppendLine($"    <div class=\"gate-label\">NO-GO \u2014 {_releaseReadiness.BlockingItems.Count} Blocker{(_releaseReadiness.BlockingItems.Count != 1 ? "s" : "")}</div>");
+            sb.AppendLine("  </div>");
+            sb.AppendLine("  <div class=\"gate-detail\">The following issues must be resolved before this software can be released.</div>");
+            sb.AppendLine("  <table class=\"blocker-table\">");
+            sb.AppendLine("    <thead><tr><th>What</th><th>Why</th><th>What To Do</th></tr></thead>");
+            sb.AppendLine("    <tbody>");
+            foreach (var blocker in _releaseReadiness.BlockingItems)
+            {
+                sb.AppendLine("      <tr>");
+                sb.AppendLine($"        <td><strong>{EscapeHtml(blocker.Requirement)}</strong></td>");
+                sb.AppendLine($"        <td>{EscapeHtml(blocker.Reason)}</td>");
+                sb.AppendLine($"        <td>Resolve this compliance requirement to unblock release.</td>");
+                sb.AppendLine("      </tr>");
+            }
+            sb.AppendLine("    </tbody>");
+            sb.AppendLine("  </table>");
+            sb.AppendLine("</div>");
+        }
+
+        if (_releaseReadiness.AdvisoryItems.Count > 0)
+        {
+            sb.AppendLine("<div class=\"card\">");
+            sb.AppendLine($"  <h3>Advisory Items ({_releaseReadiness.AdvisoryItems.Count})</h3>");
+            sb.AppendLine("  <p style=\"color: var(--text-muted); margin-bottom: 12px;\">These items should be addressed but do not block release.</p>");
+            sb.AppendLine("  <ul class=\"advisory-list\">");
+            foreach (var advisory in _releaseReadiness.AdvisoryItems)
+            {
+                sb.AppendLine($"    <li>{EscapeHtml(advisory)}</li>");
+            }
+            sb.AppendLine("  </ul>");
+            sb.AppendLine("</div>");
+        }
+    }
+
+    private void GenerateSecurityBudgetSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Security Budget</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">\u2139 What is this?</div>");
+        sb.AppendLine("  <p>Not all fixes are equally important. This section ranks remediation items by return on investment (ROI) \u2014 how much security risk each fix removes relative to the effort required. Focus on High-ROI items first to get the most impact from your security budget.</p>");
+        sb.AppendLine("</div>");
+
+        if (_securityBudget is null || _securityBudget.Items.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2713</div>");
+            sb.AppendLine("  <p>No remediation items to prioritize. Your dependencies look good!</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        var highRoi = _securityBudget.Items.Where(i => i.Tier == RemediationTier.HighROI).ToList();
+        var lowRoi = _securityBudget.Items.Where(i => i.Tier == RemediationTier.LowROI).ToList();
+
+        // Summary card
+        sb.AppendLine("<div class=\"budget-summary\">");
+        sb.AppendLine("  <div class=\"budget-text\">");
+        sb.AppendLine($"    <div class=\"budget-headline\">Fix {highRoi.Count} item{(highRoi.Count != 1 ? "s" : "")} to remove {_securityBudget.HighROIPercentage:F0}% of your security risk</div>");
+        sb.AppendLine($"    <div class=\"budget-detail\">Out of {_securityBudget.Items.Count} total items, {highRoi.Count} deliver the highest return on investment.</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"budget-bar-container\">");
+        sb.AppendLine($"    <div class=\"budget-bar-fill\" style=\"width: {_securityBudget.HighROIPercentage:F0}%\">{_securityBudget.HighROIPercentage:F0}%</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // High-ROI table
+        if (highRoi.Count > 0)
+        {
+            sb.AppendLine("<div class=\"card\">");
+            sb.AppendLine("  <h3>High ROI \u2014 Fix These First</h3>");
+            sb.AppendLine("  <table class=\"detail-table\">");
+            sb.AppendLine("    <thead><tr><th>Package</th><th>What To Do</th><th>CVEs Fixed</th><th>Effort</th><th>Risk Removed</th></tr></thead>");
+            sb.AppendLine("    <tbody>");
+            foreach (var item in highRoi)
+            {
+                sb.AppendLine("      <tr class=\"tier-high\">");
+                sb.AppendLine($"        <td><strong>{EscapeHtml(item.Item.PackageId)}</strong></td>");
+                sb.AppendLine($"        <td>Upgrade {EscapeHtml(item.Item.CurrentVersion)} \u2192 {EscapeHtml(item.Item.RecommendedVersion)}</td>");
+                sb.AppendLine($"        <td>{item.Item.CveCount}</td>");
+                sb.AppendLine($"        <td><span class=\"upgrade-effort {item.Item.Effort.ToString().ToLowerInvariant()}\">{item.Item.Effort}</span></td>");
+                sb.AppendLine($"        <td><span class=\"tier-badge high\">{item.CumulativeRiskReductionPercent:F0}%</span></td>");
+                sb.AppendLine("      </tr>");
+            }
+            sb.AppendLine("    </tbody>");
+            sb.AppendLine("  </table>");
+            sb.AppendLine("</div>");
+        }
+
+        // Low-ROI table
+        if (lowRoi.Count > 0)
+        {
+            sb.AppendLine("<div class=\"card\">");
+            sb.AppendLine("  <h3>Lower Priority</h3>");
+            sb.AppendLine("  <table class=\"detail-table\">");
+            sb.AppendLine("    <thead><tr><th>Package</th><th>What To Do</th><th>CVEs Fixed</th><th>Effort</th><th>Risk Removed</th></tr></thead>");
+            sb.AppendLine("    <tbody>");
+            foreach (var item in lowRoi)
+            {
+                sb.AppendLine("      <tr class=\"tier-low\">");
+                sb.AppendLine($"        <td>{EscapeHtml(item.Item.PackageId)}</td>");
+                sb.AppendLine($"        <td>Upgrade {EscapeHtml(item.Item.CurrentVersion)} \u2192 {EscapeHtml(item.Item.RecommendedVersion)}</td>");
+                sb.AppendLine($"        <td>{item.Item.CveCount}</td>");
+                sb.AppendLine($"        <td><span class=\"upgrade-effort {item.Item.Effort.ToString().ToLowerInvariant()}\">{item.Item.Effort}</span></td>");
+                sb.AppendLine($"        <td><span class=\"tier-badge low\">{item.CumulativeRiskReductionPercent:F0}%</span></td>");
+                sb.AppendLine("      </tr>");
+            }
+            sb.AppendLine("    </tbody>");
+            sb.AppendLine("  </table>");
+            sb.AppendLine("</div>");
+        }
+    }
+
+    private void GeneratePolicyViolationsSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Policy Violations</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">\u2139 What is this?</div>");
+        sb.AppendLine("  <p>Your team has configured policy rules in .cra-config.json. This section shows which packages do not meet those rules. These are custom policies \u2014 not CRA legal requirements \u2014 but they represent your organization's standards.</p>");
+        sb.AppendLine("</div>");
+
+        var hasAnyViolation = false;
+
+        // License violations
+        if (_licensePolicyResult is not null && _licensePolicyResult.HasViolations)
+        {
+            hasAnyViolation = true;
+            sb.AppendLine("<div class=\"card policy-category\">");
+            sb.AppendLine($"  <h4>License Policy Violations ({_licensePolicyResult.Violations.Count})</h4>");
+            sb.AppendLine("  <table class=\"policy-table\">");
+            sb.AppendLine("    <thead><tr><th>Package</th><th>License Found</th><th>Rule Violated</th></tr></thead>");
+            sb.AppendLine("    <tbody>");
+            foreach (var v in _licensePolicyResult.Violations)
+            {
+                sb.AppendLine("      <tr>");
+                sb.AppendLine($"        <td><strong>{EscapeHtml(v.PackageId)}</strong></td>");
+                sb.AppendLine($"        <td>{EscapeHtml(v.License)}</td>");
+                sb.AppendLine($"        <td>{EscapeHtml(v.Reason)}</td>");
+                sb.AppendLine("      </tr>");
+            }
+            sb.AppendLine("    </tbody>");
+            sb.AppendLine("  </table>");
+            sb.AppendLine("</div>");
+        }
+
+        // Deprecated packages
+        if (_policyConfig is not null && _policyConfig.FailOnDeprecatedPackages && _deprecatedPackages.Count > 0)
+        {
+            hasAnyViolation = true;
+            sb.AppendLine("<div class=\"card policy-category\">");
+            sb.AppendLine($"  <h4>Deprecated Packages ({_deprecatedPackages.Count})</h4>");
+            sb.AppendLine("  <p style=\"color: var(--text-muted); margin-bottom: 12px;\">These packages are deprecated. Replace them with maintained alternatives.</p>");
+            sb.AppendLine("  <ul class=\"policy-pkg-list\">");
+            foreach (var pkg in _deprecatedPackages)
+            {
+                sb.AppendLine($"    <li>{EscapeHtml(pkg)}</li>");
+            }
+            sb.AppendLine("  </ul>");
+            sb.AppendLine("</div>");
+        }
+
+        // Min health score violations
+        if (_policyConfig is not null && _policyConfig.MinHealthScore.HasValue && _healthDataCache is not null)
+        {
+            var belowThreshold = _healthDataCache
+                .Where(p => p.Score < _policyConfig.MinHealthScore.Value)
+                .OrderBy(p => p.Score)
+                .ToList();
+
+            if (belowThreshold.Count > 0)
+            {
+                hasAnyViolation = true;
+                sb.AppendLine("<div class=\"card policy-category\">");
+                sb.AppendLine($"  <h4>Below Minimum Health Score ({belowThreshold.Count})</h4>");
+                sb.AppendLine($"  <p style=\"color: var(--text-muted); margin-bottom: 12px;\">Packages below the configured minimum health score of {_policyConfig.MinHealthScore.Value}.</p>");
+                sb.AppendLine("  <table class=\"policy-table\">");
+                sb.AppendLine("    <thead><tr><th>Package</th><th>Score</th><th>Threshold</th></tr></thead>");
+                sb.AppendLine("    <tbody>");
+                foreach (var pkg in belowThreshold)
+                {
+                    sb.AppendLine("      <tr>");
+                    sb.AppendLine($"        <td><strong>{EscapeHtml(pkg.PackageId)}</strong></td>");
+                    sb.AppendLine($"        <td><span class=\"{GetScoreClass(pkg.Score)}\">{pkg.Score}</span></td>");
+                    sb.AppendLine($"        <td>{_policyConfig.MinHealthScore.Value}</td>");
+                    sb.AppendLine("      </tr>");
+                }
+                sb.AppendLine("    </tbody>");
+                sb.AppendLine("  </table>");
+                sb.AppendLine("</div>");
+            }
+        }
+
+        if (!hasAnyViolation)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2713</div>");
+            sb.AppendLine("  <p>No policy violations found. All packages meet your configured rules.</p>");
+            sb.AppendLine("</div>");
+        }
+    }
+
 }

@@ -1,5 +1,6 @@
 using DepSafe.Compliance;
 using DepSafe.Models;
+using DepSafe.Scoring;
 
 namespace DepSafe.Tests;
 
@@ -351,6 +352,192 @@ public class CraReportGeneratorTests
         Assert.Equal(CraComplianceStatus.NonCompliant, result);
     }
 
+    // --- Dashboard Sections: Release Readiness ---
+
+    [Fact]
+    public void GenerateHtml_ReleaseReadinessGo_RendersGreenCard()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        var readiness = new ReleaseReadinessResult
+        {
+            BlockingItems = [],
+            AdvisoryItems = [],
+        };
+        gen.SetReleaseReadiness(readiness);
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("release-gate-go", html);
+        Assert.Contains("GO", html);
+        Assert.Contains("All compliance checks passed", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_ReleaseReadinessNoGo_RendersBlockers()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        var readiness = new ReleaseReadinessResult
+        {
+            BlockingItems =
+            [
+                new ReleaseBlocker { Requirement = "KEV Vulnerabilities", Reason = "Known exploited vulnerability found" },
+            ],
+            AdvisoryItems = ["Review SBOM completeness"],
+        };
+        gen.SetReleaseReadiness(readiness);
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("release-gate-nogo", html);
+        Assert.Contains("NO-GO", html);
+        Assert.Contains("KEV Vulnerabilities", html);
+        Assert.Contains("Known exploited vulnerability found", html);
+        Assert.Contains("advisory-list", html);
+        Assert.Contains("Review SBOM completeness", html);
+    }
+
+    // --- Dashboard Sections: Security Budget ---
+
+    [Fact]
+    public void GenerateHtml_SecurityBudgetWithItems_RendersTieredTables()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        var budget = new SecurityBudgetResult
+        {
+            Items =
+            [
+                new TieredRemediationItem
+                {
+                    Item = new RemediationRoadmapItem
+                    {
+                        PackageId = "Foo.Bar",
+                        CurrentVersion = "1.0.0",
+                        RecommendedVersion = "1.0.1",
+                        CveCount = 2,
+                        CveIds = ["CVE-2024-001", "CVE-2024-002"],
+                        ScoreLift = 5,
+                        Effort = UpgradeEffort.Patch,
+                        PriorityScore = 100,
+                    },
+                    Tier = RemediationTier.HighROI,
+                    RoiScore = 50.0,
+                    CumulativeRiskReductionPercent = 80.0,
+                },
+                new TieredRemediationItem
+                {
+                    Item = new RemediationRoadmapItem
+                    {
+                        PackageId = "Baz.Qux",
+                        CurrentVersion = "2.0.0",
+                        RecommendedVersion = "3.0.0",
+                        CveCount = 1,
+                        CveIds = ["CVE-2024-003"],
+                        ScoreLift = 1,
+                        Effort = UpgradeEffort.Major,
+                        PriorityScore = 10,
+                    },
+                    Tier = RemediationTier.LowROI,
+                    RoiScore = 5.0,
+                    CumulativeRiskReductionPercent = 100.0,
+                },
+            ],
+            TotalRiskScore = 110,
+            HighROIRiskReduction = 100,
+            HighROIPercentage = 80.0,
+        };
+        gen.SetSecurityBudget(budget);
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("budget-summary", html);
+        Assert.Contains("Fix 1 item", html);
+        Assert.Contains("80%", html);
+        Assert.Contains("tier-high", html);
+        Assert.Contains("Foo.Bar", html);
+        Assert.Contains("tier-low", html);
+        Assert.Contains("Baz.Qux", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_SecurityBudgetEmpty_RendersEmptyState()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        var budget = new SecurityBudgetResult
+        {
+            Items = [],
+            TotalRiskScore = 0,
+            HighROIRiskReduction = 0,
+            HighROIPercentage = 0,
+        };
+        gen.SetSecurityBudget(budget);
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("id=\"security-budget\"", html);
+        Assert.Contains("No remediation items to prioritize", html);
+    }
+
+    // --- Dashboard Sections: Policy Violations ---
+
+    [Fact]
+    public void GenerateHtml_PolicyViolations_RendersLicenseTable()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        var licenseResult = new LicensePolicyResult
+        {
+            Violations =
+            [
+                new LicensePolicyViolation { PackageId = "Evil.Pkg", License = "GPL-3.0", Reason = "Not in allowed list" },
+            ],
+        };
+        var config = new CraConfig
+        {
+            AllowedLicenses = ["MIT", "Apache-2.0"],
+        };
+        gen.SetPolicyViolations(licenseResult, config);
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("id=\"policy-violations\"", html);
+        Assert.Contains("Evil.Pkg", html);
+        Assert.Contains("GPL-3.0", html);
+        Assert.Contains("Not in allowed list", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_NoPolicyConfigured_HidesPolicySection()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        // No SetPolicyViolations called
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.DoesNotContain("id=\"policy-violations\"", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_PolicyConfiguredNoViolations_RendersEmptySuccess()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        var config = new CraConfig
+        {
+            AllowedLicenses = ["MIT"],
+        };
+        gen.SetPolicyViolations(null, config);
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("id=\"policy-violations\"", html);
+        Assert.Contains("No policy violations found", html);
+    }
+
     // --- Helper ---
 
     private static CraComplianceItem MakeItem(string requirement, CraComplianceStatus status) => new()
@@ -359,5 +546,44 @@ public class CraReportGeneratorTests
         Description = "Test description",
         Status = status,
         Evidence = "Test evidence",
+    };
+
+    private static CraReportGenerator CreateGenerator() => new();
+
+    private static CraReport CreateMinimalReport() => new()
+    {
+        GeneratedAt = DateTime.UtcNow,
+        ProjectPath = "TestProject.csproj",
+        HealthScore = 80,
+        HealthStatus = HealthStatus.Healthy,
+        ComplianceItems =
+        [
+            MakeItem("CRA Art. 10 - Software Bill of Materials", CraComplianceStatus.Compliant),
+        ],
+        OverallComplianceStatus = CraComplianceStatus.Compliant,
+        Sbom = new SbomDocument
+        {
+            SpdxId = "SPDXRef-DOCUMENT",
+            Name = "TestProject",
+            DocumentNamespace = "https://example.com/test",
+            CreationInfo = new SbomCreationInfo
+            {
+                Created = DateTime.UtcNow.ToString("O"),
+                Creators = ["Tool: DepSafe"],
+            },
+            Packages = [new SbomPackage { SpdxId = "SPDXRef-RootPackage", Name = "TestProject", VersionInfo = "1.0.0", DownloadLocation = "NOASSERTION" }],
+            Relationships = [],
+        },
+        Vex = new VexDocument
+        {
+            Id = "https://example.com/vex",
+            Author = "Test",
+            Timestamp = DateTime.UtcNow.ToString("O"),
+            Statements = [],
+        },
+        PackageCount = 1,
+        TransitivePackageCount = 0,
+        VulnerabilityCount = 0,
+        CriticalPackageCount = 0,
     };
 }
