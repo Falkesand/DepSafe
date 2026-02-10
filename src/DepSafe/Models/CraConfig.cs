@@ -47,6 +47,31 @@ public sealed class CraConfig
     public string? SecurityContact { get; set; }
 
     /// <summary>
+    /// License SPDX identifiers that are explicitly allowed.
+    /// When set, any package with a license not in this list triggers a policy violation.
+    /// Takes precedence over BlockedLicenses when both are configured.
+    /// </summary>
+    public List<string> AllowedLicenses { get; set; } = [];
+
+    /// <summary>
+    /// License SPDX identifiers that are explicitly blocked.
+    /// Ignored when AllowedLicenses is configured.
+    /// </summary>
+    public List<string> BlockedLicenses { get; set; } = [];
+
+    /// <summary>
+    /// Fail the report if any deprecated packages are detected.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public bool FailOnDeprecatedPackages { get; set; }
+
+    /// <summary>
+    /// Minimum acceptable health score for any individual package (0-100).
+    /// Returns exit code 2 if any package scores below this threshold.
+    /// </summary>
+    public int? MinHealthScore { get; set; }
+
+    /// <summary>
     /// Fail the report if any CISA KEV vulnerability is present.
     /// Returns exit code 2 for CI/CD build gates.
     /// </summary>

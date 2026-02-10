@@ -10,4 +10,6 @@ public sealed record CraReportOptions(
     SbomFormat? Sbom,
     bool CheckTyposquat,
     bool Sign,
-    string? SignKey);
+    string? SignKey,
+    bool ReleaseGate,
+    bool EvidencePack);

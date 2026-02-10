@@ -163,6 +163,8 @@ depsafe cra-report [<path>] [options]
 | `--check-typosquat` | Run typosquatting detection on all dependencies | `false` |
 | `--sign` | Sign all generated artifacts with sigil | `false` |
 | `--sign-key <path>` | Path to signing key (uses sigil default if omitted) | - |
+| `--release-gate` | Evaluate release readiness (blocking/advisory classification) | `false` |
+| `--evidence-pack` | Bundle all artifacts into timestamped evidence directory with manifest | `false` |
 
 **Exit Codes:**
 
@@ -194,6 +196,12 @@ depsafe cra-report --sbom spdx --sign
 
 # Sign with a specific key
 depsafe cra-report --sign --sign-key ./keys/signing.pem
+
+# Release gate with blocking/advisory classification
+depsafe cra-report --release-gate
+
+# Generate evidence pack with all compliance artifacts
+depsafe cra-report --evidence-pack --sbom spdx --licenses txt
 ```
 
 ---
@@ -485,6 +493,10 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
   },
   "supportPeriodEnd": "2028-12",
   "securityContact": "security@example.com",
+  "allowedLicenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
+  "blockedLicenses": ["GPL-3.0-only"],
+  "failOnDeprecatedPackages": true,
+  "minHealthScore": 50,
   "failOnKev": true,
   "failOnEpssThreshold": 0.5,
   "failOnVulnerabilityCount": 0,
@@ -506,6 +518,10 @@ Create a `.cra-config.json` file in your project root to customize CRA analysis:
 | `complianceNotes` | Add notes/justifications for compliance decisions |
 | `supportPeriodEnd` | Declared end of support period, e.g. `"2028-12"` (CRA Annex II) |
 | `securityContact` | Security contact email or URL (CRA Annex II) |
+| `allowedLicenses` | Allow only these SPDX licenses (packages with other licenses fail CI) |
+| `blockedLicenses` | Block specific SPDX licenses (packages with these licenses fail CI) |
+| `failOnDeprecatedPackages` | Fail with exit code 2 if any deprecated package is detected |
+| `minHealthScore` | Fail if any package health score is below this value (0-100) |
 | `failOnKev` | Fail with exit code 2 if any CISA KEV vulnerability is present |
 | `failOnEpssThreshold` | Fail if any EPSS probability exceeds this value (0.0-1.0) |
 | `failOnVulnerabilityCount` | Fail if active vulnerability count exceeds this number |

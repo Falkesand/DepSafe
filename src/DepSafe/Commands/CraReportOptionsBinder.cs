@@ -15,6 +15,8 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
     private readonly Option<bool> _checkTyposquat;
     private readonly Option<bool> _sign;
     private readonly Option<string?> _signKey;
+    private readonly Option<bool> _releaseGate;
+    private readonly Option<bool> _evidencePack;
 
     public CraReportOptionsBinder(
         Argument<string?> path,
@@ -26,7 +28,9 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         Option<SbomFormat?> sbom,
         Option<bool> checkTyposquat,
         Option<bool> sign,
-        Option<string?> signKey)
+        Option<string?> signKey,
+        Option<bool> releaseGate,
+        Option<bool> evidencePack)
     {
         _path = path;
         _format = format;
@@ -38,6 +42,8 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         _checkTyposquat = checkTyposquat;
         _sign = sign;
         _signKey = signKey;
+        _releaseGate = releaseGate;
+        _evidencePack = evidencePack;
     }
 
     public CraReportOptions Bind(BindingContext bindingContext) => GetBoundValue(bindingContext);
@@ -52,5 +58,7 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         bindingContext.ParseResult.GetValueForOption(_sbom),
         bindingContext.ParseResult.GetValueForOption(_checkTyposquat),
         bindingContext.ParseResult.GetValueForOption(_sign),
-        bindingContext.ParseResult.GetValueForOption(_signKey));
+        bindingContext.ParseResult.GetValueForOption(_signKey),
+        bindingContext.ParseResult.GetValueForOption(_releaseGate),
+        bindingContext.ParseResult.GetValueForOption(_evidencePack));
 }

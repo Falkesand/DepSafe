@@ -58,6 +58,14 @@ public static class CraReportCommand
             ["--sign-key"],
             "Path to the signing key for sigil (uses default if not specified)");
 
+        var releaseGateOption = new Option<bool>(
+            ["--release-gate"],
+            "Evaluate release readiness with blocking/advisory classification");
+
+        var evidencePackOption = new Option<bool>(
+            ["--evidence-pack"],
+            "Bundle all compliance artifacts into a timestamped evidence directory with manifest");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -69,10 +77,12 @@ public static class CraReportCommand
             sbomOption,
             checkTyposquatOption,
             signOption,
-            signKeyOption
+            signKeyOption,
+            releaseGateOption,
+            evidencePackOption
         };
 
-        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption);
         command.SetHandler(async context =>
         {
             var options = binder.Bind(context.BindingContext);
@@ -149,6 +159,8 @@ public static class CraReportCommand
         var checkTyposquat = options.CheckTyposquat;
         var sign = options.Sign;
         var signKey = options.SignKey;
+        var releaseGate = options.ReleaseGate;
+        var evidencePack = options.EvidencePack;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -202,9 +214,9 @@ public static class CraReportCommand
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, ct),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, ct),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, ct),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
             _ => 0
         };
 
@@ -229,7 +241,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, CancellationToken ct = default)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -469,6 +481,8 @@ public static class CraReportCommand
             config,
             sign,
             signKey,
+            releaseGate,
+            evidencePack,
             ct);
     }
 
@@ -960,7 +974,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, CancellationToken ct = default)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1298,10 +1312,12 @@ public static class CraReportCommand
             config,
             sign,
             signKey,
+            releaseGate,
+            evidencePack,
             ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, CancellationToken ct = default)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1748,6 +1764,8 @@ public static class CraReportCommand
             config,
             sign,
             signKey,
+            releaseGate,
+            evidencePack,
             ct);
     }
 
@@ -1772,6 +1790,8 @@ public static class CraReportCommand
         CraConfig? config = null,
         bool sign = false,
         string? signKey = null,
+        bool releaseGate = false,
+        bool evidencePack = false,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2056,9 +2076,24 @@ public static class CraReportCommand
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
         // Remediation Roadmap (needs CRA score from report for prioritization)
+        List<RemediationRoadmapItem> roadmap;
         {
-            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
+        }
+
+        // Phase 1 actionable findings for HTML dashboard
+        {
+            var budget = SecurityBudgetOptimizer.Optimize(roadmap);
+            reportGenerator.SetSecurityBudget(budget);
+
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, []);
+            reportGenerator.SetReleaseReadiness(readiness);
+
+            LicensePolicyResult? licenseResult = null;
+            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
+                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
+            reportGenerator.SetPolicyViolations(licenseResult, config);
         }
 
         if (string.IsNullOrEmpty(outputPath))
@@ -2091,6 +2126,12 @@ public static class CraReportCommand
 
         // Sign artifacts if requested
         await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
+
+        // Generate evidence pack if requested
+        if (evidencePack)
+        {
+            await GenerateEvidencePackAsync(path, packages, transitivePackages, reportGenerator, craReport, licenseFilePath, ct);
+        }
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -2141,9 +2182,17 @@ public static class CraReportCommand
         AnsiConsole.Write(complianceTable);
 
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
+
+        DisplaySecurityBudgetSummary(roadmap);
+
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        return EvaluateExitCode(craReport, config);
+        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages);
+
+        if (releaseGate)
+            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode);
+
+        return exitCode;
     }
 
     private static DependencyTree BuildDotNetDependencyTree(
@@ -2576,6 +2625,8 @@ public static class CraReportCommand
         CraConfig? config = null,
         bool sign = false,
         string? signKey = null,
+        bool releaseGate = false,
+        bool evidencePack = false,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2859,9 +2910,24 @@ public static class CraReportCommand
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
         // Remediation Roadmap (needs CRA score from report for prioritization)
+        List<RemediationRoadmapItem> roadmap;
         {
-            var roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
+        }
+
+        // Phase 1 actionable findings for HTML dashboard
+        {
+            var budget = SecurityBudgetOptimizer.Optimize(roadmap);
+            reportGenerator.SetSecurityBudget(budget);
+
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, []);
+            reportGenerator.SetReleaseReadiness(readiness);
+
+            LicensePolicyResult? licenseResult = null;
+            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
+                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
+            reportGenerator.SetPolicyViolations(licenseResult, config);
         }
 
         // Determine output path
@@ -2901,6 +2967,12 @@ public static class CraReportCommand
 
         // Sign artifacts if requested
         await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
+
+        // Generate evidence pack if requested
+        if (evidencePack)
+        {
+            await GenerateEvidencePackAsync(path, packages, transitivePackages, reportGenerator, craReport, licenseFilePath, ct);
+        }
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -2950,22 +3022,33 @@ public static class CraReportCommand
         AnsiConsole.Write(complianceTable);
 
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
+
+        DisplaySecurityBudgetSummary(roadmap);
+
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        return EvaluateExitCode(craReport, config);
+        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages);
+
+        if (releaseGate)
+            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode);
+
+        return exitCode;
     }
 
     /// <summary>
     /// Evaluate CI/CD exit code based on report data and config thresholds.
-    /// Returns 0 (pass), 1 (non-compliant), or 2 (policy violation from config).
+    /// Returns exit code (0=pass, 1=non-compliant, 2=policy violation) and the list of violations.
     /// </summary>
-    private static int EvaluateExitCode(CraReport report, CraConfig? config)
+    private static (int ExitCode, List<string> Violations) EvaluateExitCode(
+        CraReport report,
+        CraConfig? config,
+        IReadOnlyList<PackageHealth>? packages = null)
     {
+        var violations = new List<string>();
+
         // Check config-driven thresholds (exit code 2 = policy violation)
         if (config is not null)
         {
-            var violations = new List<string>();
-
             if (config.FailOnKev)
             {
                 var kevItem = report.ComplianceItems.FirstOrDefault(i =>
@@ -3006,16 +3089,110 @@ public static class CraReportCommand
                 && report.MaxDependencyDepth.Value > config.FailOnAttackSurfaceDepthOver.Value)
                 violations.Add($"Dependency tree depth {report.MaxDependencyDepth.Value} exceeds threshold {config.FailOnAttackSurfaceDepthOver.Value}");
 
-            if (violations.Count > 0)
+            // License policy checks
+            if (packages is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
             {
-                AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
-                foreach (var v in violations)
-                    AnsiConsole.MarkupLine($"  [red]• {v}[/]");
-                return 2;
+                var licenseResult = LicensePolicyEvaluator.Evaluate(packages, config);
+                foreach (var v in licenseResult.Violations)
+                    violations.Add($"License policy: {v.PackageId} — {v.Reason}");
             }
+
+            // Deprecated packages gate
+            if (config.FailOnDeprecatedPackages && report.DeprecatedPackages.Count > 0)
+                violations.Add($"Deprecated packages detected: {string.Join(", ", report.DeprecatedPackages)}");
+
+            // Minimum health score gate
+            if (config.MinHealthScore.HasValue && report.MinPackageHealthScore.HasValue
+                && report.MinPackageHealthScore.Value < config.MinHealthScore.Value)
+                violations.Add($"Package '{report.MinHealthScorePackage}' health score {report.MinPackageHealthScore.Value} below minimum {config.MinHealthScore.Value}");
         }
 
-        return report.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
+        if (violations.Count > 0)
+        {
+            AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
+            foreach (var v in violations)
+                AnsiConsole.MarkupLine($"  [red]\u2022 {v}[/]");
+            return (2, violations);
+        }
+
+        var exitCode = report.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
+        return (exitCode, violations);
+    }
+
+    private static int DisplayReleaseReadiness(CraReport report, List<string> violations, int currentExitCode)
+    {
+        var readiness = ReleaseReadinessEvaluator.Evaluate(report, violations);
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Rule("[bold]Release Readiness Gate[/]").LeftJustified());
+
+        if (readiness.IsReady)
+        {
+            AnsiConsole.MarkupLine("[green bold]GO[/] \u2014 No blocking issues found");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[red bold]NO-GO[/] \u2014 Blocking issues must be resolved before release");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[red bold]Blockers:[/]");
+            foreach (var blocker in readiness.BlockingItems)
+                AnsiConsole.MarkupLine($"  [red]\u2022 {Markup.Escape(blocker.Requirement)}:[/] {Markup.Escape(blocker.Reason)}");
+        }
+
+        if (readiness.AdvisoryItems.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[yellow bold]Advisory:[/]");
+            foreach (var advisory in readiness.AdvisoryItems)
+                AnsiConsole.MarkupLine($"  [yellow]\u2022 {Markup.Escape(advisory)}[/]");
+        }
+
+        // Override exit code to 2 if there are blocking issues
+        return readiness.IsReady ? currentExitCode : Math.Max(currentExitCode, 2);
+    }
+
+    private static void DisplaySecurityBudgetSummary(List<RemediationRoadmapItem> roadmap)
+    {
+        if (roadmap.Count == 0)
+            return;
+
+        var budget = SecurityBudgetOptimizer.Optimize(roadmap);
+        var highRoiItems = budget.Items.Where(i => i.Tier == RemediationTier.HighROI).ToList();
+
+        if (highRoiItems.Count == 0)
+            return;
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Rule("[bold]Security Budget Optimizer[/]").LeftJustified());
+        AnsiConsole.MarkupLine($"[bold]Fix {highRoiItems.Count} item(s) to reduce [green]{budget.HighROIPercentage:F0}%[/] of risk[/]");
+
+        var table = new Table()
+            .Border(TableBorder.Simple)
+            .AddColumn("Package")
+            .AddColumn("Effort")
+            .AddColumn("ROI Score")
+            .AddColumn("Cumulative");
+
+        foreach (var item in highRoiItems)
+        {
+            var effortColor = item.Item.Effort switch
+            {
+                UpgradeEffort.Patch => "green",
+                UpgradeEffort.Minor => "yellow",
+                _ => "red"
+            };
+            table.AddRow(
+                item.Item.PackageId,
+                $"[{effortColor}]{item.Item.Effort}[/]",
+                $"{item.RoiScore:F0}",
+                $"{item.CumulativeRiskReductionPercent:F0}%");
+        }
+
+        AnsiConsole.Write(table);
+
+        var lowRoiCount = budget.Items.Count - highRoiItems.Count;
+        if (lowRoiCount > 0)
+            AnsiConsole.MarkupLine($"[dim]+{lowRoiCount} lower-ROI item(s) reducing remaining {100 - budget.HighROIPercentage:F0}% of risk[/]");
     }
 
     private static async Task<string> GenerateLicenseAttributionAsync(
@@ -3259,5 +3436,63 @@ public static class CraReportCommand
 
         foreach (var artifact in artifactPaths)
             await SigningHelper.TrySignArtifactAsync(sigilService, artifact, signKey, ct);
+    }
+
+    private static async Task GenerateEvidencePackAsync(
+        string path,
+        List<PackageHealth> packages,
+        List<PackageHealth> transitivePackages,
+        CraReportGenerator reportGenerator,
+        CraReport craReport,
+        string? licenseFilePath,
+        CancellationToken ct)
+    {
+        var projectName = Path.GetFileNameWithoutExtension(path) ?? "project";
+        var baseOutputDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+
+        var reportHtml = reportGenerator.GenerateHtml(craReport, licenseFilePath);
+        var reportJson = reportGenerator.GenerateJson(craReport);
+
+        string? sbomJson = null;
+        if (craReport.Sbom is not null)
+        {
+            sbomJson = JsonSerializer.Serialize(craReport.Sbom, JsonDefaults.IndentedIgnoreNull);
+        }
+
+        string? vexJson = null;
+        if (craReport.Vex is not null)
+        {
+            vexJson = JsonSerializer.Serialize(craReport.Vex, JsonDefaults.IndentedIgnoreNull);
+        }
+
+        string? licenseAttribution = null;
+        if (licenseFilePath is not null && File.Exists(licenseFilePath))
+        {
+            licenseAttribution = await File.ReadAllTextAsync(licenseFilePath, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            // Generate license attribution text even if not explicitly requested
+            var allPackages = packages.Concat(transitivePackages)
+                .DistinctBy(p => p.PackageId)
+                .OrderBy(p => p.PackageId)
+                .ToList();
+            var (_, content) = GenerateTxtAttribution(allPackages);
+            licenseAttribution = content;
+        }
+
+        var (outputDir, manifest) = await EvidencePackWriter.WriteAsync(
+            projectPath: path,
+            projectName: projectName,
+            baseOutputDir: baseOutputDir,
+            reportHtml: reportHtml,
+            reportJson: reportJson,
+            sbomJson: sbomJson,
+            vexJson: vexJson,
+            licenseAttribution: licenseAttribution,
+            ct: ct).ConfigureAwait(false);
+
+        AnsiConsole.MarkupLine($"\n[green]Evidence pack written to {Markup.Escape(outputDir)}[/]");
+        AnsiConsole.MarkupLine($"[dim]  {manifest.Artifacts.Count} artifact(s) with SHA-256 checksums in manifest.json[/]");
     }
 }
