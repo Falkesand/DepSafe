@@ -62,6 +62,10 @@ public static class CraReportCommand
             ["--release-gate"],
             "Evaluate release readiness with blocking/advisory classification");
 
+        var evidencePackOption = new Option<bool>(
+            ["--evidence-pack"],
+            "Bundle all compliance artifacts into a timestamped evidence directory with manifest");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -74,10 +78,11 @@ public static class CraReportCommand
             checkTyposquatOption,
             signOption,
             signKeyOption,
-            releaseGateOption
+            releaseGateOption,
+            evidencePackOption
         };
 
-        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption);
         command.SetHandler(async context =>
         {
             var options = binder.Bind(context.BindingContext);
@@ -155,6 +160,7 @@ public static class CraReportCommand
         var sign = options.Sign;
         var signKey = options.SignKey;
         var releaseGate = options.ReleaseGate;
+        var evidencePack = options.EvidencePack;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -208,9 +214,9 @@ public static class CraReportCommand
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, ct),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, ct),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, ct),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
             _ => 0
         };
 
@@ -235,7 +241,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -476,6 +482,7 @@ public static class CraReportCommand
             sign,
             signKey,
             releaseGate,
+            evidencePack,
             ct);
     }
 
@@ -967,7 +974,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1306,10 +1313,11 @@ public static class CraReportCommand
             sign,
             signKey,
             releaseGate,
+            evidencePack,
             ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1757,6 +1765,7 @@ public static class CraReportCommand
             sign,
             signKey,
             releaseGate,
+            evidencePack,
             ct);
     }
 
@@ -1782,6 +1791,7 @@ public static class CraReportCommand
         bool sign = false,
         string? signKey = null,
         bool releaseGate = false,
+        bool evidencePack = false,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2102,6 +2112,12 @@ public static class CraReportCommand
 
         // Sign artifacts if requested
         await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
+
+        // Generate evidence pack if requested
+        if (evidencePack)
+        {
+            await GenerateEvidencePackAsync(path, packages, transitivePackages, reportGenerator, craReport, licenseFilePath, ct);
+        }
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -2596,6 +2612,7 @@ public static class CraReportCommand
         bool sign = false,
         string? signKey = null,
         bool releaseGate = false,
+        bool evidencePack = false,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2922,6 +2939,12 @@ public static class CraReportCommand
 
         // Sign artifacts if requested
         await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
+
+        // Generate evidence pack if requested
+        if (evidencePack)
+        {
+            await GenerateEvidencePackAsync(path, packages, transitivePackages, reportGenerator, craReport, licenseFilePath, ct);
+        }
 
         // Display summary
         AnsiConsole.WriteLine();
@@ -3385,5 +3408,63 @@ public static class CraReportCommand
 
         foreach (var artifact in artifactPaths)
             await SigningHelper.TrySignArtifactAsync(sigilService, artifact, signKey, ct);
+    }
+
+    private static async Task GenerateEvidencePackAsync(
+        string path,
+        List<PackageHealth> packages,
+        List<PackageHealth> transitivePackages,
+        CraReportGenerator reportGenerator,
+        CraReport craReport,
+        string? licenseFilePath,
+        CancellationToken ct)
+    {
+        var projectName = Path.GetFileNameWithoutExtension(path) ?? "project";
+        var baseOutputDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+
+        var reportHtml = reportGenerator.GenerateHtml(craReport, licenseFilePath);
+        var reportJson = reportGenerator.GenerateJson(craReport);
+
+        string? sbomJson = null;
+        if (craReport.Sbom is not null)
+        {
+            sbomJson = JsonSerializer.Serialize(craReport.Sbom, JsonDefaults.IndentedIgnoreNull);
+        }
+
+        string? vexJson = null;
+        if (craReport.Vex is not null)
+        {
+            vexJson = JsonSerializer.Serialize(craReport.Vex, JsonDefaults.IndentedIgnoreNull);
+        }
+
+        string? licenseAttribution = null;
+        if (licenseFilePath is not null && File.Exists(licenseFilePath))
+        {
+            licenseAttribution = await File.ReadAllTextAsync(licenseFilePath, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            // Generate license attribution text even if not explicitly requested
+            var allPackages = packages.Concat(transitivePackages)
+                .DistinctBy(p => p.PackageId)
+                .OrderBy(p => p.PackageId)
+                .ToList();
+            var (_, content) = GenerateTxtAttribution(allPackages);
+            licenseAttribution = content;
+        }
+
+        var (outputDir, manifest) = await EvidencePackWriter.WriteAsync(
+            projectPath: path,
+            projectName: projectName,
+            baseOutputDir: baseOutputDir,
+            reportHtml: reportHtml,
+            reportJson: reportJson,
+            sbomJson: sbomJson,
+            vexJson: vexJson,
+            licenseAttribution: licenseAttribution,
+            ct: ct).ConfigureAwait(false);
+
+        AnsiConsole.MarkupLine($"\n[green]Evidence pack written to {Markup.Escape(outputDir)}[/]");
+        AnsiConsole.MarkupLine($"[dim]  {manifest.Artifacts.Count} artifact(s) with SHA-256 checksums in manifest.json[/]");
     }
 }
