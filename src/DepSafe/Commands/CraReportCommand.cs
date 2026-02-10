@@ -2143,7 +2143,8 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        return EvaluateExitCode(craReport, config);
+        var (exitCode, _) = EvaluateExitCode(craReport, config, allPackages);
+        return exitCode;
     }
 
     private static DependencyTree BuildDotNetDependencyTree(
@@ -2952,20 +2953,24 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        return EvaluateExitCode(craReport, config);
+        var (exitCode, _) = EvaluateExitCode(craReport, config, allPackages);
+        return exitCode;
     }
 
     /// <summary>
     /// Evaluate CI/CD exit code based on report data and config thresholds.
-    /// Returns 0 (pass), 1 (non-compliant), or 2 (policy violation from config).
+    /// Returns exit code (0=pass, 1=non-compliant, 2=policy violation) and the list of violations.
     /// </summary>
-    private static int EvaluateExitCode(CraReport report, CraConfig? config)
+    private static (int ExitCode, List<string> Violations) EvaluateExitCode(
+        CraReport report,
+        CraConfig? config,
+        IReadOnlyList<PackageHealth>? packages = null)
     {
+        var violations = new List<string>();
+
         // Check config-driven thresholds (exit code 2 = policy violation)
         if (config is not null)
         {
-            var violations = new List<string>();
-
             if (config.FailOnKev)
             {
                 var kevItem = report.ComplianceItems.FirstOrDefault(i =>
@@ -3006,16 +3011,34 @@ public static class CraReportCommand
                 && report.MaxDependencyDepth.Value > config.FailOnAttackSurfaceDepthOver.Value)
                 violations.Add($"Dependency tree depth {report.MaxDependencyDepth.Value} exceeds threshold {config.FailOnAttackSurfaceDepthOver.Value}");
 
-            if (violations.Count > 0)
+            // License policy checks
+            if (packages is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
             {
-                AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
-                foreach (var v in violations)
-                    AnsiConsole.MarkupLine($"  [red]• {v}[/]");
-                return 2;
+                var licenseResult = LicensePolicyEvaluator.Evaluate(packages, config);
+                foreach (var v in licenseResult.Violations)
+                    violations.Add($"License policy: {v.PackageId} — {v.Reason}");
             }
+
+            // Deprecated packages gate
+            if (config.FailOnDeprecatedPackages && report.DeprecatedPackages.Count > 0)
+                violations.Add($"Deprecated packages detected: {string.Join(", ", report.DeprecatedPackages)}");
+
+            // Minimum health score gate
+            if (config.MinHealthScore.HasValue && report.MinPackageHealthScore.HasValue
+                && report.MinPackageHealthScore.Value < config.MinHealthScore.Value)
+                violations.Add($"Package '{report.MinHealthScorePackage}' health score {report.MinPackageHealthScore.Value} below minimum {config.MinHealthScore.Value}");
         }
 
-        return report.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
+        if (violations.Count > 0)
+        {
+            AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
+            foreach (var v in violations)
+                AnsiConsole.MarkupLine($"  [red]\u2022 {v}[/]");
+            return (2, violations);
+        }
+
+        var exitCode = report.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
+        return (exitCode, violations);
     }
 
     private static async Task<string> GenerateLicenseAttributionAsync(

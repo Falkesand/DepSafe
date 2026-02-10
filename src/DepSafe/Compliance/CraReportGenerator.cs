@@ -513,6 +513,7 @@ public sealed partial class CraReportGenerator
         var sbomCompleteness = _sbomValidation?.CompletenessPercent;
         var maxDepth = _dependencyTrees.Count > 0 ? (int?)_dependencyTrees.Max(t => t.MaxDepth) : null;
         var hasUnmaintained = _unmaintainedPackageNames.Count > 0;
+        var minHealthPkg = healthReport.Packages.Count > 0 ? healthReport.Packages.MinBy(p => p.Score) : null;
 
         return new CraReport
         {
@@ -536,7 +537,10 @@ public sealed partial class CraReportGenerator
             SbomCompletenessPercentage = sbomCompleteness,
             MaxDependencyDepth = maxDepth,
             HasUnmaintainedPackages = hasUnmaintained,
-            ReportableVulnerabilityCount = _reportingObligations.Count
+            ReportableVulnerabilityCount = _reportingObligations.Count,
+            DeprecatedPackages = _deprecatedPackages.ToList(),
+            MinPackageHealthScore = minHealthPkg?.Score,
+            MinHealthScorePackage = minHealthPkg?.PackageId,
         };
     }
 

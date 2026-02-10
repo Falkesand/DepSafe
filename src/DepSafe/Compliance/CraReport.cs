@@ -32,4 +32,12 @@ public sealed class CraReport
     public bool HasUnmaintainedPackages { get; init; }
     /// <summary>Count of vulnerabilities triggering CRA Art. 14 reporting obligations.</summary>
     public int ReportableVulnerabilityCount { get; init; }
+
+    // Structured policy fields (v1.6)
+    /// <summary>Package IDs that are deprecated.</summary>
+    public List<string> DeprecatedPackages { get; init; } = [];
+    /// <summary>Lowest health score among all packages.</summary>
+    public int? MinPackageHealthScore { get; init; }
+    /// <summary>Package ID with the lowest health score.</summary>
+    public string? MinHealthScorePackage { get; init; }
 }
