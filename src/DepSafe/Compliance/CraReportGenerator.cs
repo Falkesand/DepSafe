@@ -1041,6 +1041,9 @@ public sealed partial class CraReportGenerator
     private LicensePolicyResult? _licensePolicyResult;
     private CraConfig? _policyConfig;
 
+    // Audit simulation (v2.4)
+    private AuditSimulationResult? _auditSimulation;
+
     /// <summary>
     /// Set package health data for detailed report generation.
     /// </summary>
@@ -1234,6 +1237,19 @@ public sealed partial class CraReportGenerator
         _licensePolicyResult = licenseResult;
         _policyConfig = config;
     }
+
+    /// <summary>
+    /// Set audit simulation findings for the dashboard (v2.4).
+    /// </summary>
+    public void SetAuditFindings(AuditSimulationResult result)
+    {
+        _auditSimulation = result;
+    }
+
+    public SbomValidationResult? GetSbomValidation() => _sbomValidation;
+    public List<ProvenanceResult> GetProvenanceResults() => _provenanceResults;
+    public AttackSurfaceResult? GetAttackSurface() => _attackSurface;
+    public AuditSimulationResult? GetAuditSimulation() => _auditSimulation;
 
     private bool HasPolicyData()
     {

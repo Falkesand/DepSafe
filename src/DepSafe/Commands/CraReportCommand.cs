@@ -2151,6 +2151,33 @@ public static class CraReportCommand
             reportGenerator.SetPolicyViolations(licenseResult, config);
         }
 
+        // Audit simulation (when --audit-mode active)
+        if (auditMode)
+        {
+            var projectDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+            var auditHasSecurityPolicy = File.Exists(Path.Combine(projectDir, "SECURITY.md")) ||
+                                          File.Exists(Path.Combine(projectDir, ".well-known", "security.txt"));
+            var auditHasReadme = File.Exists(Path.Combine(projectDir, "README.md")) ||
+                                  File.Exists(Path.Combine(projectDir, "readme.md"));
+            var auditHasChangelog = File.Exists(Path.Combine(projectDir, "CHANGELOG.md")) ||
+                                     File.Exists(Path.Combine(projectDir, "CHANGES.md"));
+
+            var auditResult = AuditSimulator.Analyze(
+                allPackages,
+                allVulnerabilities,
+                craReport,
+                reportGenerator.GetSbomValidation(),
+                reportGenerator.GetProvenanceResults(),
+                reportGenerator.GetAttackSurface(),
+                auditHasSecurityPolicy,
+                packagesWithSecurityPolicy,
+                packagesWithRepo,
+                config,
+                auditHasReadme,
+                auditHasChangelog);
+            reportGenerator.SetAuditFindings(auditResult);
+        }
+
         if (string.IsNullOrEmpty(outputPath))
         {
             var projectName = Path.GetFileNameWithoutExtension(path);
@@ -2985,6 +3012,33 @@ public static class CraReportCommand
             if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
                 licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
             reportGenerator.SetPolicyViolations(licenseResult, config);
+        }
+
+        // Audit simulation (when --audit-mode active)
+        if (auditMode)
+        {
+            var projectDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+            var auditHasSecurityPolicy = File.Exists(Path.Combine(projectDir, "SECURITY.md")) ||
+                                          File.Exists(Path.Combine(projectDir, ".well-known", "security.txt"));
+            var auditHasReadme = File.Exists(Path.Combine(projectDir, "README.md")) ||
+                                  File.Exists(Path.Combine(projectDir, "readme.md"));
+            var auditHasChangelog = File.Exists(Path.Combine(projectDir, "CHANGELOG.md")) ||
+                                     File.Exists(Path.Combine(projectDir, "CHANGES.md"));
+
+            var auditResult = AuditSimulator.Analyze(
+                allPackages,
+                allVulnerabilities,
+                craReport,
+                reportGenerator.GetSbomValidation(),
+                reportGenerator.GetProvenanceResults(),
+                reportGenerator.GetAttackSurface(),
+                auditHasSecurityPolicy,
+                packagesWithSecurityPolicy,
+                packagesWithRepo,
+                config,
+                auditHasReadme,
+                auditHasChangelog);
+            reportGenerator.SetAuditFindings(auditResult);
         }
 
         // Determine output path
