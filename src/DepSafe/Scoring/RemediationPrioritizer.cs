@@ -25,7 +25,8 @@ public static class RemediationPrioritizer
         IReadOnlyList<PackageHealth> allPackages,
         IReadOnlyDictionary<string, List<VulnerabilityInfo>> allVulnerabilities,
         int currentCraScore,
-        List<CraComplianceItem> currentComplianceItems)
+        List<CraComplianceItem> currentComplianceItems,
+        IReadOnlyDictionary<string, List<string>>? availableVersions = null)
     {
         var items = new List<RemediationRoadmapItem>(Math.Min(allPackages.Count, MaxItems));
 
@@ -105,6 +106,15 @@ public static class RemediationPrioritizer
             };
             priority += scoreLift * 10;
 
+            // Compute upgrade tiers if version list is available
+            List<UpgradeTier> upgradeTiers = [];
+            if (availableVersions is not null &&
+                availableVersions.TryGetValue(pkg.PackageId, out var versionList) &&
+                versionList.Count > 0)
+            {
+                upgradeTiers = ComputeUpgradeTiers(pkg.Version, affectedVulns, versionList);
+            }
+
             items.Add(new RemediationRoadmapItem
             {
                 PackageId = pkg.PackageId,
@@ -117,7 +127,8 @@ public static class RemediationPrioritizer
                 HasKevVulnerability = pkg.HasKevVulnerability,
                 MaxEpssProbability = maxEpss,
                 MaxPatchAgeDays = maxPatchAgeDays,
-                PriorityScore = priority
+                PriorityScore = priority,
+                UpgradeTiers = upgradeTiers,
             });
         }
 
@@ -178,5 +189,79 @@ public static class RemediationPrioritizer
                 return i;
         }
         return -1;
+    }
+
+    /// <summary>
+    /// Compute upgrade tiers for a vulnerable package by testing candidate versions against all affected CVEs.
+    /// Returns distinct tiers ordered by effort (Patch -> Minor -> Major), deduplicated.
+    /// </summary>
+    private static List<UpgradeTier> ComputeUpgradeTiers(
+        string currentVersion,
+        List<VulnerabilityInfo> affectedVulns,
+        List<string> candidateVersions)
+    {
+        if (!NuGetVersion.TryParse(currentVersion, out var current))
+            return [];
+
+        int totalCves = affectedVulns.SelectMany(v => v.Cves).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+
+        // Parse and filter candidates: must be > current, stable, parseable
+        var candidates = new List<(NuGetVersion Parsed, string Raw)>();
+        foreach (var ver in candidateVersions)
+        {
+            if (NuGetVersion.TryParse(ver, out var parsed) && parsed > current && !parsed.IsPrerelease)
+                candidates.Add((parsed, ver));
+        }
+
+        candidates.Sort((a, b) => a.Parsed.CompareTo(b.Parsed));
+
+        // For each tier, find the lowest version that fixes the most CVEs
+        var tierBest = new Dictionary<UpgradeEffort, (string Version, int CvesFixed)>();
+
+        foreach (var (parsed, raw) in candidates)
+        {
+            var effort = DetermineEffort(currentVersion, raw);
+
+            // Count distinct CVEs fixed by this version
+            var fixedCveIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var vuln in affectedVulns)
+            {
+                if (!HealthScoreCalculator.IsAffected(raw, vuln))
+                {
+                    foreach (var cve in vuln.Cves)
+                        fixedCveIds.Add(cve);
+                }
+            }
+
+            int cvesFixed = fixedCveIds.Count;
+            if (cvesFixed == 0)
+                continue;
+
+            // Keep the LOWEST version per tier that fixes the MOST CVEs
+            if (!tierBest.TryGetValue(effort, out var existing) || cvesFixed > existing.CvesFixed)
+            {
+                tierBest[effort] = (raw, cvesFixed);
+            }
+        }
+
+        // Build tiers ordered by effort, dedup by version
+        var tiers = new List<UpgradeTier>();
+        var effortOrder = new[] { UpgradeEffort.Patch, UpgradeEffort.Minor, UpgradeEffort.Major };
+        var seenVersions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var effort in effortOrder)
+        {
+            if (tierBest.TryGetValue(effort, out var best) && seenVersions.Add(best.Version))
+            {
+                tiers.Add(new UpgradeTier(
+                    TargetVersion: best.Version,
+                    Effort: effort,
+                    CvesFixed: best.CvesFixed,
+                    TotalCves: totalCves,
+                    IsRecommended: tiers.Count == 0));
+            }
+        }
+
+        return tiers;
     }
 }

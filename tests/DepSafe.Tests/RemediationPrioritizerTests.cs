@@ -44,6 +44,14 @@ public class RemediationPrioritizerTests
 
     private static readonly List<CraComplianceItem> EmptyCompliance = [];
 
+    private static Dictionary<string, List<string>> CreateVersions(string packageId, params string[] versions)
+        => new(StringComparer.OrdinalIgnoreCase)
+        {
+            [packageId] = versions.ToList()
+        };
+
+    private static readonly Dictionary<string, List<string>> EmptyVersions = new();
+
     [Fact]
     public void PrioritizeUpdates_NoPackages_ReturnsEmpty()
     {
@@ -306,5 +314,204 @@ public class RemediationPrioritizerTests
 
         Assert.Single(result);
         Assert.Equal("3.0.0", result[0].RecommendedVersion);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_PatchFixAvailable_SinglePatchTier()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] = [CreateVuln(vulnerableRange: ">=1.0.0, <1.0.3", patchedVersion: "1.0.3")],
+        };
+        // Only patch-level versions available — no minor/major candidates
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.1", "1.0.2", "1.0.3");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        Assert.Single(result[0].UpgradeTiers);
+        Assert.Equal("1.0.3", result[0].UpgradeTiers[0].TargetVersion);
+        Assert.Equal(UpgradeEffort.Patch, result[0].UpgradeTiers[0].Effort);
+        Assert.True(result[0].UpgradeTiers[0].IsRecommended);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_OnlyMajorFix_SingleMajorTier()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] = [CreateVuln(vulnerableRange: ">=0, <2.0.0", patchedVersion: "2.0.0")],
+        };
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.1", "1.1.0", "2.0.0", "2.1.0");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        Assert.Single(result[0].UpgradeTiers);
+        Assert.Equal("2.0.0", result[0].UpgradeTiers[0].TargetVersion);
+        Assert.Equal(UpgradeEffort.Major, result[0].UpgradeTiers[0].Effort);
+        Assert.True(result[0].UpgradeTiers[0].IsRecommended);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_PatchAndMajorFixes_TwoTiers()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] =
+            [
+                CreateVuln(vulnerableRange: ">=1.0.0, <1.0.3", patchedVersion: "1.0.3", cves: ["CVE-2024-0001"]),
+                CreateVuln(vulnerableRange: ">=0, <2.0.0", patchedVersion: "2.0.0", cves: ["CVE-2024-0002"]),
+            ],
+        };
+        // No minor-level candidates — only patch and major tiers
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.3", "2.0.0");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        Assert.Equal(2, result[0].UpgradeTiers.Count);
+
+        // First tier: patch fixes 1 of 2 CVEs
+        Assert.Equal("1.0.3", result[0].UpgradeTiers[0].TargetVersion);
+        Assert.Equal(UpgradeEffort.Patch, result[0].UpgradeTiers[0].Effort);
+        Assert.Equal(1, result[0].UpgradeTiers[0].CvesFixed);
+        Assert.Equal(2, result[0].UpgradeTiers[0].TotalCves);
+        Assert.True(result[0].UpgradeTiers[0].IsRecommended);
+
+        // Second tier: major fixes all
+        Assert.Equal("2.0.0", result[0].UpgradeTiers[1].TargetVersion);
+        Assert.Equal(UpgradeEffort.Major, result[0].UpgradeTiers[1].Effort);
+        Assert.Equal(2, result[0].UpgradeTiers[1].CvesFixed);
+        Assert.Equal(2, result[0].UpgradeTiers[1].TotalCves);
+        Assert.False(result[0].UpgradeTiers[1].IsRecommended);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_SameVersionForPatchAndMinor_Deduplicates()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] = [CreateVuln(vulnerableRange: ">=1.0.0, <1.0.3", patchedVersion: "1.0.3")],
+        };
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.3");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        Assert.Single(result[0].UpgradeTiers);
+        Assert.Equal("1.0.3", result[0].UpgradeTiers[0].TargetVersion);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_NoVersionData_FallsBackToExistingBehavior()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] = [CreateVuln(patchedVersion: "2.0.0")],
+        };
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, EmptyVersions);
+
+        Assert.Single(result);
+        Assert.Equal("2.0.0", result[0].RecommendedVersion);
+        Assert.Empty(result[0].UpgradeTiers);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_PrereleaseVersions_Excluded()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] = [CreateVuln(vulnerableRange: ">=1.0.0, <1.0.3", patchedVersion: "1.0.3")],
+        };
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.3-beta", "1.0.3", "2.0.0");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        Assert.True(result[0].UpgradeTiers.Count >= 1);
+        Assert.DoesNotContain(result[0].UpgradeTiers, t => t.TargetVersion.Contains("-beta"));
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_ThreeTiers_PatchMinorMajor()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] = [CreateVuln(vulnerableRange: ">=1.0.0, <1.0.5", patchedVersion: "1.0.5")],
+        };
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.5", "1.2.0", "2.0.0");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        Assert.Equal(3, result[0].UpgradeTiers.Count);
+        Assert.Equal(UpgradeEffort.Patch, result[0].UpgradeTiers[0].Effort);
+        Assert.Equal(UpgradeEffort.Minor, result[0].UpgradeTiers[1].Effort);
+        Assert.Equal(UpgradeEffort.Major, result[0].UpgradeTiers[2].Effort);
+        Assert.True(result[0].UpgradeTiers[0].IsRecommended);
+        Assert.False(result[0].UpgradeTiers[1].IsRecommended);
+        Assert.False(result[0].UpgradeTiers[2].IsRecommended);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_PartialFix_ShowsCveFractions()
+    {
+        var packages = new[] { CreatePackage(version: "1.0.0") };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TestPkg"] =
+            [
+                CreateVuln(vulnerableRange: ">=1.0.0, <1.0.3", patchedVersion: "1.0.3", cves: ["CVE-2024-0001"]),
+                CreateVuln(vulnerableRange: ">=0, <2.0.0", patchedVersion: "2.0.0", cves: ["CVE-2024-0002"]),
+            ],
+        };
+        var versions = CreateVersions("TestPkg", "1.0.0", "1.0.3", "2.0.0");
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(packages, vulns, 50, EmptyCompliance, versions);
+
+        Assert.Single(result);
+        var patchTier = result[0].UpgradeTiers.First(t => t.Effort == UpgradeEffort.Patch);
+        Assert.Equal(1, patchTier.CvesFixed);
+        Assert.Equal(2, patchTier.TotalCves);
+
+        var majorTier = result[0].UpgradeTiers.First(t => t.Effort == UpgradeEffort.Major);
+        Assert.Equal(2, majorTier.CvesFixed);
+        Assert.Equal(2, majorTier.TotalCves);
+    }
+
+    [Fact]
+    public void UpgradeTiers_WithMultipleTiers_DataShape()
+    {
+        var item = new RemediationRoadmapItem
+        {
+            PackageId = "TestPkg",
+            CurrentVersion = "1.0.0",
+            RecommendedVersion = "1.0.3",
+            CveCount = 2,
+            CveIds = ["CVE-2024-0001", "CVE-2024-0002"],
+            ScoreLift = 5,
+            Effort = UpgradeEffort.Patch,
+            PriorityScore = 100,
+            UpgradeTiers =
+            [
+                new UpgradeTier("1.0.3", UpgradeEffort.Patch, 1, 2, true),
+                new UpgradeTier("2.0.0", UpgradeEffort.Major, 2, 2, false),
+            ],
+        };
+
+        Assert.Equal(2, item.UpgradeTiers.Count);
+        Assert.True(item.UpgradeTiers[0].IsRecommended);
+        Assert.False(item.UpgradeTiers[1].IsRecommended);
+        Assert.Equal("1/2", $"{item.UpgradeTiers[0].CvesFixed}/{item.UpgradeTiers[0].TotalCves}");
+        Assert.Equal("2/2", $"{item.UpgradeTiers[1].CvesFixed}/{item.UpgradeTiers[1].TotalCves}");
     }
 }
