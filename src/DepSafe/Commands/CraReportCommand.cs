@@ -460,6 +460,15 @@ public static class CraReportCommand
             }
         }
 
+        // Build available versions for upgrade path analysis
+        var availableVersions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, info) in npmInfoMap)
+        {
+            availableVersions[name] = info.Versions
+                .Select(v => v.Version)
+                .ToList();
+        }
+
         return await GenerateReportAsync(
             path,
             packages,
@@ -483,6 +492,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            availableVersions,
             ct);
     }
 
@@ -1291,6 +1301,16 @@ public static class CraReportCommand
             }
         }
 
+        // Build available versions for upgrade path analysis
+        var availableVersions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, info) in nugetInfoMap)
+        {
+            availableVersions[id] = info.Versions
+                .Where(v => v.IsListed)
+                .Select(v => v.Version)
+                .ToList();
+        }
+
         return await GenerateReportAsync(
             path,
             packages,
@@ -1314,6 +1334,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            availableVersions,
             ct);
     }
 
@@ -1343,6 +1364,9 @@ public static class CraReportCommand
         var totalPackagesWithSecurityPolicy = 0;
         var totalPackagesWithRepo = 0;
         var allRepoInfoMap = new Dictionary<string, GitHubRepoInfo?>(StringComparer.OrdinalIgnoreCase);
+
+        // Available versions for upgrade path analysis (populated from NuGet/npm info maps)
+        var availableVersions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         // ===== Analyze .NET packages =====
         AnsiConsole.MarkupLine("\n[bold blue]Analyzing .NET packages...[/]");
@@ -1553,6 +1577,15 @@ public static class CraReportCommand
                     allPackages.Where(p => allReferences.ContainsKey(p.PackageId)).ToList(),
                     allTransitivePackages, allVulnerabilities);
                 dependencyTrees.Add(dotnetTree);
+
+                // Collect NuGet available versions for upgrade path analysis
+                foreach (var (id, info) in nugetInfoMap)
+                {
+                    availableVersions[id] = info.Versions
+                        .Where(v => v.IsListed)
+                        .Select(v => v.Version)
+                        .ToList();
+                }
             }
         }
 
@@ -1733,6 +1766,14 @@ public static class CraReportCommand
                             AnsiConsole.MarkupLine($"[dim]Including {npmTransitiveFromTree.Count} transitive npm packages in SBOM[/]");
                         }
                     }
+
+                    // Collect npm available versions for upgrade path analysis
+                    foreach (var (name, info) in npmInfoMap)
+                    {
+                        availableVersions[name] = info.Versions
+                            .Select(v => v.Version)
+                            .ToList();
+                    }
                 }
             }
         }
@@ -1766,6 +1807,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            availableVersions,
             ct);
     }
 
@@ -1792,6 +1834,7 @@ public static class CraReportCommand
         string? signKey = null,
         bool releaseGate = false,
         bool evidencePack = false,
+        Dictionary<string, List<string>>? availableVersions = null,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2078,7 +2121,7 @@ public static class CraReportCommand
         // Remediation Roadmap (needs CRA score from report for prioritization)
         List<RemediationRoadmapItem> roadmap;
         {
-            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
@@ -2627,6 +2670,7 @@ public static class CraReportCommand
         string? signKey = null,
         bool releaseGate = false,
         bool evidencePack = false,
+        Dictionary<string, List<string>>? availableVersions = null,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2912,7 +2956,7 @@ public static class CraReportCommand
         // Remediation Roadmap (needs CRA score from report for prioritization)
         List<RemediationRoadmapItem> roadmap;
         {
-            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
