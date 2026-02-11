@@ -1018,14 +1018,14 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("<div class=\"info-box\">");
         sb.AppendLine("  <div class=\"info-box-title\">Prioritized Update Plan</div>");
         sb.AppendLine("  <p>This roadmap ranks your vulnerable dependencies by their <strong>impact on CRA compliance</strong>. Packages are prioritized by: actively exploited (CISA KEV) first, then high EPSS probability, then by vulnerability severity and estimated CRA score improvement.</p>");
-        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Score Lift</strong> estimates how much your CRA readiness score would improve if you fix that package. <strong>Effort</strong> indicates whether the update is a patch (low risk), minor (new features), or major (potential breaking changes) version bump.</p>");
+        sb.AppendLine("  <p style=\"margin-top:8px;\"><strong>Score Lift</strong> estimates how much your CRA readiness score would improve if you fix that package. <strong>Upgrade Options</strong> show available fix paths at each semver tier \u2014 the \u2713 marks the recommended (lowest-risk) option. Alternative tiers are shown when fixes exist at different semver levels.</p>");
         sb.AppendLine("</div>");
 
         sb.AppendLine("<table class=\"detail-table\">");
         sb.AppendLine("  <thead><tr>");
         sb.AppendLine("    <th>#</th>");
         sb.AppendLine("    <th>Package</th>");
-        sb.AppendLine("    <th>Current \u2192 Recommended</th>");
+        sb.AppendLine("    <th>Upgrade Options</th>");
         sb.AppendLine("    <th>CVEs Fixed</th>");
         sb.AppendLine("    <th title=\"Estimated CRA readiness score improvement\">Score Lift</th>");
         sb.AppendLine("    <th title=\"Patch = safe, Minor = new features, Major = possible breaking changes\">Effort</th>");
@@ -1045,30 +1045,66 @@ public sealed partial class CraReportGenerator
                 item.MaxEpssProbability >= 0.5 ? "CRITICAL" :
                 item.PriorityScore >= 250 ? "HIGH" : "MEDIUM";
 
-            var effortClass = item.Effort switch
+            // Primary row — shows recommended tier (or existing single-version behavior)
+            var primaryVersion = item.UpgradeTiers.Count > 0
+                ? item.UpgradeTiers[0].TargetVersion
+                : item.RecommendedVersion;
+            var primaryEffort = item.UpgradeTiers.Count > 0
+                ? item.UpgradeTiers[0].Effort
+                : item.Effort;
+            var primaryCveText = item.UpgradeTiers.Count > 0
+                ? $"{item.UpgradeTiers[0].CvesFixed}/{item.UpgradeTiers[0].TotalCves} CVEs"
+                : item.CveCount == 1 ? "1 CVE" : $"{item.CveCount} CVEs";
+
+            var primaryEffortClass = primaryEffort switch
             {
                 UpgradeEffort.Patch => "patch",
                 UpgradeEffort.Minor => "minor",
                 _ => "major"
             };
-
-            var effortLabel = item.Effort switch
+            var primaryEffortLabel = primaryEffort switch
             {
-                UpgradeEffort.Patch => "Patch",
-                UpgradeEffort.Minor => "Minor",
-                _ => "Major"
+                UpgradeEffort.Patch => "Patch \u2713",
+                UpgradeEffort.Minor => "Minor \u2713",
+                _ => "Major \u2713"
             };
-
-            var cveText = item.CveCount == 1 ? "1 CVE" : $"{item.CveCount} CVEs";
 
             sb.AppendLine("    <tr>");
             sb.AppendLine($"      <td><span class=\"remediation-priority-badge {priorityClass}\">{rank}</span></td>");
             sb.AppendLine($"      <td><strong>{EscapeHtml(item.PackageId)}</strong></td>");
-            sb.AppendLine($"      <td><code>{EscapeHtml(item.CurrentVersion)}</code> <span style=\"color:var(--text-secondary);\">\u2192</span> <code>{EscapeHtml(item.RecommendedVersion)}</code></td>");
-            sb.AppendLine($"      <td>{cveText}</td>");
+            sb.AppendLine($"      <td><code>{EscapeHtml(item.CurrentVersion)}</code> <span style=\"color:var(--text-secondary);\">\u2192</span> <code>{EscapeHtml(primaryVersion)}</code></td>");
+            sb.AppendLine($"      <td>{primaryCveText}</td>");
             sb.AppendLine($"      <td><span class=\"score-lift\">+{item.ScoreLift} pts</span></td>");
-            sb.AppendLine($"      <td><span class=\"upgrade-effort {effortClass}\">{effortLabel}</span></td>");
+            sb.AppendLine($"      <td><span class=\"upgrade-effort {primaryEffortClass}\">{primaryEffortLabel}</span></td>");
             sb.AppendLine("    </tr>");
+
+            // Sub-rows for alternative tiers (skip index 0, which is the primary)
+            for (int i = 1; i < item.UpgradeTiers.Count; i++)
+            {
+                var tier = item.UpgradeTiers[i];
+                var altEffortClass = tier.Effort switch
+                {
+                    UpgradeEffort.Patch => "patch",
+                    UpgradeEffort.Minor => "minor",
+                    _ => "major"
+                };
+                var altEffortLabel = tier.Effort switch
+                {
+                    UpgradeEffort.Patch => "Patch",
+                    UpgradeEffort.Minor => "Minor",
+                    _ => "Major"
+                };
+                var altCveText = $"{tier.CvesFixed}/{tier.TotalCves} CVEs";
+
+                sb.AppendLine("    <tr class=\"upgrade-tier-alt\">");
+                sb.AppendLine("      <td></td>");
+                sb.AppendLine("      <td></td>");
+                sb.AppendLine($"      <td><code>{EscapeHtml(item.CurrentVersion)}</code> <span style=\"color:var(--text-secondary);\">\u2192</span> <code>{EscapeHtml(tier.TargetVersion)}</code></td>");
+                sb.AppendLine($"      <td>{altCveText}</td>");
+                sb.AppendLine("      <td></td>");
+                sb.AppendLine($"      <td><span class=\"upgrade-effort {altEffortClass}\">{altEffortLabel}</span></td>");
+                sb.AppendLine("    </tr>");
+            }
         }
 
         sb.AppendLine("  </tbody>");
