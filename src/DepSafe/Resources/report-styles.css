@@ -2644,6 +2644,20 @@
       background: var(--danger-light);
       color: var(--danger);
     }
+    .upgrade-tier-alt td {
+      padding-top: 2px;
+      padding-bottom: 2px;
+      border-top: none;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+    .upgrade-tier-alt td:first-child {
+      /* Empty rank cell for sub-rows */
+    }
+    .upgrade-tier-recommended {
+      font-weight: 600;
+      color: var(--success);
+    }
 
     .nav-badge.critical {
       background: var(--danger);
