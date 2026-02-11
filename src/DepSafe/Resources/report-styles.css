@@ -2919,3 +2919,105 @@
       font-size: 0.9rem;
       font-weight: 500;
     }
+
+    /* Audit Simulation */
+    .audit-summary {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding: 20px;
+      border-radius: 8px;
+      border-left: 4px solid var(--border);
+    }
+
+    .audit-summary.critical { border-left-color: var(--danger); background: var(--danger-light); }
+    .audit-summary.high { border-left-color: #e67e22; background: #fdf2e9; }
+    .audit-summary.medium { border-left-color: var(--warning); background: var(--warning-light); }
+    .audit-summary.low { border-left-color: var(--text-muted); background: var(--bg-secondary); }
+    .audit-summary.clean { border-left-color: var(--success); background: var(--success-light, #d4edda); }
+
+    .audit-summary-text {
+      flex: 1;
+    }
+
+    .audit-summary-text h3 {
+      margin: 0 0 8px 0;
+    }
+
+    .audit-summary-counts {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .audit-count {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: var(--bg-card);
+      min-width: 60px;
+    }
+
+    .audit-count-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+
+    .audit-count-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .audit-findings-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .audit-findings-table th {
+      text-align: left;
+      padding: 12px 16px;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .audit-findings-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .audit-severity-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .audit-severity-badge.critical { background: var(--danger); color: white; }
+    .audit-severity-badge.high { background: #e67e22; color: white; }
+    .audit-severity-badge.medium { background: var(--warning); color: #000; }
+    .audit-severity-badge.low { background: var(--bg-tertiary); color: var(--text-secondary); }
+
+    .audit-affected-list {
+      margin: 4px 0 0 0;
+      padding: 0;
+      list-style: none;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .audit-affected-list li {
+      padding: 2px 0;
+    }
+
+    .audit-affected-overflow {
+      color: var(--text-light);
+      font-style: italic;
+    }
