@@ -41,7 +41,4 @@ public sealed class CraReport
     /// <summary>Package ID with the lowest health score.</summary>
     public string? MinHealthScorePackage { get; init; }
 
-    // Audit simulation findings (v2.4)
-    /// <summary>Audit simulation findings when --audit-mode is active.</summary>
-    public List<AuditFinding> AuditFindings { get; init; } = [];
 }

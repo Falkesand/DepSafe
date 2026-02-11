@@ -2273,7 +2273,7 @@ public static class CraReportCommand
         var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages, auditResultForExit);
 
         if (releaseGate)
-            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode);
+            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
 
         return exitCode;
     }
@@ -3143,7 +3143,7 @@ public static class CraReportCommand
         var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages, auditResultForExit);
 
         if (releaseGate)
-            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode);
+            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
 
         return exitCode;
     }
@@ -3242,9 +3242,9 @@ public static class CraReportCommand
         return (exitCode, violations);
     }
 
-    private static int DisplayReleaseReadiness(CraReport report, List<string> violations, int currentExitCode)
+    private static int DisplayReleaseReadiness(CraReport report, List<string> violations, int currentExitCode, AuditSimulationResult? auditResult = null)
     {
-        var readiness = ReleaseReadinessEvaluator.Evaluate(report, violations);
+        var readiness = ReleaseReadinessEvaluator.Evaluate(report, violations, auditResult);
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold]Release Readiness Gate[/]").LeftJustified());

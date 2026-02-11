@@ -386,6 +386,61 @@ public class AuditSimulatorTests
     }
 
     [Fact]
+    public void UnverifiedProvenance_HighFinding()
+    {
+        var packages = new[] { CreatePackage() };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>();
+        var report = CreateMinimalCraReport();
+        var provenanceResults = new List<ProvenanceResult>
+        {
+            new() { PackageId = "TestPkg", Version = "1.0.0" }  // No signatures = IsVerified is false
+        };
+
+        var result = AuditSimulator.Analyze(
+            packages,
+            vulns,
+            report,
+            CreateCleanSbomValidation(),
+            provenanceResults,
+            CreateCleanAttackSurface(),
+            hasSecurityPolicy: true,
+            packagesWithSecurityPolicy: 1,
+            packagesWithRepo: 1,
+            config: new CraConfig { SecurityContact = "security@test.com", SupportPeriodEnd = "2028-12" },
+            hasReadme: true,
+            hasChangelog: true);
+
+        var finding = Assert.Single(result.Findings, f => f.ArticleReference.Contains("Annex I"));
+        Assert.Equal(AuditSeverity.High, finding.Severity);
+        Assert.Contains("TestPkg", finding.AffectedPackages);
+    }
+
+    [Fact]
+    public void MissingDocumentation_LowFinding()
+    {
+        var packages = new[] { CreatePackage() };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>();
+        var report = CreateMinimalCraReport();
+
+        var result = AuditSimulator.Analyze(
+            packages,
+            vulns,
+            report,
+            CreateCleanSbomValidation(),
+            [new ProvenanceResult { PackageId = "TestPkg", Version = "1.0.0", HasRepositorySignature = true }],
+            CreateCleanAttackSurface(),
+            hasSecurityPolicy: true,
+            packagesWithSecurityPolicy: 1,
+            packagesWithRepo: 1,
+            config: new CraConfig { SecurityContact = "security@test.com", SupportPeriodEnd = "2028-12" },
+            hasReadme: false,   // Missing!
+            hasChangelog: true);
+
+        var finding = Assert.Single(result.Findings, f => f.Severity == AuditSeverity.Low);
+        Assert.Contains("README", finding.Finding);
+    }
+
+    [Fact]
     public void CleanProject_EmptyFindings()
     {
         var packages = new[] { CreatePackage() };
