@@ -66,6 +66,10 @@ public static class CraReportCommand
             ["--evidence-pack"],
             "Bundle all compliance artifacts into a timestamped evidence directory with manifest");
 
+        var auditModeOption = new Option<bool>(
+            ["--audit-mode"],
+            "Simulate CRA conformity assessment with zero-tolerance findings");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -79,10 +83,11 @@ public static class CraReportCommand
             signOption,
             signKeyOption,
             releaseGateOption,
-            evidencePackOption
+            evidencePackOption,
+            auditModeOption
         };
 
-        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption, auditModeOption);
         command.SetHandler(async context =>
         {
             var options = binder.Bind(context.BindingContext);
@@ -161,6 +166,7 @@ public static class CraReportCommand
         var signKey = options.SignKey;
         var releaseGate = options.ReleaseGate;
         var evidencePack = options.EvidencePack;
+        var auditMode = options.AuditMode;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -214,9 +220,9 @@ public static class CraReportCommand
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
             _ => 0
         };
 
@@ -241,7 +247,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -493,6 +499,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            auditMode,
             availableVersions,
             ct);
     }
@@ -985,7 +992,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1335,11 +1342,12 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            auditMode,
             availableVersions,
             ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1809,6 +1817,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            auditMode,
             availableVersions,
             ct);
     }
@@ -1836,6 +1845,7 @@ public static class CraReportCommand
         string? signKey = null,
         bool releaseGate = false,
         bool evidencePack = false,
+        bool auditMode = false,
         Dictionary<string, List<string>>? availableVersions = null,
         CancellationToken ct = default)
     {
@@ -2127,12 +2137,39 @@ public static class CraReportCommand
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
+        // Audit simulation (when --audit-mode active)
+        if (auditMode)
+        {
+            var projectDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+            var auditHasSecurityPolicy = File.Exists(Path.Combine(projectDir, "SECURITY.md")) ||
+                                          File.Exists(Path.Combine(projectDir, ".well-known", "security.txt"));
+            var auditHasReadme = File.Exists(Path.Combine(projectDir, "README.md")) ||
+                                  File.Exists(Path.Combine(projectDir, "readme.md"));
+            var auditHasChangelog = File.Exists(Path.Combine(projectDir, "CHANGELOG.md")) ||
+                                     File.Exists(Path.Combine(projectDir, "CHANGES.md"));
+
+            var auditResult = AuditSimulator.Analyze(
+                allPackages,
+                allVulnerabilities,
+                craReport,
+                reportGenerator.GetSbomValidation(),
+                reportGenerator.GetProvenanceResults(),
+                reportGenerator.GetAttackSurface(),
+                auditHasSecurityPolicy,
+                packagesWithSecurityPolicy,
+                packagesWithRepo,
+                config,
+                auditHasReadme,
+                auditHasChangelog);
+            reportGenerator.SetAuditFindings(auditResult);
+        }
+
         // Phase 1 actionable findings for HTML dashboard
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
             reportGenerator.SetSecurityBudget(budget);
 
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, []);
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditMode ? reportGenerator.GetAuditSimulation() : null);
             reportGenerator.SetReleaseReadiness(readiness);
 
             LicensePolicyResult? licenseResult = null;
@@ -2232,10 +2269,11 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages);
+        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
+        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages, auditResultForExit);
 
         if (releaseGate)
-            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode);
+            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
 
         return exitCode;
     }
@@ -2672,6 +2710,7 @@ public static class CraReportCommand
         string? signKey = null,
         bool releaseGate = false,
         bool evidencePack = false,
+        bool auditMode = false,
         Dictionary<string, List<string>>? availableVersions = null,
         CancellationToken ct = default)
     {
@@ -2962,12 +3001,39 @@ public static class CraReportCommand
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
+        // Audit simulation (when --audit-mode active)
+        if (auditMode)
+        {
+            var projectDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
+            var auditHasSecurityPolicy = File.Exists(Path.Combine(projectDir, "SECURITY.md")) ||
+                                          File.Exists(Path.Combine(projectDir, ".well-known", "security.txt"));
+            var auditHasReadme = File.Exists(Path.Combine(projectDir, "README.md")) ||
+                                  File.Exists(Path.Combine(projectDir, "readme.md"));
+            var auditHasChangelog = File.Exists(Path.Combine(projectDir, "CHANGELOG.md")) ||
+                                     File.Exists(Path.Combine(projectDir, "CHANGES.md"));
+
+            var auditResult = AuditSimulator.Analyze(
+                allPackages,
+                allVulnerabilities,
+                craReport,
+                reportGenerator.GetSbomValidation(),
+                reportGenerator.GetProvenanceResults(),
+                reportGenerator.GetAttackSurface(),
+                auditHasSecurityPolicy,
+                packagesWithSecurityPolicy,
+                packagesWithRepo,
+                config,
+                auditHasReadme,
+                auditHasChangelog);
+            reportGenerator.SetAuditFindings(auditResult);
+        }
+
         // Phase 1 actionable findings for HTML dashboard
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
             reportGenerator.SetSecurityBudget(budget);
 
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, []);
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditMode ? reportGenerator.GetAuditSimulation() : null);
             reportGenerator.SetReleaseReadiness(readiness);
 
             LicensePolicyResult? licenseResult = null;
@@ -3073,10 +3139,11 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages);
+        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
+        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages, auditResultForExit);
 
         if (releaseGate)
-            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode);
+            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
 
         return exitCode;
     }
@@ -3088,7 +3155,8 @@ public static class CraReportCommand
     private static (int ExitCode, List<string> Violations) EvaluateExitCode(
         CraReport report,
         CraConfig? config,
-        IReadOnlyList<PackageHealth>? packages = null)
+        IReadOnlyList<PackageHealth>? packages = null,
+        AuditSimulationResult? auditResult = null)
     {
         var violations = new List<string>();
 
@@ -3153,6 +3221,15 @@ public static class CraReportCommand
                 violations.Add($"Package '{report.MinHealthScorePackage}' health score {report.MinPackageHealthScore.Value} below minimum {config.MinHealthScore.Value}");
         }
 
+        // Audit simulation findings (Critical + High = violations)
+        if (auditResult is not null)
+        {
+            foreach (var finding in auditResult.Findings.Where(f => f.Severity is AuditSeverity.Critical or AuditSeverity.High))
+            {
+                violations.Add($"Audit: {finding.ArticleReference} \u2014 {finding.Requirement}");
+            }
+        }
+
         if (violations.Count > 0)
         {
             AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
@@ -3165,9 +3242,9 @@ public static class CraReportCommand
         return (exitCode, violations);
     }
 
-    private static int DisplayReleaseReadiness(CraReport report, List<string> violations, int currentExitCode)
+    private static int DisplayReleaseReadiness(CraReport report, List<string> violations, int currentExitCode, AuditSimulationResult? auditResult = null)
     {
-        var readiness = ReleaseReadinessEvaluator.Evaluate(report, violations);
+        var readiness = ReleaseReadinessEvaluator.Evaluate(report, violations, auditResult);
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold]Release Readiness Gate[/]").LeftJustified());

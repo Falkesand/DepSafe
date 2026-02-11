@@ -13,7 +13,7 @@ public static class ReleaseReadinessEvaluator
     /// Blocking = NonCompliant compliance items + policy violations.
     /// Advisory = ActionRequired + Review compliance items.
     /// </summary>
-    public static ReleaseReadinessResult Evaluate(CraReport report, List<string> policyViolations)
+    public static ReleaseReadinessResult Evaluate(CraReport report, List<string> policyViolations, AuditSimulationResult? auditResult = null)
     {
         var blockers = new List<ReleaseBlocker>();
         var advisories = new List<string>();
@@ -43,6 +43,23 @@ public static class ReleaseReadinessEvaluator
                 Requirement = "Policy Violation",
                 Reason = violation,
             });
+        }
+
+        if (auditResult is not null)
+        {
+            foreach (var finding in auditResult.Findings.Where(f => f.Severity is AuditSeverity.Critical or AuditSeverity.High))
+            {
+                blockers.Add(new ReleaseBlocker
+                {
+                    Requirement = $"Audit: {finding.ArticleReference}",
+                    Reason = finding.Finding,
+                });
+            }
+
+            foreach (var finding in auditResult.Findings.Where(f => f.Severity is AuditSeverity.Medium or AuditSeverity.Low))
+            {
+                advisories.Add($"Audit: {finding.ArticleReference} \u2014 {finding.Finding}");
+            }
         }
 
         return new ReleaseReadinessResult

@@ -778,6 +778,16 @@ public sealed partial class CraReportGenerator
                 : "";
             sb.AppendLine($"          Policy Violations{policyBadge}</a></li>");
         }
+        if (_auditSimulation is not null)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('audit-simulation')\" data-section=\"audit-simulation\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2\"/><rect x=\"9\" y=\"3\" width=\"6\" height=\"4\" rx=\"1\"/><path d=\"M9 14l2 2 4-4\"/></svg>");
+            var auditBadgeClass = _auditSimulation.CriticalCount > 0 ? "critical" : _auditSimulation.HighCount > 0 ? "warning" : "";
+            var auditBadge = _auditSimulation.Findings.Count > 0
+                ? $"<span class=\"nav-badge {auditBadgeClass}\">{_auditSimulation.Findings.Count}</span>"
+                : "<span class=\"nav-badge success\">0</span>";
+            sb.AppendLine($"          Audit Simulation{auditBadge}</a></li>");
+        }
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
@@ -913,6 +923,13 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</section>");
         }
 
+        if (_auditSimulation is not null)
+        {
+            sb.AppendLine("<section id=\"audit-simulation\" class=\"section\">");
+            GenerateAuditSimulationSection(sb);
+            sb.AppendLine("</section>");
+        }
+
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("<section id=\"remediation\" class=\"section\">");
@@ -1040,6 +1057,9 @@ public sealed partial class CraReportGenerator
     private ReleaseReadinessResult? _releaseReadiness;
     private LicensePolicyResult? _licensePolicyResult;
     private CraConfig? _policyConfig;
+
+    // Audit simulation (v2.4)
+    private AuditSimulationResult? _auditSimulation;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1234,6 +1254,19 @@ public sealed partial class CraReportGenerator
         _licensePolicyResult = licenseResult;
         _policyConfig = config;
     }
+
+    /// <summary>
+    /// Set audit simulation findings for the dashboard (v2.4).
+    /// </summary>
+    public void SetAuditFindings(AuditSimulationResult result)
+    {
+        _auditSimulation = result;
+    }
+
+    public SbomValidationResult? GetSbomValidation() => _sbomValidation;
+    public List<ProvenanceResult> GetProvenanceResults() => _provenanceResults;
+    public AttackSurfaceResult? GetAttackSurface() => _attackSurface;
+    public AuditSimulationResult? GetAuditSimulation() => _auditSimulation;
 
     private bool HasPolicyData()
     {

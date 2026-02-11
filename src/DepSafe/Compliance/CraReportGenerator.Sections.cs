@@ -2059,4 +2059,110 @@ public sealed partial class CraReportGenerator
         }
     }
 
+    private void GenerateAuditSimulationSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Audit Simulation</h2>");
+        sb.AppendLine("</div>");
+
+        sb.AppendLine("<div class=\"info-box\">");
+        sb.AppendLine("  <div class=\"info-box-title\">\u2139 What is this?</div>");
+        sb.AppendLine("  <p>This simulates what a CRA conformity assessment body would likely flag about your dependency management. Findings are grounded in CRA Annex I, II, and VII requirements with zero-tolerance interpretation. This is separate from the compliance items above, which use developer-friendly thresholds.</p>");
+        sb.AppendLine("</div>");
+
+        if (_auditSimulation is null || _auditSimulation.Findings.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2713</div>");
+            sb.AppendLine("  <h3>No Audit Findings</h3>");
+            sb.AppendLine("  <p>No issues detected that a conformity assessment body would likely flag.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        // Summary banner
+        var worstSeverity = _auditSimulation.CriticalCount > 0 ? "critical"
+            : _auditSimulation.HighCount > 0 ? "high"
+            : _auditSimulation.MediumCount > 0 ? "medium" : "low";
+
+        var articleCount = _auditSimulation.Findings.Select(f => f.ArticleReference).Distinct().Count();
+
+        sb.AppendLine($"<div class=\"audit-summary {worstSeverity}\">");
+        sb.AppendLine("  <div class=\"audit-summary-text\">");
+        sb.AppendLine($"    <h3>{_auditSimulation.Findings.Count} finding{(_auditSimulation.Findings.Count != 1 ? "s" : "")} across {articleCount} CRA article{(articleCount != 1 ? "s" : "")}</h3>");
+        sb.AppendLine("    <p>These are findings a conformity assessment body would likely raise about your dependency management.</p>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("  <div class=\"audit-summary-counts\">");
+
+        if (_auditSimulation.CriticalCount > 0)
+        {
+            sb.AppendLine("    <div class=\"audit-count\">");
+            sb.AppendLine($"      <span class=\"audit-count-value\" style=\"color: var(--danger)\">{_auditSimulation.CriticalCount}</span>");
+            sb.AppendLine("      <span class=\"audit-count-label\">Critical</span>");
+            sb.AppendLine("    </div>");
+        }
+        if (_auditSimulation.HighCount > 0)
+        {
+            sb.AppendLine("    <div class=\"audit-count\">");
+            sb.AppendLine($"      <span class=\"audit-count-value\" style=\"color: #e67e22\">{_auditSimulation.HighCount}</span>");
+            sb.AppendLine("      <span class=\"audit-count-label\">High</span>");
+            sb.AppendLine("    </div>");
+        }
+        if (_auditSimulation.MediumCount > 0)
+        {
+            sb.AppendLine("    <div class=\"audit-count\">");
+            sb.AppendLine($"      <span class=\"audit-count-value\" style=\"color: var(--warning-text, #856404)\">{_auditSimulation.MediumCount}</span>");
+            sb.AppendLine("      <span class=\"audit-count-label\">Medium</span>");
+            sb.AppendLine("    </div>");
+        }
+        if (_auditSimulation.LowCount > 0)
+        {
+            sb.AppendLine("    <div class=\"audit-count\">");
+            sb.AppendLine($"      <span class=\"audit-count-value\" style=\"color: var(--text-muted)\">{_auditSimulation.LowCount}</span>");
+            sb.AppendLine("      <span class=\"audit-count-label\">Low</span>");
+            sb.AppendLine("    </div>");
+        }
+
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // Findings table
+        sb.AppendLine("<div class=\"card\">");
+        sb.AppendLine("<table class=\"audit-findings-table\">");
+        sb.AppendLine("  <thead><tr><th>Severity</th><th>CRA Article</th><th>Requirement</th><th>Finding</th><th>Affected</th></tr></thead>");
+        sb.AppendLine("  <tbody>");
+
+        foreach (var finding in _auditSimulation.Findings)
+        {
+            var severityClass = finding.Severity.ToString().ToLowerInvariant();
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td><span class=\"audit-severity-badge {severityClass}\">{finding.Severity}</span></td>");
+            sb.AppendLine($"      <td>{EscapeHtml(finding.ArticleReference)}</td>");
+            sb.AppendLine($"      <td>{EscapeHtml(finding.Requirement)}</td>");
+            sb.AppendLine($"      <td>{EscapeHtml(finding.Finding)}</td>");
+
+            sb.AppendLine("      <td>");
+            if (finding.AffectedPackages.Count > 0)
+            {
+                sb.AppendLine("        <ul class=\"audit-affected-list\">");
+                var shown = finding.AffectedPackages.Take(5);
+                foreach (var pkg in shown)
+                    sb.AppendLine($"          <li>{EscapeHtml(pkg)}</li>");
+                if (finding.AffectedPackages.Count > 5)
+                    sb.AppendLine($"          <li class=\"audit-affected-overflow\">+{finding.AffectedPackages.Count - 5} more</li>");
+                sb.AppendLine("        </ul>");
+            }
+            else
+            {
+                sb.AppendLine("        <span style=\"color: var(--text-muted)\">Project-level</span>");
+            }
+            sb.AppendLine("      </td>");
+            sb.AppendLine("    </tr>");
+        }
+
+        sb.AppendLine("  </tbody>");
+        sb.AppendLine("</table>");
+        sb.AppendLine("</div>");
+    }
+
 }

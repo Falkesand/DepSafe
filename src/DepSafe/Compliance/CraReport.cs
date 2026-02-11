@@ -40,4 +40,5 @@ public sealed class CraReport
     public int? MinPackageHealthScore { get; init; }
     /// <summary>Package ID with the lowest health score.</summary>
     public string? MinHealthScorePackage { get; init; }
+
 }
