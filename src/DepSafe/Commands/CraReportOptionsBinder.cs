@@ -17,6 +17,7 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
     private readonly Option<string?> _signKey;
     private readonly Option<bool> _releaseGate;
     private readonly Option<bool> _evidencePack;
+    private readonly Option<bool> _auditMode;
 
     public CraReportOptionsBinder(
         Argument<string?> path,
@@ -30,7 +31,8 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         Option<bool> sign,
         Option<string?> signKey,
         Option<bool> releaseGate,
-        Option<bool> evidencePack)
+        Option<bool> evidencePack,
+        Option<bool> auditMode)
     {
         _path = path;
         _format = format;
@@ -44,6 +46,7 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         _signKey = signKey;
         _releaseGate = releaseGate;
         _evidencePack = evidencePack;
+        _auditMode = auditMode;
     }
 
     public CraReportOptions Bind(BindingContext bindingContext) => GetBoundValue(bindingContext);
@@ -60,5 +63,6 @@ public sealed class CraReportOptionsBinder : BinderBase<CraReportOptions>
         bindingContext.ParseResult.GetValueForOption(_sign),
         bindingContext.ParseResult.GetValueForOption(_signKey),
         bindingContext.ParseResult.GetValueForOption(_releaseGate),
-        bindingContext.ParseResult.GetValueForOption(_evidencePack));
+        bindingContext.ParseResult.GetValueForOption(_evidencePack),
+        bindingContext.ParseResult.GetValueForOption(_auditMode));
 }

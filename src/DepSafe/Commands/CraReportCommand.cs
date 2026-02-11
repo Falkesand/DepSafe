@@ -66,6 +66,10 @@ public static class CraReportCommand
             ["--evidence-pack"],
             "Bundle all compliance artifacts into a timestamped evidence directory with manifest");
 
+        var auditModeOption = new Option<bool>(
+            ["--audit-mode"],
+            "Simulate CRA conformity assessment with zero-tolerance findings");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -79,10 +83,11 @@ public static class CraReportCommand
             signOption,
             signKeyOption,
             releaseGateOption,
-            evidencePackOption
+            evidencePackOption,
+            auditModeOption
         };
 
-        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption, auditModeOption);
         command.SetHandler(async context =>
         {
             var options = binder.Bind(context.BindingContext);
@@ -161,6 +166,7 @@ public static class CraReportCommand
         var signKey = options.SignKey;
         var releaseGate = options.ReleaseGate;
         var evidencePack = options.EvidencePack;
+        var auditMode = options.AuditMode;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -214,9 +220,9 @@ public static class CraReportCommand
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, ct),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
             _ => 0
         };
 
@@ -241,7 +247,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -493,6 +499,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            auditMode,
             availableVersions,
             ct);
     }
@@ -985,7 +992,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1335,11 +1342,12 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            auditMode,
             availableVersions,
             ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1809,6 +1817,7 @@ public static class CraReportCommand
             signKey,
             releaseGate,
             evidencePack,
+            auditMode,
             availableVersions,
             ct);
     }
@@ -1836,6 +1845,7 @@ public static class CraReportCommand
         string? signKey = null,
         bool releaseGate = false,
         bool evidencePack = false,
+        bool auditMode = false,
         Dictionary<string, List<string>>? availableVersions = null,
         CancellationToken ct = default)
     {
@@ -2672,6 +2682,7 @@ public static class CraReportCommand
         string? signKey = null,
         bool releaseGate = false,
         bool evidencePack = false,
+        bool auditMode = false,
         Dictionary<string, List<string>>? availableVersions = null,
         CancellationToken ct = default)
     {
