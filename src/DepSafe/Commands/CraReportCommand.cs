@@ -465,6 +465,7 @@ public static class CraReportCommand
         foreach (var (name, info) in npmInfoMap)
         {
             availableVersions[name] = info.Versions
+                .Where(v => !v.IsDeprecated)
                 .Select(v => v.Version)
                 .ToList();
         }
@@ -1771,6 +1772,7 @@ public static class CraReportCommand
                     foreach (var (name, info) in npmInfoMap)
                     {
                         availableVersions[name] = info.Versions
+                            .Where(v => !v.IsDeprecated)
                             .Select(v => v.Version)
                             .ToList();
                     }

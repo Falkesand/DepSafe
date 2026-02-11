@@ -1062,11 +1062,12 @@ public sealed partial class CraReportGenerator
                 UpgradeEffort.Minor => "minor",
                 _ => "major"
             };
+            var checkmark = item.UpgradeTiers.Count > 1 ? " \u2713" : "";
             var primaryEffortLabel = primaryEffort switch
             {
-                UpgradeEffort.Patch => "Patch \u2713",
-                UpgradeEffort.Minor => "Minor \u2713",
-                _ => "Major \u2713"
+                UpgradeEffort.Patch => $"Patch{checkmark}",
+                UpgradeEffort.Minor => $"Minor{checkmark}",
+                _ => $"Major{checkmark}"
             };
 
             sb.AppendLine("    <tr>");
