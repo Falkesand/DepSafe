@@ -487,4 +487,31 @@ public class RemediationPrioritizerTests
         Assert.Equal(2, majorTier.CvesFixed);
         Assert.Equal(2, majorTier.TotalCves);
     }
+
+    [Fact]
+    public void UpgradeTiers_WithMultipleTiers_DataShape()
+    {
+        var item = new RemediationRoadmapItem
+        {
+            PackageId = "TestPkg",
+            CurrentVersion = "1.0.0",
+            RecommendedVersion = "1.0.3",
+            CveCount = 2,
+            CveIds = ["CVE-2024-0001", "CVE-2024-0002"],
+            ScoreLift = 5,
+            Effort = UpgradeEffort.Patch,
+            PriorityScore = 100,
+            UpgradeTiers =
+            [
+                new UpgradeTier("1.0.3", UpgradeEffort.Patch, 1, 2, true),
+                new UpgradeTier("2.0.0", UpgradeEffort.Major, 2, 2, false),
+            ],
+        };
+
+        Assert.Equal(2, item.UpgradeTiers.Count);
+        Assert.True(item.UpgradeTiers[0].IsRecommended);
+        Assert.False(item.UpgradeTiers[1].IsRecommended);
+        Assert.Equal("1/2", $"{item.UpgradeTiers[0].CvesFixed}/{item.UpgradeTiers[0].TotalCves}");
+        Assert.Equal("2/2", $"{item.UpgradeTiers[1].CvesFixed}/{item.UpgradeTiers[1].TotalCves}");
+    }
 }
