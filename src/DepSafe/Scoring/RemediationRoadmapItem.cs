@@ -18,4 +18,7 @@ public sealed class RemediationRoadmapItem
 
     /// <summary>Computed priority score for sorting (higher = more urgent).</summary>
     public int PriorityScore { get; init; }
+
+    /// <summary>Available upgrade tiers ranked by effort (patch → minor → major). Only distinct tiers included.</summary>
+    public List<UpgradeTier> UpgradeTiers { get; init; } = [];
 }
