@@ -4,7 +4,7 @@ using DepSafe.Scoring;
 namespace DepSafe.Compliance;
 
 /// <summary>
-/// Simulates a CRA compliance audit by evaluating 12 checks grounded in
+/// Simulates a CRA compliance audit by evaluating 13 checks grounded in
 /// specific EU Cyber Resilience Act articles and annexes.
 /// </summary>
 public static class AuditSimulator
@@ -43,6 +43,9 @@ public static class AuditSimulator
 
         // 5. Art. 13(5) — Third-party component due diligence
         CheckComponentDueDiligence(findings, allPackages);
+
+        // 5b. Art. 13(5) — Maintainer trust due diligence
+        CheckMaintainerTrust(allPackages, findings);
 
         // 6. Annex I §2(7) — Secure update distribution
         CheckProvenanceVerification(findings, provenanceResults);
@@ -249,6 +252,30 @@ public static class AuditSimulator
                 $"{affectedPackages.Count} package(s) have critically low health scores (below 40), indicating insufficient due diligence",
                 AuditSeverity.High,
                 affectedPackages));
+        }
+    }
+
+    /// <summary>
+    /// Check 5b: Art. 13(5) — Third-party component maintainer due diligence.
+    /// Packages with critical maintainer trust (score &lt; 40) indicate supply chain risk.
+    /// </summary>
+    private static void CheckMaintainerTrust(
+        IReadOnlyList<PackageHealth> allPackages,
+        List<AuditFinding> findings)
+    {
+        var criticalTrustPackages = allPackages
+            .Where(p => p.MaintainerTrust is not null && p.MaintainerTrust.Score < 40)
+            .Select(p => p.PackageId)
+            .ToList();
+
+        if (criticalTrustPackages.Count > 0)
+        {
+            findings.Add(new AuditFinding(
+                ArticleReference: "CRA Art. 13(5) \u2014 Maintainer Due Diligence",
+                Requirement: "Exercise due diligence regarding third-party component maintainer reliability",
+                Finding: $"{criticalTrustPackages.Count} package(s) with critical maintainer trust score (< 40): single-maintainer risk, low community engagement, or stale maintenance",
+                Severity: AuditSeverity.High,
+                AffectedPackages: criticalTrustPackages));
         }
     }
 

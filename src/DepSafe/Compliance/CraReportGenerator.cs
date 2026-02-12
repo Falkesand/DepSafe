@@ -501,6 +501,61 @@ public sealed partial class CraReportGenerator
             });
         }
 
+        // CRA Art. 13(5) - Maintainer Trust (supply chain due diligence on maintainer reliability)
+        {
+            var packages = healthReport.Packages;
+            var packagesWithTrust = packages
+                .Where(p => p.MaintainerTrust is not null)
+                .ToList();
+
+            if (packagesWithTrust.Count == 0)
+            {
+                complianceItems.Add(new CraComplianceItem
+                {
+                    Requirement = "CRA Art. 13(5) - Maintainer Trust",
+                    Description = "Exercise due diligence on third-party component maintainer reliability: contributor diversity, release discipline, community health",
+                    Status = CraComplianceStatus.Review,
+                    Evidence = "No maintainer trust data available (GitHub data not fetched)",
+                    Recommendation = "Run without --skip-github to enable maintainer trust scoring"
+                });
+            }
+            else
+            {
+                var criticalTrustPackages = packagesWithTrust
+                    .Where(p => p.MaintainerTrust!.Score < 40)
+                    .Select(p => p.PackageId)
+                    .ToList();
+
+                var lowTrustPackages = packagesWithTrust
+                    .Where(p => p.MaintainerTrust!.Score >= 40 && p.MaintainerTrust.Score < 60)
+                    .Select(p => p.PackageId)
+                    .ToList();
+
+                var trustStatus = criticalTrustPackages.Count > 0
+                    ? CraComplianceStatus.NonCompliant
+                    : lowTrustPackages.Count > 0
+                        ? CraComplianceStatus.ActionRequired
+                        : CraComplianceStatus.Compliant;
+
+                var trustEvidence = criticalTrustPackages.Count > 0
+                    ? $"{criticalTrustPackages.Count} package(s) with critical maintainer trust: {string.Join(", ", criticalTrustPackages.Take(5))}"
+                    : lowTrustPackages.Count > 0
+                        ? $"{lowTrustPackages.Count} package(s) with low maintainer trust: {string.Join(", ", lowTrustPackages.Take(5))}"
+                        : "All packages have adequate maintainer trust scores";
+
+                complianceItems.Add(new CraComplianceItem
+                {
+                    Requirement = "CRA Art. 13(5) - Maintainer Trust",
+                    Description = "Exercise due diligence on third-party component maintainer reliability: contributor diversity, release discipline, community health",
+                    Status = trustStatus,
+                    Evidence = trustEvidence,
+                    Recommendation = criticalTrustPackages.Count > 0
+                        ? "Investigate alternatives for critical-trust packages. Single-maintainer packages with low activity pose supply chain risk."
+                        : null
+                });
+            }
+        }
+
         // Calculate CRA Readiness Score
         var craReadinessScore = CalculateCraReadinessScore(complianceItems);
 
@@ -580,6 +635,7 @@ public sealed partial class CraReportGenerator
         ["CRA Art. 10 - Cryptographic Compliance"] = 1,
         ["CRA Art. 10 - Supply Chain Integrity"] = 1,
         ["CRA Art. 14 - Incident Reporting"] = 12,
+        ["CRA Art. 13(5) - Maintainer Trust"] = 8,
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     public static int CalculateCraReadinessScore(List<CraComplianceItem> items)
@@ -788,6 +844,17 @@ public sealed partial class CraReportGenerator
                 : "<span class=\"nav-badge success\">0</span>";
             sb.AppendLine($"          Audit Simulation{auditBadge}</a></li>");
         }
+        if (_maintainerTrustPackages is not null)
+        {
+            var trustPackagesWithData = _maintainerTrustPackages.Where(p => p.MaintainerTrust is not null).ToList();
+            var criticalTrustCount = trustPackagesWithData.Count(p => p.MaintainerTrust!.Tier == Models.MaintainerTrustTier.Critical);
+            var lowTrustCount = trustPackagesWithData.Count(p => p.MaintainerTrust!.Tier == Models.MaintainerTrustTier.Low);
+            var trustBadgeClass = criticalTrustCount > 0 ? "critical" : lowTrustCount > 0 ? "warning" : "success";
+            var trustBadgeValue = criticalTrustCount + lowTrustCount;
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('maintainer-trust')\" data-section=\"maintainer-trust\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/><path d=\"M23 21v-2a4 4 0 00-3-3.87\"/><path d=\"M16 3.13a4 4 0 010 7.75\"/></svg>");
+            sb.AppendLine($"          Maintainer Trust<span class=\"nav-badge {trustBadgeClass}\">{trustBadgeValue}</span></a></li>");
+        }
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
@@ -930,6 +997,13 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</section>");
         }
 
+        if (_maintainerTrustPackages is not null)
+        {
+            sb.AppendLine("<section id=\"maintainer-trust\" class=\"section\">");
+            GenerateMaintainerTrustSection(sb);
+            sb.AppendLine("</section>");
+        }
+
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("<section id=\"remediation\" class=\"section\">");
@@ -1060,6 +1134,9 @@ public sealed partial class CraReportGenerator
 
     // Audit simulation (v2.4)
     private AuditSimulationResult? _auditSimulation;
+
+    // Maintainer trust (v2.5)
+    private IReadOnlyList<PackageHealth>? _maintainerTrustPackages;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1261,6 +1338,11 @@ public sealed partial class CraReportGenerator
     public void SetAuditFindings(AuditSimulationResult result)
     {
         _auditSimulation = result;
+    }
+
+    public void SetMaintainerTrustData(IReadOnlyList<PackageHealth> packages)
+    {
+        _maintainerTrustPackages = packages;
     }
 
     public SbomValidationResult? GetSbomValidation() => _sbomValidation;

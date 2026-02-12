@@ -11,7 +11,8 @@ public class AuditSimulatorTests
         int score = 80,
         string? license = "MIT",
         bool hasKev = false,
-        int patchNotApplied = 0) => new()
+        int patchNotApplied = 0,
+        MaintainerTrust? maintainerTrust = null) => new()
     {
         PackageId = id,
         Version = version,
@@ -21,6 +22,7 @@ public class AuditSimulatorTests
         License = license,
         HasKevVulnerability = hasKev,
         PatchAvailableNotAppliedCount = patchNotApplied,
+        MaintainerTrust = maintainerTrust,
     };
 
     private static CraReport CreateMinimalCraReport() => new()
@@ -249,7 +251,7 @@ public class AuditSimulatorTests
             hasReadme: true,
             hasChangelog: true);
 
-        var finding = Assert.Single(result.Findings, f => f.ArticleReference.Contains("Art. 13(5)"));
+        var finding = Assert.Single(result.Findings, f => f.ArticleReference == "CRA Art. 13(5)");
         Assert.Equal(AuditSeverity.High, finding.Severity);
     }
 
@@ -438,6 +440,43 @@ public class AuditSimulatorTests
 
         var finding = Assert.Single(result.Findings, f => f.Severity == AuditSeverity.Low);
         Assert.Contains("README", finding.Finding);
+    }
+
+    [Fact]
+    public void LowMaintainerTrust_HighAuditFinding()
+    {
+        var packages = new[]
+        {
+            CreatePackage(
+                maintainerTrust: new MaintainerTrust(
+                    Score: 25,
+                    Tier: MaintainerTrustTier.Critical,
+                    ContributorCount: 1,
+                    TotalCommits: 50,
+                    TotalReleases: 3,
+                    ReleaseAuthorCount: 1,
+                    TopReleaseAuthor: "solo-dev")),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>();
+        var report = CreateMinimalCraReport();
+
+        var result = AuditSimulator.Analyze(
+            packages,
+            vulns,
+            report,
+            CreateCleanSbomValidation(),
+            [new ProvenanceResult { PackageId = "TestPkg", Version = "1.0.0", HasRepositorySignature = true }],
+            CreateCleanAttackSurface(),
+            hasSecurityPolicy: true,
+            packagesWithSecurityPolicy: 1,
+            packagesWithRepo: 1,
+            config: new CraConfig { SecurityContact = "security@test.com", SupportPeriodEnd = "2028-12" },
+            hasReadme: true,
+            hasChangelog: true);
+
+        var finding = Assert.Single(result.Findings, f =>
+            f.ArticleReference.Contains("Art. 13(5)") && f.Finding.Contains("maintainer trust"));
+        Assert.Equal(AuditSeverity.High, finding.Severity);
     }
 
     [Fact]

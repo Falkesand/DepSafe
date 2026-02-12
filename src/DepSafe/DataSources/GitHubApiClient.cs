@@ -176,11 +176,21 @@ public sealed partial class GitHubApiClient : IDisposable
                                 ... on Commit {{
                                     history(first: 1) {{
                                         nodes {{ committedDate }}
+                                        totalCount
                                     }}
                                 }}
                             }}
                         }}
                         securityPolicy: object(expression: ""HEAD:SECURITY.md"") {{ id }}
+                        mentionableUsers {{ totalCount }}
+                        releases(last: 5, orderBy: {{field: CREATED_AT, direction: DESC}}) {{
+                            totalCount
+                            nodes {{
+                                createdAt
+                                tagName
+                                author {{ login }}
+                            }}
+                        }}
                     }}");
             }
             queryBuilder.Append(" }");
@@ -290,6 +300,7 @@ public sealed partial class GitHubApiClient : IDisposable
             DateTime.TryParse(pa.GetString(), out pushedAt);
         }
 
+        var totalCommits = 0;
         var lastCommitDate = pushedAt;
         if (repoData.TryGetProperty("defaultBranchRef", out var dbr) &&
             dbr.ValueKind != JsonValueKind.Null &&
@@ -304,6 +315,9 @@ public sealed partial class GitHubApiClient : IDisposable
             {
                 DateTime.TryParse(cd.GetString(), out lastCommitDate);
             }
+
+            if (history.TryGetProperty("totalCount", out var historyTotalCount))
+                totalCommits = historyTotalCount.GetInt32();
         }
 
         string? license = null;
@@ -318,6 +332,44 @@ public sealed partial class GitHubApiClient : IDisposable
         var hasSecurityPolicy = repoData.TryGetProperty("securityPolicy", out var sp) &&
                                 sp.ValueKind != JsonValueKind.Null;
 
+        // Parse contributor count (mentionableUsers)
+        var contributorCount = 0;
+        if (repoData.TryGetProperty("mentionableUsers", out var mu) &&
+            mu.TryGetProperty("totalCount", out var muCount))
+        {
+            contributorCount = muCount.GetInt32();
+        }
+
+        // Parse releases
+        var totalReleases = 0;
+        var recentReleases = new List<ReleaseInfo>();
+        if (repoData.TryGetProperty("releases", out var rel))
+        {
+            if (rel.TryGetProperty("totalCount", out var relCount))
+                totalReleases = relCount.GetInt32();
+
+            if (rel.TryGetProperty("nodes", out var relNodes))
+            {
+                foreach (var node in relNodes.EnumerateArray())
+                {
+                    var tagName = node.TryGetProperty("tagName", out var tn) ? tn.GetString() ?? "" : "";
+                    var createdAt = DateTime.MinValue;
+                    if (node.TryGetProperty("createdAt", out var ca) && ca.ValueKind == JsonValueKind.String)
+                        DateTime.TryParse(ca.GetString(), out createdAt);
+
+                    string? authorLogin = null;
+                    if (node.TryGetProperty("author", out var auth) &&
+                        auth.ValueKind != JsonValueKind.Null &&
+                        auth.TryGetProperty("login", out var login))
+                    {
+                        authorLogin = login.GetString();
+                    }
+
+                    recentReleases.Add(new ReleaseInfo(tagName, createdAt, authorLogin));
+                }
+            }
+        }
+
         return new GitHubRepoInfo
         {
             Owner = owner,
@@ -331,8 +383,12 @@ public sealed partial class GitHubApiClient : IDisposable
             IsArchived = isArchived,
             IsFork = isFork,
             License = license,
-            CommitsLastYear = 0, // Not fetched in batch for simplicity
-            HasSecurityPolicy = hasSecurityPolicy
+            CommitsLastYear = 0, // Superseded by TotalCommits
+            HasSecurityPolicy = hasSecurityPolicy,
+            ContributorCount = contributorCount,
+            TotalCommits = totalCommits,
+            TotalReleases = totalReleases,
+            RecentReleases = recentReleases,
         };
     }
 

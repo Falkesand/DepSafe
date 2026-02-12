@@ -2164,6 +2164,8 @@ public static class CraReportCommand
             reportGenerator.SetAuditFindings(auditResult);
         }
 
+        reportGenerator.SetMaintainerTrustData(allPackages);
+
         // Phase 1 actionable findings for HTML dashboard
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
@@ -3027,6 +3029,8 @@ public static class CraReportCommand
                 auditHasChangelog);
             reportGenerator.SetAuditFindings(auditResult);
         }
+
+        reportGenerator.SetMaintainerTrustData(allPackages);
 
         // Phase 1 actionable findings for HTML dashboard
         {

@@ -22,6 +22,14 @@ public sealed partial class CraReportGenerator
         _ => "critical"
     };
 
+    internal static string GetTrustScoreClass(int score) => score switch
+    {
+        >= 80 => "healthy",
+        >= 60 => "watch",
+        >= 40 => "warning",
+        _ => "critical"
+    };
+
     private static string GetCraBadgeTooltip(PackageHealth? pkg)
     {
         if (pkg is null) return "CRA Readiness Score";
