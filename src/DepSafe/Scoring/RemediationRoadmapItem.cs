@@ -1,3 +1,5 @@
+using DepSafe.Models;
+
 namespace DepSafe.Scoring;
 
 /// <summary>
@@ -7,10 +9,10 @@ public sealed class RemediationRoadmapItem
 {
     public required string PackageId { get; init; }
     public required string CurrentVersion { get; init; }
-    public required string RecommendedVersion { get; init; }
-    public required int CveCount { get; init; }
-    public required List<string> CveIds { get; init; }
-    public required int ScoreLift { get; init; }
+    public string RecommendedVersion { get; init; } = "";
+    public int CveCount { get; init; }
+    public List<string> CveIds { get; init; } = [];
+    public int ScoreLift { get; init; }
     public required UpgradeEffort Effort { get; init; }
     public bool HasKevVulnerability { get; init; }
     public double MaxEpssProbability { get; init; }
@@ -21,4 +23,16 @@ public sealed class RemediationRoadmapItem
 
     /// <summary>Available upgrade tiers ranked by effort (patch → minor → major). Only distinct tiers included.</summary>
     public List<UpgradeTier> UpgradeTiers { get; init; } = [];
+
+    /// <summary>Why this package appears in the roadmap.</summary>
+    public RemediationReason Reason { get; init; } = RemediationReason.Vulnerability;
+
+    /// <summary>Direct or transitive dependency.</summary>
+    public DependencyType DependencyType { get; init; } = DependencyType.Direct;
+
+    /// <summary>Parent dependency chain for transitives (e.g. "Newtonsoft.Json → yaml-parser").</summary>
+    public string? ParentChain { get; init; }
+
+    /// <summary>Human-readable action text (e.g. "Upgrade 1.0 → 2.0", "Replace deprecated package").</summary>
+    public string? ActionText { get; init; }
 }
