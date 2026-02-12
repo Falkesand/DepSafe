@@ -191,21 +191,13 @@ Before bumping a major dependency, estimate combined risk:
 
 ---
 
-## Phase 3 — Visualization & Reporting
+## Phase 3 — Visualization & Reporting ✅
 
-### 3.1 Transitive Dependency Risk Heatmap
+### 3.1 Transitive Dependency Risk Heatmap ✅
 
 **Effort:** Medium | **Builds on:** Dependency trees, health scores
 
-Visual graph in the HTML report:
-
-- Node size = how widely depended on (reverse dependency count)
-- Color = risk score (green/yellow/red)
-- Border = has known vulnerabilities
-- Edges = dependency relationships
-
-**Already have:** Full dependency trees, health scores, reverse dependency lookup.
-**Gap:** Graph rendering (D3.js or similar in HTML report).
+**Implemented:** Interactive force-directed graph (Fruchterman-Reingold, vanilla JS + SVG) in the HTML report. Nodes sized by reverse dependency count, colored by health score (4-tier: green/yellow/orange/red), bordered by vulnerability status (solid for CVE, dashed for KEV). Features: drag, zoom, hover highlighting with tooltips, click-to-navigate to package details, label toggling. Caps at 80 nodes for large projects (>150 packages). Lazy-initialized on section activation. Self-contained (no external libraries).
 
 ---
 

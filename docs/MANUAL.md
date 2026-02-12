@@ -460,12 +460,13 @@ The HTML report contains these interactive sections:
 7. **Security Budget** - ROI-ranked remediation priorities (High ROI vs Low ROI)
 8. **Release Readiness** - Go/no-go signal with blocking and advisory items (when `--release-gate` used)
 9. **Dependency Tree** - Interactive tree visualization with health indicators
-10. **Attack Surface Analysis** - Dependency depth, transitive ratio, heavy packages
-11. **Maintainer Trust** - Per-package trust scores with contributor analysis
-12. **Trend Analysis** - Historical compliance tracking (when `--snapshot` used)
-13. **Audit Simulation** - Zero-tolerance conformity assessment (when `--audit-mode` used)
-14. **Policy Violations** - Threshold violations from `.cra-config.json`
-15. **SBOM & VEX** - Embedded SBOM and VEX documents with export buttons
+10. **Risk Heatmap** - Force-directed graph showing dependency risk concentration (node size = dependents, color = health, border = vulnerabilities)
+11. **Attack Surface Analysis** - Dependency depth, transitive ratio, heavy packages
+12. **Maintainer Trust** - Per-package trust scores with contributor analysis
+13. **Trend Analysis** - Historical compliance tracking (when `--snapshot` used)
+14. **Audit Simulation** - Zero-tolerance conformity assessment (when `--audit-mode` used)
+15. **Policy Violations** - Threshold violations from `.cra-config.json`
+16. **SBOM & VEX** - Embedded SBOM and VEX documents with export buttons
 
 ### 5.2 Compliance Items
 

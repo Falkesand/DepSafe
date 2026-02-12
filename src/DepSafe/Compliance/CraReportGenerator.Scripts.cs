@@ -38,6 +38,7 @@ function showSection(sectionId) {{
   document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
   document.getElementById(sectionId).classList.add('active');
   document.querySelector(`[data-section='${{sectionId}}']`).classList.add('active');
+  if (sectionId === 'risk-heatmap' && typeof initHeatmap === 'function') initHeatmap();
 }}
 
 function togglePackage(header) {{
@@ -784,6 +785,290 @@ document.querySelectorAll('.field-card-clickable').forEach(function(card) {{
     card.classList.toggle('expanded', !isOpen);
   }});
 }});
+
+// ── Risk Heatmap: Force-directed graph ──
+var _heatmapInitialized = false;
+var _heatmapLabelsVisible = true;
+var _heatmapTransform = {{ x: 0, y: 0, scale: 1 }};
+
+function initHeatmap() {{
+  if (_heatmapInitialized) return;
+  var dataEl = document.getElementById('heatmap-graph-data');
+  if (!dataEl) return;
+  _heatmapInitialized = true;
+  var graph = JSON.parse(dataEl.textContent);
+  if (!graph.nodes.length) return;
+  runHeatmapLayout(graph);
+}}
+
+function runHeatmapLayout(graph) {{
+  var svg = document.getElementById('heatmap-svg');
+  var container = document.getElementById('heatmap-container');
+  var W = container.clientWidth || 800;
+  var H = container.clientHeight || 600;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  var nodes = graph.nodes;
+  var edges = graph.edges;
+  var nodeMap = {{}};
+  var rng = 1;
+  nodes.forEach(function(n) {{
+    rng = (rng * 16807 + 0) % 2147483647;
+    n.x = 50 + (rng % (W - 100));
+    rng = (rng * 16807 + 0) % 2147483647;
+    n.y = 50 + (rng % (H - 100));
+    n.vx = 0;
+    n.vy = 0;
+    n.r = Math.min(30, Math.max(4, 4 + Math.sqrt(n.deps) * 3));
+    nodeMap[n.id] = n;
+  }});
+
+  // Resolve edge references
+  var resolvedEdges = [];
+  edges.forEach(function(e) {{
+    var s = nodeMap[e.source];
+    var t = nodeMap[e.target];
+    if (s && t) resolvedEdges.push({{ source: s, target: t }});
+  }});
+
+  // Fruchterman-Reingold
+  var area = W * H;
+  var k = Math.sqrt(area / nodes.length);
+  var temp = W / 10;
+  var iterations = 200;
+
+  for (var iter = 0; iter < iterations; iter++) {{
+    // Repulsive forces
+    for (var i = 0; i < nodes.length; i++) {{
+      nodes[i].vx = 0;
+      nodes[i].vy = 0;
+      for (var j = 0; j < nodes.length; j++) {{
+        if (i === j) continue;
+        var dx = nodes[i].x - nodes[j].x;
+        var dy = nodes[i].y - nodes[j].y;
+        var dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        var force = (k * k) / dist;
+        nodes[i].vx += (dx / dist) * force;
+        nodes[i].vy += (dy / dist) * force;
+      }}
+    }}
+    // Attractive forces
+    resolvedEdges.forEach(function(e) {{
+      var dx = e.target.x - e.source.x;
+      var dy = e.target.y - e.source.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      var force = (dist * dist) / k;
+      var fx = (dx / dist) * force;
+      var fy = (dy / dist) * force;
+      e.source.vx += fx;
+      e.source.vy += fy;
+      e.target.vx -= fx;
+      e.target.vy -= fy;
+    }});
+    // Apply with temperature limit
+    nodes.forEach(function(n) {{
+      var disp = Math.sqrt(n.vx * n.vx + n.vy * n.vy) || 0.01;
+      var scale = Math.min(disp, temp) / disp;
+      n.x += n.vx * scale;
+      n.y += n.vy * scale;
+      n.x = Math.max(n.r + 10, Math.min(W - n.r - 10, n.x));
+      n.y = Math.max(n.r + 10, Math.min(H - n.r - 10, n.y));
+    }});
+    temp *= 0.95;
+  }}
+
+  renderHeatmap(svg, nodes, resolvedEdges, W, H);
+  setupHeatmapInteraction(svg, nodes, container, W, H);
+}}
+
+function nodeColor(score) {{
+  if (score >= 80) return 'var(--success)';
+  if (score >= 60) return 'var(--watch)';
+  if (score >= 40) return 'var(--warning)';
+  return 'var(--danger)';
+}}
+
+function renderHeatmap(svg, nodes, edges, W, H) {{
+  svg.innerHTML = '';
+  var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('id', 'heatmap-root');
+
+  // Edges
+  edges.forEach(function(e) {{
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', e.source.x);
+    line.setAttribute('y1', e.source.y);
+    line.setAttribute('x2', e.target.x);
+    line.setAttribute('y2', e.target.y);
+    line.setAttribute('stroke', 'var(--border-primary)');
+    line.setAttribute('stroke-opacity', '0.25');
+    line.setAttribute('stroke-width', '1');
+    line.dataset.source = e.source.id;
+    line.dataset.target = e.target.id;
+    g.appendChild(line);
+  }});
+
+  // Nodes
+  nodes.forEach(function(n) {{
+    var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', n.x);
+    circle.setAttribute('cy', n.y);
+    circle.setAttribute('r', n.r);
+    circle.setAttribute('fill', nodeColor(n.score));
+    circle.setAttribute('fill-opacity', '0.85');
+    if (n.kev) {{
+      circle.setAttribute('stroke', 'var(--danger)');
+      circle.setAttribute('stroke-width', '3');
+      circle.setAttribute('stroke-dasharray', '4 2');
+    }} else if (n.vuln) {{
+      circle.setAttribute('stroke', 'var(--danger)');
+      circle.setAttribute('stroke-width', '2.5');
+    }}
+    circle.dataset.nodeId = n.id;
+    g.appendChild(circle);
+  }});
+
+  // Labels (only for important nodes)
+  nodes.forEach(function(n) {{
+    if (n.deps >= 3 || n.vuln || n.kev) {{
+      var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', n.x);
+      text.setAttribute('y', n.y - n.r - 4);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('class', 'heatmap-label');
+      // Truncate long names
+      var label = n.id.length > 20 ? n.id.substring(0, 18) + '\u2026' : n.id;
+      text.textContent = label;
+      text.dataset.nodeId = n.id;
+      g.appendChild(text);
+    }}
+  }});
+
+  svg.appendChild(g);
+}}
+
+function setupHeatmapInteraction(svg, nodes, container, W, H) {{
+  var tooltip = document.getElementById('heatmap-tooltip');
+  var root = document.getElementById('heatmap-root');
+  var dragging = null;
+
+  // Tooltip on hover
+  svg.addEventListener('mouseover', function(e) {{
+    var circle = e.target.closest('circle[data-node-id]');
+    if (!circle) return;
+    var id = circle.dataset.nodeId;
+    var n = nodes.find(function(x) {{ return x.id === id; }});
+    if (!n) return;
+
+    // Highlight: dim all, brighten connected
+    svg.querySelectorAll('circle').forEach(function(c) {{ c.setAttribute('fill-opacity', '0.2'); }});
+    svg.querySelectorAll('line').forEach(function(l) {{ l.setAttribute('stroke-opacity', '0.05'); }});
+    circle.setAttribute('fill-opacity', '1');
+    svg.querySelectorAll('line').forEach(function(l) {{
+      if (l.dataset.source === id || l.dataset.target === id) {{
+        l.setAttribute('stroke-opacity', '0.6');
+        l.setAttribute('stroke-width', '2');
+        var otherId = l.dataset.source === id ? l.dataset.target : l.dataset.source;
+        var otherCircle = svg.querySelector('circle[data-node-id=""' + CSS.escape(otherId) + '""]');
+        if (otherCircle) otherCircle.setAttribute('fill-opacity', '0.7');
+      }}
+    }});
+
+    tooltip.innerHTML = '<div class=""tt-name"">' + escapeHtml(n.id) + '</div>'
+      + '<div class=""tt-row""><span>Health</span><span>' + n.score + '/100</span></div>'
+      + '<div class=""tt-row""><span>Dependents</span><span>' + n.deps + '</span></div>'
+      + '<div class=""tt-row""><span>Depth</span><span>' + n.depth + '</span></div>'
+      + (n.vuln ? '<div class=""tt-row""><span>Vulnerable</span><span style=""color:var(--danger)"">Yes' + (n.kev ? ' (KEV)' : '') + '</span></div>' : '');
+    tooltip.classList.add('visible');
+
+    var rect = container.getBoundingClientRect();
+    var cx = parseFloat(circle.getAttribute('cx'));
+    var cy = parseFloat(circle.getAttribute('cy'));
+    tooltip.style.left = (cx * _heatmapTransform.scale + _heatmapTransform.x + 15) + 'px';
+    tooltip.style.top = (cy * _heatmapTransform.scale + _heatmapTransform.y - 10) + 'px';
+  }});
+
+  svg.addEventListener('mouseout', function(e) {{
+    if (e.target.tagName === 'circle') {{
+      svg.querySelectorAll('circle').forEach(function(c) {{ c.setAttribute('fill-opacity', '0.85'); }});
+      svg.querySelectorAll('line').forEach(function(l) {{ l.setAttribute('stroke-opacity', '0.25'); l.setAttribute('stroke-width', '1'); }});
+      tooltip.classList.remove('visible');
+    }}
+  }});
+
+  // Click: navigate to packages section
+  svg.addEventListener('click', function(e) {{
+    var circle = e.target.closest('circle[data-node-id]');
+    if (!circle || dragging) return;
+    var id = circle.dataset.nodeId;
+    showSection('packages');
+    var pkgCard = document.getElementById('pkg-' + id) || document.getElementById('pkg-' + id.toLowerCase());
+    if (pkgCard) {{
+      pkgCard.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      pkgCard.classList.add('expanded');
+    }}
+  }});
+
+  // Zoom
+  container.addEventListener('wheel', function(e) {{
+    e.preventDefault();
+    var delta = e.deltaY > 0 ? 0.9 : 1.1;
+    _heatmapTransform.scale *= delta;
+    _heatmapTransform.scale = Math.max(0.3, Math.min(5, _heatmapTransform.scale));
+    applyHeatmapTransform(root);
+  }}, {{ passive: false }});
+
+  // Drag nodes
+  svg.addEventListener('mousedown', function(e) {{
+    var circle = e.target.closest('circle[data-node-id]');
+    if (!circle) return;
+    dragging = circle;
+    e.preventDefault();
+  }});
+  document.addEventListener('mousemove', function(e) {{
+    if (!dragging) return;
+    var rect = svg.getBoundingClientRect();
+    var svgX = (e.clientX - rect.left - _heatmapTransform.x) / _heatmapTransform.scale;
+    var svgY = (e.clientY - rect.top - _heatmapTransform.y) / _heatmapTransform.scale;
+    var id = dragging.dataset.nodeId;
+    dragging.setAttribute('cx', svgX);
+    dragging.setAttribute('cy', svgY);
+    // Move connected edges
+    svg.querySelectorAll('line').forEach(function(l) {{
+      if (l.dataset.source === id) {{ l.setAttribute('x1', svgX); l.setAttribute('y1', svgY); }}
+      if (l.dataset.target === id) {{ l.setAttribute('x2', svgX); l.setAttribute('y2', svgY); }}
+    }});
+    // Move label
+    var labels = svg.querySelectorAll('text.heatmap-label');
+    labels.forEach(function(t) {{
+      if (t.dataset && t.dataset.nodeId === id) {{
+        t.setAttribute('x', svgX);
+        var r = parseFloat(dragging.getAttribute('r'));
+        t.setAttribute('y', svgY - r - 4);
+      }}
+    }});
+  }});
+  document.addEventListener('mouseup', function() {{
+    dragging = null;
+  }});
+}}
+
+function applyHeatmapTransform(root) {{
+  if (!root) return;
+  root.setAttribute('transform', 'translate(' + _heatmapTransform.x + ',' + _heatmapTransform.y + ') scale(' + _heatmapTransform.scale + ')');
+}}
+
+function resetHeatmapZoom() {{
+  _heatmapTransform = {{ x: 0, y: 0, scale: 1 }};
+  var root = document.getElementById('heatmap-root');
+  applyHeatmapTransform(root);
+}}
+
+function toggleHeatmapLabels() {{
+  _heatmapLabelsVisible = !_heatmapLabelsVisible;
+  var labels = document.querySelectorAll('#heatmap-root text.heatmap-label');
+  labels.forEach(function(t) {{ t.style.display = _heatmapLabelsVisible ? '' : 'none'; }});
+}}
 </script>";
     }
 }

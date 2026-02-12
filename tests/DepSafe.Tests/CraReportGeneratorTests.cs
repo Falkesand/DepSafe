@@ -628,6 +628,107 @@ public class CraReportGeneratorTests
         Assert.Contains("<th>Risk</th>", html);
     }
 
+    // --- Risk Heatmap ---
+
+    [Fact]
+    public void GenerateHtml_WithDependencyTree_RendersHeatmapSection()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        gen.SetDependencyTree(new DependencyTree
+        {
+            ProjectPath = "test.csproj",
+            ProjectType = ProjectType.DotNet,
+            Roots = [
+                new DependencyTreeNode
+                {
+                    PackageId = "PkgA",
+                    Version = "1.0.0",
+                    Depth = 0,
+                    DependencyType = DependencyType.Direct,
+                    Children = [
+                        new DependencyTreeNode
+                        {
+                            PackageId = "PkgB",
+                            Version = "2.0.0",
+                            Depth = 1,
+                            DependencyType = DependencyType.Transitive,
+                        }
+                    ]
+                }
+            ]
+        });
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("id=\"risk-heatmap\"", html);
+        Assert.Contains("risk-heatmap-container", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_WithDependencyTree_EmbedsGraphJson()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        gen.SetDependencyTree(new DependencyTree
+        {
+            ProjectPath = "test.csproj",
+            ProjectType = ProjectType.DotNet,
+            Roots = [
+                new DependencyTreeNode
+                {
+                    PackageId = "TestPkg",
+                    Version = "1.0.0",
+                    Depth = 0,
+                    DependencyType = DependencyType.Direct,
+                }
+            ]
+        });
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("heatmap-graph-data", html);
+        Assert.Contains("\"id\":\"TestPkg\"", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_NoDependencyTree_NoHeatmapSection()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        // Don't set any dependency trees
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.DoesNotContain("id=\"risk-heatmap\"", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_WithDependencyTree_HeatmapNavVisible()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        gen.SetDependencyTree(new DependencyTree
+        {
+            ProjectPath = "test.csproj",
+            ProjectType = ProjectType.DotNet,
+            Roots = [
+                new DependencyTreeNode
+                {
+                    PackageId = "NavPkg",
+                    Version = "1.0.0",
+                    Depth = 0,
+                    DependencyType = DependencyType.Direct,
+                }
+            ]
+        });
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("data-section=\"risk-heatmap\"", html);
+        Assert.Contains("Risk Heatmap", html);
+    }
+
     // --- Helper ---
 
     private static CraComplianceItem MakeItem(string requirement, CraComplianceStatus status) => new()

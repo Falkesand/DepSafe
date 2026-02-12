@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using DepSafe.DataSources;
 using DepSafe.Models;
 using DepSafe.Scoring;
@@ -2400,6 +2401,88 @@ public sealed partial class CraReportGenerator
         }
 
         return $"<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><polyline points=\"{string.Join(" ", points)}\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
+    }
+
+    private void GenerateRiskHeatmapSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Dependency Risk Heatmap</h2>");
+        sb.AppendLine("  <p>Interactive visualization showing dependency relationships and risk concentration. Node size reflects how many packages depend on it. Color indicates health score.</p>");
+        sb.AppendLine("</div>");
+
+        if (_dependencyTrees.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <p>No dependency data available for visualization.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        var (nodes, edges) = GraphDataBuilder.Build(_dependencyTrees, _healthLookup);
+
+        if (nodes.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state success\">");
+            sb.AppendLine("  <p>No dependency data available for visualization.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        // Stats summary
+        var vulnCount = nodes.Count(n => n.HasVulnerabilities);
+        var kevCount = nodes.Count(n => n.HasKevVulnerability);
+        var avgScore = (int)nodes.Average(n => n.Score);
+
+        sb.AppendLine("<div class=\"stat-grid\">");
+        sb.AppendLine($"  <div class=\"stat-card\"><div class=\"stat-value\">{nodes.Count}</div><div class=\"stat-label\">Packages Shown</div></div>");
+        sb.AppendLine($"  <div class=\"stat-card\"><div class=\"stat-value\">{edges.Count}</div><div class=\"stat-label\">Dependencies</div></div>");
+        sb.AppendLine($"  <div class=\"stat-card\"><div class=\"stat-value\">{vulnCount}</div><div class=\"stat-label\">Vulnerable</div></div>");
+        if (kevCount > 0)
+            sb.AppendLine($"  <div class=\"stat-card\"><div class=\"stat-value\" style=\"color: var(--danger)\">{kevCount}</div><div class=\"stat-label\">KEV Listed</div></div>");
+        sb.AppendLine($"  <div class=\"stat-card\"><div class=\"stat-value\">{avgScore}</div><div class=\"stat-label\">Avg Health</div></div>");
+        sb.AppendLine("</div>");
+
+        // Controls
+        sb.AppendLine("<div class=\"heatmap-controls\">");
+        sb.AppendLine("  <button class=\"tree-btn\" onclick=\"resetHeatmapZoom()\">Reset Zoom</button>");
+        sb.AppendLine("  <button class=\"tree-btn\" onclick=\"toggleHeatmapLabels()\">Toggle Labels</button>");
+        sb.AppendLine("</div>");
+
+        // Container with SVG, tooltip, legend
+        sb.AppendLine("<div class=\"risk-heatmap-container\" id=\"heatmap-container\">");
+        sb.AppendLine("  <svg id=\"heatmap-svg\"></svg>");
+        sb.AppendLine("  <div class=\"heatmap-tooltip\" id=\"heatmap-tooltip\"></div>");
+        sb.AppendLine("  <div class=\"heatmap-legend\">");
+        sb.AppendLine("    <div class=\"heatmap-legend-title\">Health Score</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\"><span class=\"heatmap-legend-swatch\" style=\"background: var(--success)\"></span> Healthy (80\u2013100)</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\"><span class=\"heatmap-legend-swatch\" style=\"background: var(--watch)\"></span> Watch (60\u201379)</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\"><span class=\"heatmap-legend-swatch\" style=\"background: var(--warning)\"></span> Warning (40\u201359)</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\"><span class=\"heatmap-legend-swatch\" style=\"background: var(--danger)\"></span> Critical (&lt;40)</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-title\" style=\"margin-top: 8px\">Borders</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\"><span class=\"heatmap-legend-swatch\" style=\"border: 2px solid var(--danger); background: transparent\"></span> Has Vulnerabilities</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\"><span class=\"heatmap-legend-swatch\" style=\"border: 2px dashed var(--danger); background: transparent\"></span> KEV Listed</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-title\" style=\"margin-top: 8px\">Node Size</div>");
+        sb.AppendLine("    <div class=\"heatmap-legend-item\">\u2014 Proportional to reverse dependency count</div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // Embed graph data as JSON
+        var nodesJson = JsonSerializer.Serialize(nodes.Select(n => new
+        {
+            id = n.Id,
+            score = n.Score,
+            vuln = n.HasVulnerabilities,
+            kev = n.HasKevVulnerability,
+            depth = n.Depth,
+            deps = n.ReverseDepCount,
+            eco = n.Ecosystem,
+        }));
+        var edgesJson = JsonSerializer.Serialize(edges.Select(e => new
+        {
+            source = e.Source,
+            target = e.Target,
+        }));
+        sb.AppendLine($"<script id=\"heatmap-graph-data\" type=\"application/json\">{{\"nodes\":{nodesJson},\"edges\":{edgesJson}}}</script>");
     }
 
 }
