@@ -1862,6 +1862,17 @@ public static class CraReportCommand
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
         var allPackages = packages.Concat(transitivePackages).ToList();
+
+        if (config?.ExcludePackages.Count > 0)
+        {
+            var beforeCount = allPackages.Count;
+            allPackages = PolicyEvaluator.FilterExcludedPackages(allPackages, config.ExcludePackages);
+            packages = PolicyEvaluator.FilterExcludedPackages(packages, config.ExcludePackages);
+            transitivePackages = PolicyEvaluator.FilterExcludedPackages(transitivePackages, config.ExcludePackages);
+            if (beforeCount > allPackages.Count)
+                AnsiConsole.MarkupLine($"[dim]Excluded {beforeCount - allPackages.Count} package(s) from analysis per .cra-config.json[/]");
+        }
+
         var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
         var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
         foreach (var p in allPackages)
@@ -1932,22 +1943,28 @@ public static class CraReportCommand
             var stale = new List<string>();
             var unmaintained = new List<string>();
             var totalWithRepo = 0;
+            int? maxInactiveMonths = null;
             if (repoInfoMap is not null)
             {
                 foreach (var (packageId, info) in repoInfoMap)
                 {
                     if (info is null) continue;
                     totalWithRepo++;
+                    var daysSinceCommit = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
+                    var months = (int)(daysSinceCommit / 30.44);
+                    if (!maxInactiveMonths.HasValue || months > maxInactiveMonths.Value)
+                        maxInactiveMonths = months;
+
                     if (info.IsArchived) { archived.Add(packageId); unmaintained.Add(packageId); }
                     else
                     {
-                        var daysSinceCommit = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
                         if (daysSinceCommit > 365) stale.Add(packageId);
                         if (daysSinceCommit > 730) unmaintained.Add(packageId);
                     }
                 }
             }
             reportGenerator.SetMaintenanceData(archived, stale, unmaintained, totalWithRepo);
+            reportGenerator.SetMaxInactiveMonths(maxInactiveMonths);
         }
 
         // Set documentation data (F3) - check project files
@@ -2178,17 +2195,17 @@ public static class CraReportCommand
         reportGenerator.SetMaintainerTrustData(allPackages);
 
         // Phase 1 actionable findings for HTML dashboard
+        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
+        PolicyEvaluationResult policyResult;
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
             reportGenerator.SetSecurityBudget(budget);
 
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditMode ? reportGenerator.GetAuditSimulation() : null);
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditResultForExit);
             reportGenerator.SetReleaseReadiness(readiness);
 
-            LicensePolicyResult? licenseResult = null;
-            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
-                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
-            reportGenerator.SetPolicyViolations(licenseResult, config);
+            policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
+            reportGenerator.SetPolicyEvaluation(policyResult, config?.ExcludePackages, config?.ComplianceNotes);
         }
 
         if (string.IsNullOrEmpty(outputPath))
@@ -2304,8 +2321,9 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
-        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages, auditResultForExit);
+        DisplayPolicyViolations(policyResult);
+        var exitCode = policyResult.ExitCode;
+        var violations = policyResult.Violations.Select(v => v.Message).ToList();
 
         if (releaseGate)
             exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
@@ -2752,6 +2770,17 @@ public static class CraReportCommand
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
         var allPackages = packages.Concat(transitivePackages).ToList();
+
+        if (config?.ExcludePackages.Count > 0)
+        {
+            var beforeCount = allPackages.Count;
+            allPackages = PolicyEvaluator.FilterExcludedPackages(allPackages, config.ExcludePackages);
+            packages = PolicyEvaluator.FilterExcludedPackages(packages, config.ExcludePackages);
+            transitivePackages = PolicyEvaluator.FilterExcludedPackages(transitivePackages, config.ExcludePackages);
+            if (beforeCount > allPackages.Count)
+                AnsiConsole.MarkupLine($"[dim]Excluded {beforeCount - allPackages.Count} package(s) from analysis per .cra-config.json[/]");
+        }
+
         var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
         var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
         foreach (var p in allPackages)
@@ -2818,22 +2847,28 @@ public static class CraReportCommand
             var stale = new List<string>();
             var unmaintained = new List<string>();
             var totalWithRepo = 0;
+            int? maxInactiveMonths = null;
             if (repoInfoMap is not null)
             {
                 foreach (var (packageId, info) in repoInfoMap)
                 {
                     if (info is null) continue;
                     totalWithRepo++;
+                    var daysSinceCommit = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
+                    var months = (int)(daysSinceCommit / 30.44);
+                    if (!maxInactiveMonths.HasValue || months > maxInactiveMonths.Value)
+                        maxInactiveMonths = months;
+
                     if (info.IsArchived) { archived.Add(packageId); unmaintained.Add(packageId); }
                     else
                     {
-                        var daysSinceCommit = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
                         if (daysSinceCommit > 365) stale.Add(packageId);
                         if (daysSinceCommit > 730) unmaintained.Add(packageId);
                     }
                 }
             }
             reportGenerator.SetMaintenanceData(archived, stale, unmaintained, totalWithRepo);
+            reportGenerator.SetMaxInactiveMonths(maxInactiveMonths);
         }
 
         // Set documentation data (F3) - check project files
@@ -3067,17 +3102,17 @@ public static class CraReportCommand
         reportGenerator.SetMaintainerTrustData(allPackages);
 
         // Phase 1 actionable findings for HTML dashboard
+        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
+        PolicyEvaluationResult policyResult;
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
             reportGenerator.SetSecurityBudget(budget);
 
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditMode ? reportGenerator.GetAuditSimulation() : null);
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditResultForExit);
             reportGenerator.SetReleaseReadiness(readiness);
 
-            LicensePolicyResult? licenseResult = null;
-            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
-                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
-            reportGenerator.SetPolicyViolations(licenseResult, config);
+            policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
+            reportGenerator.SetPolicyEvaluation(policyResult, config?.ExcludePackages, config?.ComplianceNotes);
         }
 
         // Determine output path
@@ -3199,8 +3234,9 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
-        var (exitCode, violations) = EvaluateExitCode(craReport, config, allPackages, auditResultForExit);
+        DisplayPolicyViolations(policyResult);
+        var exitCode = policyResult.ExitCode;
+        var violations = policyResult.Violations.Select(v => v.Message).ToList();
 
         if (releaseGate)
             exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
@@ -3208,98 +3244,46 @@ public static class CraReportCommand
         return exitCode;
     }
 
-    /// <summary>
-    /// Evaluate CI/CD exit code based on report data and config thresholds.
-    /// Returns exit code (0=pass, 1=non-compliant, 2=policy violation) and the list of violations.
-    /// </summary>
-    private static (int ExitCode, List<string> Violations) EvaluateExitCode(
-        CraReport report,
-        CraConfig? config,
-        IReadOnlyList<PackageHealth>? packages = null,
-        AuditSimulationResult? auditResult = null)
+    private static void DisplayPolicyViolations(PolicyEvaluationResult result)
     {
-        var violations = new List<string>();
+        if (result.Violations.Count == 0)
+            return;
 
-        // Check config-driven thresholds (exit code 2 = policy violation)
-        if (config is not null)
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Rule("[red bold]CI/CD Policy Violations[/]").LeftJustified());
+
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .AddColumn(new TableColumn("Rule").NoWrap())
+            .AddColumn(new TableColumn("Sev.").NoWrap())
+            .AddColumn("Details")
+            .AddColumn(new TableColumn("CRA Art.").NoWrap())
+            .AddColumn("Remediation");
+
+        foreach (var v in result.Violations)
         {
-            if (config.FailOnKev)
-            {
-                var kevItem = report.ComplianceItems.FirstOrDefault(i =>
-                    i.Requirement.Contains("CISA KEV", StringComparison.OrdinalIgnoreCase));
-                if (kevItem?.Status == CraComplianceStatus.NonCompliant)
-                    violations.Add("CISA KEV vulnerability detected");
-            }
+            var sevColor = v.Severity == PolicySeverity.Block ? "red" : "yellow";
+            var sevLabel = v.Severity == PolicySeverity.Block ? "BLOCK" : "WARN";
 
-            if (config.FailOnEpssThreshold.HasValue)
-            {
-                var epssItem = report.ComplianceItems.FirstOrDefault(i =>
-                    i.Requirement.Contains("EPSS", StringComparison.OrdinalIgnoreCase));
-                if (epssItem?.Status != CraComplianceStatus.Compliant)
-                    violations.Add($"EPSS threshold exceeded ({config.FailOnEpssThreshold.Value:P0})");
-            }
+            table.AddRow(
+                $"[{sevColor}]{Markup.Escape(v.Rule)}[/]",
+                $"[{sevColor} bold]{sevLabel}[/]",
+                Markup.Escape(v.Message),
+                Markup.Escape(v.CraArticle ?? "\u2014"),
+                Markup.Escape(v.Remediation ?? "\u2014"));
 
-            if (config.FailOnVulnerabilityCount.HasValue && report.VulnerabilityCount > config.FailOnVulnerabilityCount.Value)
-                violations.Add($"Vulnerability count {report.VulnerabilityCount} exceeds threshold {config.FailOnVulnerabilityCount.Value}");
-
-            if (config.FailOnCraReadinessBelow.HasValue && report.CraReadinessScore < config.FailOnCraReadinessBelow.Value)
-                violations.Add($"CRA readiness score {report.CraReadinessScore} below threshold {config.FailOnCraReadinessBelow.Value}");
-
-            if (config.FailOnReportableVulnerabilities && report.ReportableVulnerabilityCount > 0)
-                violations.Add($"CRA Art. 14 reportable vulnerabilities detected ({report.ReportableVulnerabilityCount})");
-
-            if (config.FailOnUnpatchedDaysOver.HasValue && report.MaxUnpatchedVulnerabilityDays.HasValue
-                && report.MaxUnpatchedVulnerabilityDays.Value > config.FailOnUnpatchedDaysOver.Value)
-                violations.Add($"Unpatched vulnerability age {report.MaxUnpatchedVulnerabilityDays.Value} days exceeds threshold {config.FailOnUnpatchedDaysOver.Value}");
-
-            if (config.FailOnUnmaintainedPackages && report.HasUnmaintainedPackages)
-                violations.Add("Unmaintained packages detected (no activity 2+ years)");
-
-            if (config.FailOnSbomCompletenessBelow.HasValue && report.SbomCompletenessPercentage.HasValue
-                && report.SbomCompletenessPercentage.Value < config.FailOnSbomCompletenessBelow.Value)
-                violations.Add($"SBOM completeness {report.SbomCompletenessPercentage.Value}% below threshold {config.FailOnSbomCompletenessBelow.Value}%");
-
-            if (config.FailOnAttackSurfaceDepthOver.HasValue && report.MaxDependencyDepth.HasValue
-                && report.MaxDependencyDepth.Value > config.FailOnAttackSurfaceDepthOver.Value)
-                violations.Add($"Dependency tree depth {report.MaxDependencyDepth.Value} exceeds threshold {config.FailOnAttackSurfaceDepthOver.Value}");
-
-            // License policy checks
-            if (packages is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
-            {
-                var licenseResult = LicensePolicyEvaluator.Evaluate(packages, config);
-                foreach (var v in licenseResult.Violations)
-                    violations.Add($"License policy: {v.PackageId} — {v.Reason}");
-            }
-
-            // Deprecated packages gate
-            if (config.FailOnDeprecatedPackages && report.DeprecatedPackages.Count > 0)
-                violations.Add($"Deprecated packages detected: {string.Join(", ", report.DeprecatedPackages)}");
-
-            // Minimum health score gate
-            if (config.MinHealthScore.HasValue && report.MinPackageHealthScore.HasValue
-                && report.MinPackageHealthScore.Value < config.MinHealthScore.Value)
-                violations.Add($"Package '{report.MinHealthScorePackage}' health score {report.MinPackageHealthScore.Value} below minimum {config.MinHealthScore.Value}");
+            if (v.Justification is not null)
+                table.AddRow("", "", $"[dim]Justification: {Markup.Escape(v.Justification)}[/]", "", "");
         }
 
-        // Audit simulation findings (Critical + High = violations)
-        if (auditResult is not null)
-        {
-            foreach (var finding in auditResult.Findings.Where(f => f.Severity is AuditSeverity.Critical or AuditSeverity.High))
-            {
-                violations.Add($"Audit: {finding.ArticleReference} \u2014 {finding.Requirement}");
-            }
-        }
+        AnsiConsole.Write(table);
 
-        if (violations.Count > 0)
-        {
-            AnsiConsole.MarkupLine("\n[red bold]CI/CD Policy Violations:[/]");
-            foreach (var v in violations)
-                AnsiConsole.MarkupLine($"  [red]\u2022 {v}[/]");
-            return (2, violations);
-        }
-
-        var exitCode = report.OverallComplianceStatus == CraComplianceStatus.NonCompliant ? 1 : 0;
-        return (exitCode, violations);
+        var blockCount = result.Violations.Count(v => v.Severity == PolicySeverity.Block);
+        var warnCount = result.Violations.Count(v => v.Severity == PolicySeverity.Warn);
+        var summary = new List<string>();
+        if (blockCount > 0) summary.Add($"[red]{blockCount} blocking[/]");
+        if (warnCount > 0) summary.Add($"[yellow]{warnCount} warnings[/]");
+        AnsiConsole.MarkupLine($"\nSummary: {string.Join(", ", summary)} \u2014 exit code {result.ExitCode}");
     }
 
     private static int DisplayReleaseReadiness(CraReport report, List<string> violations, int currentExitCode, AuditSimulationResult? auditResult = null)

@@ -596,6 +596,10 @@ public sealed partial class CraReportGenerator
             DeprecatedPackages = _deprecatedPackages.ToList(),
             MinPackageHealthScore = minHealthPkg?.Score,
             MinHealthScorePackage = minHealthPkg?.PackageId,
+            CriticalVulnerabilityCount = vulnerabilities.Values
+                .SelectMany(v => v)
+                .Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase)),
+            MaxInactiveMonths = _maxInactiveMonths,
         };
     }
 
@@ -830,8 +834,8 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/></svg>");
             var policyCount = GetPolicyViolationCount();
             var policyBadge = policyCount > 0
-                ? $"<span class=\"nav-badge critical\">{policyCount}</span>"
-                : "";
+                ? $"<span class=\"nav-badge\" style=\"background: var(--danger)\">{policyCount}</span>"
+                : "<span class=\"nav-badge\" style=\"background: var(--success)\">\u2713</span>";
             sb.AppendLine($"          Policy Violations{policyBadge}</a></li>");
         }
         if (_auditSimulation is not null)
@@ -1124,6 +1128,7 @@ public sealed partial class CraReportGenerator
     private List<string> _stalePackageNames = [];
     private List<string> _unmaintainedPackageNames = [];
     private int _totalWithRepoData;
+    private int? _maxInactiveMonths;
 
     // Phase 1: Documentation (F3)
     private bool _hasReadme;
@@ -1148,8 +1153,9 @@ public sealed partial class CraReportGenerator
     // Phase 1 Actionable Findings — dashboard sections
     private SecurityBudgetResult? _securityBudget;
     private ReleaseReadinessResult? _releaseReadiness;
-    private LicensePolicyResult? _licensePolicyResult;
-    private CraConfig? _policyConfig;
+    private PolicyEvaluationResult? _policyEvaluation;
+    private List<string> _excludedPackages = [];
+    private Dictionary<string, string> _complianceNotes = new(StringComparer.OrdinalIgnoreCase);
 
     // Audit simulation (v2.4)
     private AuditSimulationResult? _auditSimulation;
@@ -1250,6 +1256,14 @@ public sealed partial class CraReportGenerator
     }
 
     /// <summary>
+    /// Set the maximum number of months any dependency has been inactive.
+    /// </summary>
+    public void SetMaxInactiveMonths(int? months)
+    {
+        _maxInactiveMonths = months;
+    }
+
+    /// <summary>
     /// Set project documentation status for CRA Annex II.
     /// </summary>
     public void SetProjectDocumentation(bool hasReadme, bool hasSecurityContact, bool hasSupportPeriod, bool hasChangelog)
@@ -1347,12 +1361,18 @@ public sealed partial class CraReportGenerator
     }
 
     /// <summary>
-    /// Set the license policy evaluation result and config for the dashboard.
+    /// Set the policy evaluation result and exclusion metadata for the dashboard.
     /// </summary>
-    public void SetPolicyViolations(LicensePolicyResult? licenseResult, CraConfig? config)
+    public void SetPolicyEvaluation(
+        PolicyEvaluationResult? result,
+        IReadOnlyList<string>? excludedPackages = null,
+        IReadOnlyDictionary<string, string>? complianceNotes = null)
     {
-        _licensePolicyResult = licenseResult;
-        _policyConfig = config;
+        _policyEvaluation = result;
+        if (excludedPackages is not null)
+            _excludedPackages = excludedPackages.ToList();
+        if (complianceNotes is not null)
+            _complianceNotes = new Dictionary<string, string>(complianceNotes, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1384,26 +1404,12 @@ public sealed partial class CraReportGenerator
 
     private bool HasPolicyData()
     {
-        if (_policyConfig is null) return false;
-        return _policyConfig.AllowedLicenses.Count > 0
-            || _policyConfig.BlockedLicenses.Count > 0
-            || _policyConfig.FailOnDeprecatedPackages
-            || _policyConfig.MinHealthScore.HasValue;
+        return _policyEvaluation is not null;
     }
 
     private int GetPolicyViolationCount()
     {
-        var count = _licensePolicyResult?.Violations.Count ?? 0;
-        if (_policyConfig is not null)
-        {
-            if (_policyConfig.FailOnDeprecatedPackages)
-                count += _deprecatedPackages.Count;
-            if (_policyConfig.MinHealthScore.HasValue && _healthDataCache is not null)
-            {
-                count += _healthDataCache.Count(p => p.Score < _policyConfig.MinHealthScore.Value);
-            }
-        }
-        return count;
+        return _policyEvaluation?.Violations.Count ?? 0;
     }
 
     /// <summary>

@@ -128,4 +128,26 @@ public sealed class CraConfig
     /// Returns exit code 2 for CI/CD build gates.
     /// </summary>
     public int? FailOnAttackSurfaceDepthOver { get; set; }
+
+    /// <summary>
+    /// Fail if any critical-severity vulnerability exists.
+    /// Maps to CRA Art. 10(6) vulnerability management.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public bool NoCriticalVulnerabilities { get; set; }
+
+    /// <summary>
+    /// Minimum number of contributors for any package.
+    /// Maps to CRA Art. 13(5) maintainer trust requirement.
+    /// Returns exit code 2 if any package has fewer than this many contributors.
+    /// </summary>
+    public int? MinPackageMaintainers { get; set; }
+
+    /// <summary>
+    /// Fail if any dependency has been inactive for more than this many months.
+    /// Maps to CRA Art. 13(8) support period requirement.
+    /// Takes precedence over FailOnUnmaintainedPackages when set.
+    /// Returns exit code 2 for CI/CD build gates.
+    /// </summary>
+    public int? BlockUnmaintainedMonths { get; set; }
 }

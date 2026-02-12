@@ -484,29 +484,22 @@ public class CraReportGeneratorTests
     // --- Dashboard Sections: Policy Violations ---
 
     [Fact]
-    public void GenerateHtml_PolicyViolations_RendersLicenseTable()
+    public void GenerateHtml_PolicyViolations_RendersViolationTable()
     {
         var gen = CreateGenerator();
         var report = CreateMinimalReport();
-        var licenseResult = new LicensePolicyResult
-        {
-            Violations =
-            [
-                new LicensePolicyViolation { PackageId = "Evil.Pkg", License = "GPL-3.0", Reason = "Not in allowed list" },
-            ],
-        };
-        var config = new CraConfig
-        {
-            AllowedLicenses = ["MIT", "Apache-2.0"],
-        };
-        gen.SetPolicyViolations(licenseResult, config);
+        var policyResult = new PolicyEvaluationResult(
+        [
+            new PolicyViolation("license-blocked", "Evil.Pkg uses GPL-3.0 which is blocked", "Art. 10(9)", "Replace with MIT-licensed alternative", null, PolicySeverity.Block),
+        ], ExitCode: 2);
+        gen.SetPolicyEvaluation(policyResult);
 
         var html = gen.GenerateHtml(report);
 
         Assert.Contains("id=\"policy-violations\"", html);
-        Assert.Contains("Evil.Pkg", html);
-        Assert.Contains("GPL-3.0", html);
-        Assert.Contains("Not in allowed list", html);
+        Assert.Contains("license-blocked", html);
+        Assert.Contains("Evil.Pkg uses GPL-3.0 which is blocked", html);
+        Assert.Contains("BLOCK", html);
     }
 
     [Fact]
@@ -514,7 +507,7 @@ public class CraReportGeneratorTests
     {
         var gen = CreateGenerator();
         var report = CreateMinimalReport();
-        // No SetPolicyViolations called
+        // No SetPolicyEvaluation called
 
         var html = gen.GenerateHtml(report);
 
@@ -526,11 +519,8 @@ public class CraReportGeneratorTests
     {
         var gen = CreateGenerator();
         var report = CreateMinimalReport();
-        var config = new CraConfig
-        {
-            AllowedLicenses = ["MIT"],
-        };
-        gen.SetPolicyViolations(null, config);
+        var policyResult = new PolicyEvaluationResult([], ExitCode: 0);
+        gen.SetPolicyEvaluation(policyResult);
 
         var html = gen.GenerateHtml(report);
 
