@@ -22,7 +22,7 @@ public sealed class TrendSnapshotStore
         var projectDir = GetProjectDirectory(snapshot.ProjectPath);
         Directory.CreateDirectory(projectDir);
 
-        var fileName = snapshot.CapturedAt.ToString("yyyy-MM-ddTHHmmssZ") + ".json";
+        var fileName = snapshot.CapturedAt.ToString("yyyy-MM-ddTHHmmssfffZ") + ".json";
         var filePath = Path.Combine(projectDir, fileName);
 
         var json = JsonSerializer.Serialize(snapshot, JsonDefaults.CamelCase);
@@ -48,10 +48,10 @@ public sealed class TrendSnapshotStore
                 if (snapshot is not null)
                     snapshots.Add(snapshot);
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or IOException)
             {
-                // Skip corrupted files - warn on stderr
-                await Console.Error.WriteLineAsync($"Warning: Skipping corrupted snapshot file: {Path.GetFileName(file)}");
+                // Skip corrupted or locked files - warn on stderr
+                await Console.Error.WriteLineAsync($"Warning: Skipping unreadable snapshot file: {Path.GetFileName(file)}");
             }
         }
 
