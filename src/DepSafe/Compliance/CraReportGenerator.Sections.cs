@@ -2195,4 +2195,72 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("</div>");
     }
 
+    private void GenerateMaintainerTrustSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Maintainer Trust</h2>");
+        sb.AppendLine("</div>");
+
+        if (_maintainerTrustPackages is null) return;
+
+        var packagesWithTrust = _maintainerTrustPackages
+            .Where(p => p.MaintainerTrust is not null)
+            .OrderBy(p => p.MaintainerTrust!.Score)
+            .ToList();
+
+        if (packagesWithTrust.Count == 0)
+        {
+            sb.AppendLine("<div class=\"card empty-state\">");
+            sb.AppendLine("  <div class=\"empty-icon\">\u2139</div>");
+            sb.AppendLine("  <h3>No Maintainer Data</h3>");
+            sb.AppendLine("  <p>Trust scores require GitHub repository data. Run without --skip-github to enable.</p>");
+            sb.AppendLine("</div>");
+            return;
+        }
+
+        int highCount = packagesWithTrust.Count(p => p.MaintainerTrust!.Tier == MaintainerTrustTier.High);
+        int moderateCount = packagesWithTrust.Count(p => p.MaintainerTrust!.Tier == MaintainerTrustTier.Moderate);
+        int lowCount = packagesWithTrust.Count(p => p.MaintainerTrust!.Tier == MaintainerTrustTier.Low);
+        int criticalCount = packagesWithTrust.Count(p => p.MaintainerTrust!.Tier == MaintainerTrustTier.Critical);
+        int avgScore = (int)Math.Round(packagesWithTrust.Average(p => (double)p.MaintainerTrust!.Score));
+
+        sb.AppendLine("<div class=\"card trust-summary\">");
+        sb.AppendLine("  <div class=\"trust-distribution\">");
+        sb.AppendLine($"    <div class=\"trust-avg\">Average Trust Score: <strong>{avgScore}</strong></div>");
+        sb.AppendLine("    <div class=\"trust-counts\">");
+        sb.AppendLine($"      <span class=\"trust-count high\">{highCount} High</span>");
+        sb.AppendLine($"      <span class=\"trust-count moderate\">{moderateCount} Moderate</span>");
+        sb.AppendLine($"      <span class=\"trust-count low\">{lowCount} Low</span>");
+        sb.AppendLine($"      <span class=\"trust-count critical\">{criticalCount} Critical</span>");
+        sb.AppendLine("    </div>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</div>");
+
+        // Bottom 5 lowest-trust packages
+        var bottom5 = packagesWithTrust.Take(5).ToList();
+        sb.AppendLine("<div class=\"card\">");
+        sb.AppendLine("  <h3>Lowest Trust Packages</h3>");
+        sb.AppendLine("  <table class=\"trust-table\">");
+        sb.AppendLine("    <thead><tr>");
+        sb.AppendLine("      <th>Package</th><th>Score</th><th>Tier</th><th>Contributors</th><th>Releases</th><th>Release Authors</th>");
+        sb.AppendLine("    </tr></thead>");
+        sb.AppendLine("    <tbody>");
+        foreach (var pkg in bottom5)
+        {
+            var trust = pkg.MaintainerTrust!;
+            var tierClass = trust.Tier.ToString().ToLowerInvariant();
+            sb.AppendLine("    <tr>");
+            sb.AppendLine($"      <td>{EscapeHtml(pkg.PackageId)}</td>");
+            sb.AppendLine($"      <td><span class=\"trust-badge {tierClass}\">{trust.Score}</span></td>");
+            sb.AppendLine($"      <td>{trust.Tier}</td>");
+            sb.AppendLine($"      <td>{trust.ContributorCount}</td>");
+            sb.AppendLine($"      <td>{trust.TotalReleases}</td>");
+            sb.AppendLine($"      <td>{trust.ReleaseAuthorCount}{(trust.TopReleaseAuthor is not null ? $" ({EscapeHtml(trust.TopReleaseAuthor)})" : "")}</td>");
+            sb.AppendLine("    </tr>");
+        }
+        sb.AppendLine("    </tbody>");
+        sb.AppendLine("  </table>");
+        sb.AppendLine("</div>");
+    }
+
 }

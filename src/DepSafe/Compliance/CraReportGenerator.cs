@@ -827,6 +827,17 @@ public sealed partial class CraReportGenerator
                 : "<span class=\"nav-badge success\">0</span>";
             sb.AppendLine($"          Audit Simulation{auditBadge}</a></li>");
         }
+        if (_maintainerTrustPackages is not null)
+        {
+            var trustPackagesWithData = _maintainerTrustPackages.Where(p => p.MaintainerTrust is not null).ToList();
+            var criticalTrustCount = trustPackagesWithData.Count(p => p.MaintainerTrust!.Tier == Models.MaintainerTrustTier.Critical);
+            var lowTrustCount = trustPackagesWithData.Count(p => p.MaintainerTrust!.Tier == Models.MaintainerTrustTier.Low);
+            var trustBadgeClass = criticalTrustCount > 0 ? "critical" : lowTrustCount > 0 ? "warning" : "success";
+            var trustBadgeValue = criticalTrustCount + lowTrustCount;
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('maintainer-trust')\" data-section=\"maintainer-trust\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/><path d=\"M23 21v-2a4 4 0 00-3-3.87\"/><path d=\"M16 3.13a4 4 0 010 7.75\"/></svg>");
+            sb.AppendLine($"          Maintainer Trust<span class=\"nav-badge {trustBadgeClass}\">{trustBadgeValue}</span></a></li>");
+        }
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('remediation')\" data-section=\"remediation\">");
@@ -969,6 +980,13 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</section>");
         }
 
+        if (_maintainerTrustPackages is not null)
+        {
+            sb.AppendLine("<section id=\"maintainer-trust\" class=\"section\">");
+            GenerateMaintainerTrustSection(sb);
+            sb.AppendLine("</section>");
+        }
+
         if (_remediationData.Count > 0)
         {
             sb.AppendLine("<section id=\"remediation\" class=\"section\">");
@@ -1099,6 +1117,9 @@ public sealed partial class CraReportGenerator
 
     // Audit simulation (v2.4)
     private AuditSimulationResult? _auditSimulation;
+
+    // Maintainer trust (v2.5)
+    private IReadOnlyList<PackageHealth>? _maintainerTrustPackages;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1300,6 +1321,11 @@ public sealed partial class CraReportGenerator
     public void SetAuditFindings(AuditSimulationResult result)
     {
         _auditSimulation = result;
+    }
+
+    public void SetMaintainerTrustData(IReadOnlyList<PackageHealth> packages)
+    {
+        _maintainerTrustPackages = packages;
     }
 
     public SbomValidationResult? GetSbomValidation() => _sbomValidation;
