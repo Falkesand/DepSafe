@@ -564,6 +564,70 @@ public class CraReportGeneratorTests
         Assert.Contains("No policy violations found", html);
     }
 
+    // --- Risk Badge Rendering ---
+
+    [Fact]
+    public void GenerateHtml_RoadmapWithRiskAssessment_RendersRiskBadge()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        gen.SetRemediationRoadmap(new List<RemediationRoadmapItem>
+        {
+            new RemediationRoadmapItem
+            {
+                PackageId = "RiskyPkg",
+                CurrentVersion = "1.0.0",
+                RecommendedVersion = "2.0.0",
+                Effort = UpgradeEffort.Major,
+                PriorityScore = 500,
+                CveCount = 2,
+                CveIds = ["CVE-2024-0001", "CVE-2024-0002"],
+                ScoreLift = 5,
+                UpgradeTiers =
+                [
+                    new UpgradeTier("2.0.0", UpgradeEffort.Major, 2, 2, true),
+                ],
+                TierRiskAssessments = new Dictionary<string, UpgradeRiskAssessment>
+                {
+                    ["2.0.0"] = new(65, UpgradeRiskLevel.High, 3, 1,
+                        ["Major version bump", "3 breaking changes"], 8, TimeSpan.FromDays(400))
+                },
+            }
+        });
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("risk-badge high", html);
+        Assert.Contains("65/100", html);
+    }
+
+    [Fact]
+    public void GenerateHtml_RoadmapWithoutRiskAssessment_RendersRiskHeader()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        gen.SetRemediationRoadmap(new List<RemediationRoadmapItem>
+        {
+            new RemediationRoadmapItem
+            {
+                PackageId = "NormalPkg",
+                CurrentVersion = "1.0.0",
+                RecommendedVersion = "1.0.1",
+                Effort = UpgradeEffort.Patch,
+                PriorityScore = 100,
+                CveCount = 1,
+                CveIds = ["CVE-2024-0001"],
+                ScoreLift = 2,
+                UpgradeTiers = [new UpgradeTier("1.0.1", UpgradeEffort.Patch, 1, 1, true)],
+                // TierRiskAssessments is null (no GitHub repo)
+            }
+        });
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("<th>Risk</th>", html);
+    }
+
     // --- Helper ---
 
     private static CraComplianceItem MakeItem(string requirement, CraComplianceStatus status) => new()
