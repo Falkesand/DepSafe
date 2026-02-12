@@ -66,4 +66,7 @@ public sealed class PackageHealth
 
     /// <summary>Package ecosystem (NuGet or npm).</summary>
     public PackageEcosystem Ecosystem { get; init; } = PackageEcosystem.NuGet;
+
+    /// <summary>Maintainer trust assessment (null when no GitHub data available).</summary>
+    public MaintainerTrust? MaintainerTrust { get; init; }
 }
