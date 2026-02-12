@@ -41,4 +41,10 @@ public sealed class CraReport
     /// <summary>Package ID with the lowest health score.</summary>
     public string? MinHealthScorePackage { get; init; }
 
+    // Structured policy fields (v1.7 - Policy as Code)
+    /// <summary>Count of critical-severity vulnerabilities (OSV severity = CRITICAL).</summary>
+    public int CriticalVulnerabilityCount { get; init; }
+    /// <summary>Maximum months since last commit across all dependencies (null if no GitHub data).</summary>
+    public int? MaxInactiveMonths { get; init; }
+
 }
