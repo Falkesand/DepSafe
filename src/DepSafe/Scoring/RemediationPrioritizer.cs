@@ -136,6 +136,96 @@ public static class RemediationPrioritizer
         return items.Count > MaxItems ? items.GetRange(0, MaxItems) : items;
     }
 
+    /// <summary>
+    /// Generate remediation items for non-vulnerability maintenance issues
+    /// (deprecated, unmaintained, archived packages).
+    /// </summary>
+    /// <param name="allPackages">All packages with health data.</param>
+    /// <param name="deprecatedPackages">Package IDs marked deprecated by registry.</param>
+    /// <param name="repoInfoMap">GitHub repo data keyed by package ID (nullable).</param>
+    /// <param name="excludePackageIds">Package IDs already in the vulnerability roadmap (for deduplication).</param>
+    public static List<RemediationRoadmapItem> PrioritizeMaintenanceItems(
+        IReadOnlyList<PackageHealth> allPackages,
+        IReadOnlyList<string> deprecatedPackages,
+        IReadOnlyDictionary<string, GitHubRepoInfo?>? repoInfoMap,
+        IReadOnlySet<string>? excludePackageIds = null)
+    {
+        var items = new List<RemediationRoadmapItem>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (excludePackageIds is not null)
+        {
+            foreach (var id in excludePackageIds)
+                seen.Add(id);
+        }
+
+        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var pkg in allPackages)
+            packageLookup.TryAdd(pkg.PackageId, pkg);
+
+        var deprecatedSet = new HashSet<string>(deprecatedPackages, StringComparer.OrdinalIgnoreCase);
+
+        // 1. Deprecated packages
+        foreach (var pkgId in deprecatedPackages)
+        {
+            if (!seen.Add(pkgId)) continue;
+            packageLookup.TryGetValue(pkgId, out var pkg);
+            items.Add(new RemediationRoadmapItem
+            {
+                PackageId = pkgId,
+                CurrentVersion = pkg?.Version ?? "unknown",
+                Effort = UpgradeEffort.Major,
+                PriorityScore = 200,
+                Reason = RemediationReason.Deprecated,
+                ActionText = "Replace deprecated package",
+            });
+        }
+
+        // 2. Unmaintained/archived packages (from repo info)
+        if (repoInfoMap is not null)
+        {
+            foreach (var (pkgId, info) in repoInfoMap)
+            {
+                if (info is null || !seen.Add(pkgId)) continue;
+                if (deprecatedSet.Contains(pkgId)) continue;
+
+                if (info.IsArchived)
+                {
+                    packageLookup.TryGetValue(pkgId, out var pkg);
+                    items.Add(new RemediationRoadmapItem
+                    {
+                        PackageId = pkgId,
+                        CurrentVersion = pkg?.Version ?? "unknown",
+                        Effort = UpgradeEffort.Major,
+                        PriorityScore = 300,
+                        Reason = RemediationReason.Unmaintained,
+                        ActionText = "Replace archived dependency",
+                    });
+                }
+                else
+                {
+                    var daysSince = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
+                    if (daysSince > 730) // 2+ years
+                    {
+                        int months = (int)(daysSince / 30.44);
+                        packageLookup.TryGetValue(pkgId, out var pkg);
+                        items.Add(new RemediationRoadmapItem
+                        {
+                            PackageId = pkgId,
+                            CurrentVersion = pkg?.Version ?? "unknown",
+                            Effort = UpgradeEffort.Major,
+                            PriorityScore = 150,
+                            Reason = RemediationReason.Unmaintained,
+                            ActionText = $"Replace unmaintained dependency ({months} months inactive)",
+                        });
+                    }
+                }
+            }
+        }
+
+        items.Sort((a, b) => b.PriorityScore.CompareTo(a.PriorityScore));
+        return items;
+    }
+
     private static UpgradeEffort DetermineEffort(string currentVersion, string recommendedVersion)
     {
         if (!NuGetVersion.TryParse(currentVersion, out var current) ||
