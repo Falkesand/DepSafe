@@ -255,6 +255,16 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
             sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScore)}\">{craScore}</span>");
             sb.AppendLine($"        </div>");
+            // Trust score (only when data available)
+            if (healthData?.MaintainerTrust is not null)
+            {
+                var trustScore = healthData.MaintainerTrust.Score;
+                var trustClass = GetTrustScoreClass(trustScore);
+                sb.AppendLine($"        <div class=\"package-score-item\" title=\"Maintainer Trust \u2014 contributor diversity, release discipline, community health\">");
+                sb.AppendLine($"          <span class=\"score-label\">TRUST</span>");
+                sb.AppendLine($"          <span class=\"score-value {trustClass}\">{trustScore}</span>");
+                sb.AppendLine($"        </div>");
+            }
             sb.AppendLine($"      </div>");
             sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
             sb.AppendLine("    </div>");
@@ -340,6 +350,16 @@ public sealed partial class CraReportGenerator
                 sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
                 sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScoreTrans)}\">{craScoreTrans}</span>");
                 sb.AppendLine($"        </div>");
+                // Trust score (only when data available)
+                if (healthData.MaintainerTrust is not null)
+                {
+                    var trustScore = healthData.MaintainerTrust.Score;
+                    var trustClass = GetTrustScoreClass(trustScore);
+                    sb.AppendLine($"        <div class=\"package-score-item\" title=\"Maintainer Trust \u2014 contributor diversity, release discipline, community health\">");
+                    sb.AppendLine($"          <span class=\"score-label\">TRUST</span>");
+                    sb.AppendLine($"          <span class=\"score-value {trustClass}\">{trustScore}</span>");
+                    sb.AppendLine($"        </div>");
+                }
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");
@@ -426,6 +446,16 @@ public sealed partial class CraReportGenerator
                 sb.AppendLine($"          <span class=\"score-label\">CRA</span>");
                 sb.AppendLine($"          <span class=\"score-value {GetCraScoreClass(craScoreSub)}\">{craScoreSub}</span>");
                 sb.AppendLine($"        </div>");
+                // Trust score (only when data available)
+                if (healthData.MaintainerTrust is not null)
+                {
+                    var trustScore = healthData.MaintainerTrust.Score;
+                    var trustClass = GetTrustScoreClass(trustScore);
+                    sb.AppendLine($"        <div class=\"package-score-item\" title=\"Maintainer Trust \u2014 contributor diversity, release discipline, community health\">");
+                    sb.AppendLine($"          <span class=\"score-label\">TRUST</span>");
+                    sb.AppendLine($"          <span class=\"score-value {trustClass}\">{trustScore}</span>");
+                    sb.AppendLine($"        </div>");
+                }
                 sb.AppendLine($"      </div>");
                 sb.AppendLine($"      <span class=\"expand-icon\">+</span>");
                 sb.AppendLine("    </div>");
