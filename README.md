@@ -80,7 +80,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 ### Reporting
 - **Interactive HTML reports** - Dashboard with drill-down, filtering, and dependency trees
 - **Art. 14 Reporting Obligations** - Flags vulnerabilities requiring CSIRT notification with 24h/72h/14d deadlines
-- **Remediation Roadmap** - Prioritized update plan ranked by CRA score improvement, KEV status, and EPSS probability
+- **Remediation Roadmap** - Prioritized update plan ranked by CRA score improvement, KEV status, and EPSS probability, with per-tier upgrade risk assessment
 - **JSON export** - Machine-readable format for automation
 - **License attribution files** - Generate THIRD-PARTY-NOTICES in TXT, HTML, or Markdown
 - **shields.io badges** - Embeddable status badges for your README
@@ -596,6 +596,7 @@ Prioritized update plan for vulnerable dependencies:
 - **Priority ranking** — KEV > EPSS >= 0.5 > Critical > High severity > CRA score lift
 - **Score Lift** — Estimated CRA readiness score improvement per package update
 - **Effort indicator** — Patch (low risk), Minor (new features), Major (breaking changes)
+- **Upgrade Risk Assessment** — Composite risk score (0-100) per upgrade tier based on changelog analysis, semver signal, maintainer trust, and version time gap. Risk badges (Low/Medium/High/Critical) with hover tooltips showing risk factors
 - **Version recommendations** — Current vs recommended version with CVE count
 - Top 20 most impactful updates, sorted by priority
 - Shows a success card when no remediation actions are needed
