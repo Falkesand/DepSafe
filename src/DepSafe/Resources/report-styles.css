@@ -3091,3 +3091,29 @@
     .trust-badge.moderate { background: var(--info, #3498db); color: white; }
     .trust-badge.low { background: #e67e22; color: white; }
     .trust-badge.critical { background: var(--danger); color: white; }
+
+    /* Security Debt Trend */
+    .trend-card {
+        padding: 16px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 1.05em;
+    }
+    .trend-card.trend-improving { background: rgba(46, 204, 113, 0.12); border-left: 4px solid var(--success); }
+    .trend-card.trend-degrading { background: rgba(231, 76, 60, 0.12); border-left: 4px solid var(--danger); }
+    .trend-card.trend-stable { background: rgba(52, 152, 219, 0.12); border-left: 4px solid var(--accent); }
+    .trend-direction-icon { font-size: 1.5em; }
+    .trend-metrics { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+    .trend-metric-row { display: flex; align-items: center; gap: 16px; padding: 8px 12px; background: var(--card-bg); border-radius: 6px; }
+    .trend-metric-name { flex: 1; font-weight: 500; }
+    .trend-sparkline { flex: 0 0 80px; }
+    .trend-metric-value { flex: 0 0 60px; text-align: right; font-weight: 600; }
+    .trend-delta { flex: 0 0 100px; text-align: right; font-size: 0.9em; }
+    .trend-delta.trend-improving { color: var(--success); }
+    .trend-delta.trend-degrading { color: var(--danger); }
+    .trend-delta.trend-stable { color: var(--accent); }
+    .trend-history { margin-top: 16px; }
+    .trend-history summary { cursor: pointer; font-weight: 600; padding: 8px 0; }

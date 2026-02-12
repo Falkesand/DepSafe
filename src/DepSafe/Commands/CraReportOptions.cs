@@ -13,4 +13,5 @@ public sealed record CraReportOptions(
     string? SignKey,
     bool ReleaseGate,
     bool EvidencePack,
-    bool AuditMode);
+    bool AuditMode,
+    bool Snapshot);

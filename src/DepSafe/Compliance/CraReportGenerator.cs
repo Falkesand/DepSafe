@@ -885,6 +885,18 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z\"/></svg>");
             sb.AppendLine("          Maintenance</a></li>");
         }
+        if (_trendSummary is not null && _trendSummary.Metrics.Count > 0)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('security-debt-trend')\" data-section=\"security-debt-trend\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/></svg>");
+            var (trendIcon, trendColor) = _trendSummary.OverallDirection switch
+            {
+                TrendDirection.Improving => ("\u25b2", "var(--success)"),
+                TrendDirection.Degrading => ("\u25bc", "var(--danger)"),
+                _ => ("\u25cf", "var(--accent)")
+            };
+            sb.AppendLine($"          Security Debt Trend<span class=\"nav-badge\" style=\"background:{trendColor}\">{trendIcon}</span></a></li>");
+        }
         sb.AppendLine("      </ul>");
         sb.AppendLine("    </div>");
         sb.AppendLine("  </div>");
@@ -1039,6 +1051,13 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</section>");
         }
 
+        if (_trendSummary is not null && _trendSummary.Metrics.Count > 0)
+        {
+            sb.AppendLine("<section id=\"security-debt-trend\" class=\"section\">");
+            GenerateTrendSection(sb);
+            sb.AppendLine("</section>");
+        }
+
         // Compliance Section
         sb.AppendLine("<section id=\"compliance\" class=\"section\">");
         GenerateComplianceSection(sb, report);
@@ -1137,6 +1156,10 @@ public sealed partial class CraReportGenerator
 
     // Maintainer trust (v2.5)
     private IReadOnlyList<PackageHealth>? _maintainerTrustPackages;
+
+    // Security debt trend (v2.6)
+    private TrendSummary? _trendSummary;
+    private List<TrendSnapshot>? _trendSnapshots;
 
     /// <summary>
     /// Set package health data for detailed report generation.
@@ -1343,6 +1366,15 @@ public sealed partial class CraReportGenerator
     public void SetMaintainerTrustData(IReadOnlyList<PackageHealth> packages)
     {
         _maintainerTrustPackages = packages;
+    }
+
+    /// <summary>
+    /// Set security debt trend data for the HTML report section.
+    /// </summary>
+    public void SetTrendData(TrendSummary summary, List<TrendSnapshot>? snapshots = null)
+    {
+        _trendSummary = summary;
+        _trendSnapshots = snapshots;
     }
 
     public SbomValidationResult? GetSbomValidation() => _sbomValidation;
