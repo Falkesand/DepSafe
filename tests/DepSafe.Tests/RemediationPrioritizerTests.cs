@@ -579,6 +579,36 @@ public class RemediationPrioritizerTests
     }
 
     [Fact]
+    public void PrioritizeMaintenanceItems_StalePackage_ReturnsPriority150()
+    {
+        var packages = new[] { CreatePackage("StalePkg") };
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>
+        {
+            ["StalePkg"] = new GitHubRepoInfo
+            {
+                Owner = "test",
+                Name = "stale-pkg",
+                FullName = "test/stale-pkg",
+                Stars = 50,
+                OpenIssues = 3,
+                Forks = 5,
+                LastCommitDate = DateTime.UtcNow.AddYears(-3),
+                LastPushDate = DateTime.UtcNow.AddYears(-3),
+                IsArchived = false,
+            },
+        };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, [], repoInfoMap);
+
+        var item = Assert.Single(result);
+        Assert.Equal(RemediationReason.Unmaintained, item.Reason);
+        Assert.Equal(150, item.PriorityScore);
+        Assert.Contains("unmaintained", item.ActionText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("months inactive", item.ActionText);
+    }
+
+    [Fact]
     public void PrioritizeMaintenanceItems_AlsoInVulnRoadmap_Deduplicates()
     {
         var packages = new[] { CreatePackage("DualPkg") };
