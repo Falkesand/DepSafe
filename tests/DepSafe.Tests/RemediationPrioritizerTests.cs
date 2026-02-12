@@ -11,7 +11,8 @@ public class RemediationPrioritizerTests
         string version = "1.0.0",
         string? latestVersion = "2.0.0",
         bool hasKev = false,
-        double? maxEpss = null) => new()
+        double? maxEpss = null,
+        DependencyType dependencyType = DependencyType.Direct) => new()
     {
         PackageId = id,
         Version = version,
@@ -21,6 +22,24 @@ public class RemediationPrioritizerTests
         LatestVersion = latestVersion,
         HasKevVulnerability = hasKev,
         MaxEpssProbability = maxEpss,
+        DependencyType = dependencyType,
+    };
+
+    private static DependencyTree CreateTree(params DependencyTreeNode[] roots) => new()
+    {
+        ProjectPath = "/test",
+        ProjectType = ProjectType.DotNet,
+        Roots = roots.ToList(),
+    };
+
+    private static DependencyTreeNode CreateNode(
+        string id, string version = "1.0.0", params DependencyTreeNode[] children) => new()
+    {
+        PackageId = id,
+        Version = version,
+        DependencyType = children.Length > 0 ? DependencyType.Direct : DependencyType.Transitive,
+        Depth = 0,
+        Children = children.ToList(),
     };
 
     private static VulnerabilityInfo CreateVuln(
@@ -486,6 +505,194 @@ public class RemediationPrioritizerTests
         var majorTier = result[0].UpgradeTiers.First(t => t.Effort == UpgradeEffort.Major);
         Assert.Equal(2, majorTier.CvesFixed);
         Assert.Equal(2, majorTier.TotalCves);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_DeprecatedPackage_ReturnsItem()
+    {
+        var packages = new[] { CreatePackage("DeprecatedPkg") };
+        var deprecated = new List<string> { "DeprecatedPkg" };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, deprecated, null);
+
+        var item = Assert.Single(result);
+        Assert.Equal("DeprecatedPkg", item.PackageId);
+        Assert.Equal(RemediationReason.Deprecated, item.Reason);
+        Assert.Equal(200, item.PriorityScore);
+        Assert.Equal(UpgradeEffort.Major, item.Effort);
+        Assert.Contains("deprecated", item.ActionText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_ArchivedPackage_ReturnsHigherPriority()
+    {
+        var packages = new[] { CreatePackage("ArchivedPkg") };
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>
+        {
+            ["ArchivedPkg"] = new GitHubRepoInfo
+            {
+                Owner = "test",
+                Name = "archived-pkg",
+                FullName = "test/archived-pkg",
+                Stars = 100,
+                OpenIssues = 0,
+                Forks = 10,
+                LastCommitDate = DateTime.UtcNow.AddYears(-3),
+                LastPushDate = DateTime.UtcNow.AddYears(-3),
+                IsArchived = true,
+            },
+        };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, [], repoInfoMap);
+
+        var item = Assert.Single(result);
+        Assert.Equal(RemediationReason.Unmaintained, item.Reason);
+        Assert.Equal(300, item.PriorityScore);
+        Assert.Contains("archived", item.ActionText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_NoIssues_ReturnsEmpty()
+    {
+        var packages = new[] { CreatePackage("HealthyPkg") };
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>
+        {
+            ["HealthyPkg"] = new GitHubRepoInfo
+            {
+                Owner = "test",
+                Name = "healthy-pkg",
+                FullName = "test/healthy-pkg",
+                Stars = 100,
+                OpenIssues = 5,
+                Forks = 10,
+                LastCommitDate = DateTime.UtcNow.AddDays(-30),
+                LastPushDate = DateTime.UtcNow.AddDays(-30),
+            },
+        };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, [], repoInfoMap);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_StalePackage_ReturnsPriority150()
+    {
+        var packages = new[] { CreatePackage("StalePkg") };
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>
+        {
+            ["StalePkg"] = new GitHubRepoInfo
+            {
+                Owner = "test",
+                Name = "stale-pkg",
+                FullName = "test/stale-pkg",
+                Stars = 50,
+                OpenIssues = 3,
+                Forks = 5,
+                LastCommitDate = DateTime.UtcNow.AddYears(-3),
+                LastPushDate = DateTime.UtcNow.AddYears(-3),
+                IsArchived = false,
+            },
+        };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, [], repoInfoMap);
+
+        var item = Assert.Single(result);
+        Assert.Equal(RemediationReason.Unmaintained, item.Reason);
+        Assert.Equal(150, item.PriorityScore);
+        Assert.Contains("unmaintained", item.ActionText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("months inactive", item.ActionText);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_AlsoInVulnRoadmap_Deduplicates()
+    {
+        var packages = new[] { CreatePackage("DualPkg") };
+        var deprecated = new List<string> { "DualPkg" };
+        var vulnRoadmapIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DualPkg" };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, deprecated, null, vulnRoadmapIds);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_TransitivePackage_SetsDependencyType()
+    {
+        var packages = new[]
+        {
+            CreatePackage("DirectPkg", dependencyType: DependencyType.Direct),
+            CreatePackage("TransitivePkg", dependencyType: DependencyType.Transitive),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["DirectPkg"] = [CreateVuln()],
+            ["TransitivePkg"] = [CreateVuln()],
+        };
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(
+            packages, vulns, 50, EmptyCompliance);
+
+        var directItem = result.First(r => r.PackageId == "DirectPkg");
+        var transitiveItem = result.First(r => r.PackageId == "TransitivePkg");
+        Assert.Equal(DependencyType.Direct, directItem.DependencyType);
+        Assert.Equal(DependencyType.Transitive, transitiveItem.DependencyType);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_TransitivePackage_ResolvesParentChain()
+    {
+        var packages = new[]
+        {
+            CreatePackage("TransitivePkg", dependencyType: DependencyType.Transitive),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TransitivePkg"] = [CreateVuln()],
+        };
+        var tree = CreateTree(
+            CreateNode("DirectPkg", "1.0.0",
+                CreateNode("TransitivePkg")));
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(
+            packages, vulns, 50, EmptyCompliance, dependencyTrees: [tree]);
+
+        var item = Assert.Single(result);
+        Assert.Equal("DirectPkg \u2192 TransitivePkg", item.ParentChain);
+        Assert.Contains("Pin", item.ActionText);
+        Assert.Contains("via", item.ActionText);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_DeepNesting_TruncatesParentChain()
+    {
+        var packages = new[]
+        {
+            CreatePackage("DeepPkg", dependencyType: DependencyType.Transitive),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["DeepPkg"] = [CreateVuln()],
+        };
+        var tree = CreateTree(
+            CreateNode("Root", "1.0.0",
+                CreateNode("Mid1", "1.0.0",
+                    CreateNode("Mid2", "1.0.0",
+                        CreateNode("Mid3", "1.0.0",
+                            CreateNode("DeepPkg"))))));
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(
+            packages, vulns, 50, EmptyCompliance, dependencyTrees: [tree]);
+
+        var item = Assert.Single(result);
+        Assert.Contains("Root", item.ParentChain);
+        Assert.Contains("\u2026", item.ParentChain); // Ellipsis for truncation
+        Assert.Contains("DeepPkg", item.ParentChain);
     }
 
     [Fact]

@@ -26,9 +26,15 @@ public static class RemediationPrioritizer
         IReadOnlyDictionary<string, List<VulnerabilityInfo>> allVulnerabilities,
         int currentCraScore,
         List<CraComplianceItem> currentComplianceItems,
-        IReadOnlyDictionary<string, List<string>>? availableVersions = null)
+        IReadOnlyDictionary<string, List<string>>? availableVersions = null,
+        IReadOnlyList<DependencyTree>? dependencyTrees = null)
     {
         var items = new List<RemediationRoadmapItem>(Math.Min(allPackages.Count, MaxItems));
+
+        // Build parent chain lookup for transitive packages
+        var parentChainLookup = dependencyTrees is not null
+            ? BuildParentChainLookup(dependencyTrees)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var pkg in allPackages)
         {
@@ -129,11 +135,109 @@ public static class RemediationPrioritizer
                 MaxPatchAgeDays = maxPatchAgeDays,
                 PriorityScore = priority,
                 UpgradeTiers = upgradeTiers,
+                DependencyType = pkg.DependencyType,
+                ParentChain = pkg.DependencyType == DependencyType.Transitive
+                    ? parentChainLookup.GetValueOrDefault(pkg.PackageId)
+                    : null,
+                ActionText = pkg.DependencyType == DependencyType.Transitive
+                    ? $"Pin {pkg.PackageId} to {recommendedVersion}"
+                        + (parentChainLookup.TryGetValue(pkg.PackageId, out var chain) ? $" (via {chain})" : "")
+                    : $"Upgrade {pkg.Version} \u2192 {recommendedVersion}",
             });
         }
 
         items.Sort((a, b) => b.PriorityScore.CompareTo(a.PriorityScore));
         return items.Count > MaxItems ? items.GetRange(0, MaxItems) : items;
+    }
+
+    /// <summary>
+    /// Generate remediation items for non-vulnerability maintenance issues
+    /// (deprecated, unmaintained, archived packages).
+    /// </summary>
+    /// <param name="allPackages">All packages with health data.</param>
+    /// <param name="deprecatedPackages">Package IDs marked deprecated by registry.</param>
+    /// <param name="repoInfoMap">GitHub repo data keyed by package ID (nullable).</param>
+    /// <param name="excludePackageIds">Package IDs already in the vulnerability roadmap (for deduplication).</param>
+    public static List<RemediationRoadmapItem> PrioritizeMaintenanceItems(
+        IReadOnlyList<PackageHealth> allPackages,
+        IReadOnlyList<string> deprecatedPackages,
+        IReadOnlyDictionary<string, GitHubRepoInfo?>? repoInfoMap,
+        IReadOnlySet<string>? excludePackageIds = null)
+    {
+        var items = new List<RemediationRoadmapItem>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (excludePackageIds is not null)
+        {
+            foreach (var id in excludePackageIds)
+                seen.Add(id);
+        }
+
+        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var pkg in allPackages)
+            packageLookup.TryAdd(pkg.PackageId, pkg);
+
+        var deprecatedSet = new HashSet<string>(deprecatedPackages, StringComparer.OrdinalIgnoreCase);
+
+        // 1. Deprecated packages
+        foreach (var pkgId in deprecatedPackages)
+        {
+            if (!seen.Add(pkgId)) continue;
+            packageLookup.TryGetValue(pkgId, out var pkg);
+            items.Add(new RemediationRoadmapItem
+            {
+                PackageId = pkgId,
+                CurrentVersion = pkg?.Version ?? "unknown",
+                Effort = UpgradeEffort.Major,
+                PriorityScore = 200,
+                Reason = RemediationReason.Deprecated,
+                ActionText = "Replace deprecated package",
+            });
+        }
+
+        // 2. Unmaintained/archived packages (from repo info)
+        if (repoInfoMap is not null)
+        {
+            foreach (var (pkgId, info) in repoInfoMap)
+            {
+                if (info is null || !seen.Add(pkgId)) continue;
+                if (deprecatedSet.Contains(pkgId)) continue;
+
+                if (info.IsArchived)
+                {
+                    packageLookup.TryGetValue(pkgId, out var pkg);
+                    items.Add(new RemediationRoadmapItem
+                    {
+                        PackageId = pkgId,
+                        CurrentVersion = pkg?.Version ?? "unknown",
+                        Effort = UpgradeEffort.Major,
+                        PriorityScore = 300,
+                        Reason = RemediationReason.Unmaintained,
+                        ActionText = "Replace archived dependency",
+                    });
+                }
+                else
+                {
+                    var daysSince = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
+                    if (daysSince > 730) // 2+ years
+                    {
+                        int months = (int)(daysSince / 30.44);
+                        packageLookup.TryGetValue(pkgId, out var pkg);
+                        items.Add(new RemediationRoadmapItem
+                        {
+                            PackageId = pkgId,
+                            CurrentVersion = pkg?.Version ?? "unknown",
+                            Effort = UpgradeEffort.Major,
+                            PriorityScore = 150,
+                            Reason = RemediationReason.Unmaintained,
+                            ActionText = $"Replace unmaintained dependency ({months} months inactive)",
+                        });
+                    }
+                }
+            }
+        }
+
+        items.Sort((a, b) => b.PriorityScore.CompareTo(a.PriorityScore));
+        return items;
     }
 
     private static UpgradeEffort DetermineEffort(string currentVersion, string recommendedVersion)
@@ -263,5 +367,55 @@ public static class RemediationPrioritizer
         }
 
         return tiers;
+    }
+
+    /// <summary>
+    /// Build a lookup mapping transitive package IDs to their parent chain strings.
+    /// Chains longer than 3 nodes are truncated with ellipsis.
+    /// </summary>
+    private static Dictionary<string, string> BuildParentChainLookup(
+        IReadOnlyList<DependencyTree> trees)
+    {
+        var lookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tree in trees)
+        {
+            foreach (var root in tree.Roots)
+            {
+                var path = new List<string> { root.PackageId };
+                CollectParentChains(root, path, lookup);
+            }
+        }
+
+        return lookup;
+    }
+
+    private static void CollectParentChains(
+        DependencyTreeNode node,
+        List<string> path,
+        Dictionary<string, string> lookup)
+    {
+        foreach (var child in node.Children)
+        {
+            path.Add(child.PackageId);
+
+            if (path.Count > 1 && !lookup.ContainsKey(child.PackageId))
+            {
+                lookup[child.PackageId] = FormatParentChain(path);
+            }
+
+            CollectParentChains(child, path, lookup);
+            path.RemoveAt(path.Count - 1);
+        }
+    }
+
+    private static string FormatParentChain(List<string> path)
+    {
+        const int maxNodes = 3;
+        if (path.Count <= maxNodes)
+            return string.Join(" \u2192 ", path);
+
+        // Show first, ellipsis, last
+        return $"{path[0]} \u2192 \u2026 \u2192 {path[^1]}";
     }
 }

@@ -2161,7 +2161,11 @@ public static class CraReportCommand
         // Remediation Roadmap (needs CRA score from report for prioritization)
         List<RemediationRoadmapItem> roadmap;
         {
-            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions, dependencyTrees);
+            var vulnPackageIds = new HashSet<string>(roadmap.Select(r => r.PackageId), StringComparer.OrdinalIgnoreCase);
+            var maintenanceItems = RemediationPrioritizer.PrioritizeMaintenanceItems(
+                allPackages, deprecatedPackages ?? [], repoInfoMap, vulnPackageIds);
+            roadmap.AddRange(maintenanceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
@@ -3068,7 +3072,11 @@ public static class CraReportCommand
         // Remediation Roadmap (needs CRA score from report for prioritization)
         List<RemediationRoadmapItem> roadmap;
         {
-            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions);
+            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions, dependencyTree is not null ? [dependencyTree] : null);
+            var vulnPackageIds = new HashSet<string>(roadmap.Select(r => r.PackageId), StringComparer.OrdinalIgnoreCase);
+            var maintenanceItems = RemediationPrioritizer.PrioritizeMaintenanceItems(
+                allPackages, deprecatedPackages ?? [], repoInfoMap, vulnPackageIds);
+            roadmap.AddRange(maintenanceItems);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
