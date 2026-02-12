@@ -767,6 +767,12 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('tree')\" data-section=\"tree\">");
         sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/></svg>");
         sb.AppendLine("          Dependency Tree</a></li>");
+        if (_dependencyTrees.Count > 0)
+        {
+            sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('risk-heatmap')\" data-section=\"risk-heatmap\">");
+            sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"6\" cy=\"6\" r=\"3\"/><circle cx=\"18\" cy=\"6\" r=\"3\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><circle cx=\"18\" cy=\"18\" r=\"3\"/><line x1=\"9\" y1=\"6\" x2=\"15\" y2=\"6\"/><line x1=\"6\" y1=\"9\" x2=\"6\" y2=\"15\"/><line x1=\"18\" y1=\"9\" x2=\"18\" y2=\"15\"/><line x1=\"9\" y1=\"18\" x2=\"15\" y2=\"18\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"16\"/></svg>");
+            sb.AppendLine("          Risk Heatmap</a></li>");
+        }
         sb.AppendLine("        <li><a href=\"#\" onclick=\"showSection('issues')\" data-section=\"issues\">");
         sb.AppendLine("          <svg class=\"nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"16\" x2=\"12.01\" y2=\"16\"/></svg>");
         sb.AppendLine("          Dependency Issues</a></li>");
@@ -967,6 +973,14 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("<section id=\"tree\" class=\"section\">");
         GenerateDependencyTreeSection(sb);
         sb.AppendLine("</section>");
+
+        // Risk Heatmap Section
+        if (_dependencyTrees.Count > 0)
+        {
+            sb.AppendLine("<section id=\"risk-heatmap\" class=\"section\">");
+            GenerateRiskHeatmapSection(sb);
+            sb.AppendLine("</section>");
+        }
 
         // Dependency Issues Section
         sb.AppendLine("<section id=\"issues\" class=\"section\">");

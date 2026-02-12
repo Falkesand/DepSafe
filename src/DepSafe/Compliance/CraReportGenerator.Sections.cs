@@ -2402,4 +2402,15 @@ public sealed partial class CraReportGenerator
         return $"<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><polyline points=\"{string.Join(" ", points)}\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
     }
 
+    private void GenerateRiskHeatmapSection(StringBuilder sb)
+    {
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Dependency Risk Heatmap</h2>");
+        sb.AppendLine("  <p>Interactive visualization of dependency relationships and risk concentration.</p>");
+        sb.AppendLine("</div>");
+        sb.AppendLine("<div class=\"card empty-state success\">");
+        sb.AppendLine("  <p>Risk heatmap visualization loading...</p>");
+        sb.AppendLine("</div>");
+    }
+
 }
