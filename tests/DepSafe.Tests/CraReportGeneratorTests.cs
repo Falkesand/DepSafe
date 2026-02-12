@@ -481,6 +481,42 @@ public class CraReportGeneratorTests
         Assert.Contains("No remediation items to prioritize", html);
     }
 
+    [Fact]
+    public void GenerateHtml_SecurityBudgetWithMaintenanceItems_RendersActionText()
+    {
+        var gen = CreateGenerator();
+        var report = CreateMinimalReport();
+        gen.SetSecurityBudget(new SecurityBudgetResult
+        {
+            Items =
+            [
+                new TieredRemediationItem
+                {
+                    Item = new RemediationRoadmapItem
+                    {
+                        PackageId = "OldPkg",
+                        CurrentVersion = "1.0.0",
+                        Effort = UpgradeEffort.Major,
+                        PriorityScore = 200,
+                        Reason = RemediationReason.Deprecated,
+                        ActionText = "Replace deprecated package",
+                    },
+                    Tier = RemediationTier.HighROI,
+                    RoiScore = 67,
+                    CumulativeRiskReductionPercent = 100,
+                },
+            ],
+            TotalRiskScore = 200,
+            HighROIRiskReduction = 200,
+            HighROIPercentage = 100,
+        });
+
+        var html = gen.GenerateHtml(report);
+
+        Assert.Contains("Replace deprecated package", html);
+        Assert.Contains("\u2014", html); // Em-dash for 0 CVEs
+    }
+
     // --- Dashboard Sections: Policy Violations ---
 
     [Fact]
