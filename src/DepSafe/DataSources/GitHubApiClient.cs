@@ -475,6 +475,68 @@ public sealed partial class GitHubApiClient : IDisposable
     }
 
     /// <summary>
+    /// Fetch release notes (with body text) for a repository.
+    /// </summary>
+    public async Task<Result<List<ReleaseNote>>> GetReleaseNotesAsync(
+        string owner, string repo, int count = 50, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
+            return Result.Fail<List<ReleaseNote>>("Owner/repo is empty", ErrorKind.InvalidInput);
+
+        if (IsRateLimited)
+            return Result.Fail<List<ReleaseNote>>("GitHub API rate limited", ErrorKind.RateLimited);
+
+        var cacheKey = $"github-releases:{owner}/{repo}";
+        var cached = await _cache.GetAsync<List<ReleaseNote>>(cacheKey, ct).ConfigureAwait(false);
+        if (cached is not null)
+            return cached;
+
+        await _requestLimiter.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var releases = await _client.Repository.Release.GetAll(owner, repo,
+                new ApiOptions { PageSize = count, PageCount = 1 }).ConfigureAwait(false);
+
+            await UpdateRateLimitFromOctokitAsync().ConfigureAwait(false);
+
+            var notes = new List<ReleaseNote>(releases.Count);
+            foreach (var r in releases)
+            {
+                notes.Add(new ReleaseNote(
+                    r.TagName,
+                    r.Body,
+                    r.PublishedAt?.UtcDateTime ?? r.CreatedAt.UtcDateTime));
+            }
+
+            await _cache.SetAsync(cacheKey, notes, TimeSpan.FromHours(24), ct).ConfigureAwait(false);
+            return notes;
+        }
+        catch (RateLimitExceededException ex)
+        {
+            _isRateLimited = true;
+            _rateLimitReset = ex.Reset.UtcDateTime;
+            _remainingRequests = 0;
+            return Result.Fail<List<ReleaseNote>>("GitHub API rate limit exceeded", ErrorKind.RateLimited);
+        }
+        catch (NotFoundException)
+        {
+            return Result.Fail<List<ReleaseNote>>($"Repository {owner}/{repo} not found", ErrorKind.NotFound);
+        }
+        catch (HttpRequestException ex)
+        {
+            return Result.Fail<List<ReleaseNote>>(ex.Message, ErrorKind.NetworkError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Result.Fail<List<ReleaseNote>>(ex.Message, ErrorKind.Unknown);
+        }
+        finally
+        {
+            _requestLimiter.Release();
+        }
+    }
+
+    /// <summary>
     /// Get vulnerabilities for multiple packages in batch.
     /// </summary>
     public async Task<Dictionary<string, List<VulnerabilityInfo>>> GetVulnerabilitiesBatchAsync(
