@@ -1059,6 +1059,7 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("    <th>CVEs Fixed</th>");
         sb.AppendLine("    <th title=\"Estimated CRA readiness score improvement\">Score Lift</th>");
         sb.AppendLine("    <th title=\"Patch = safe, Minor = new features, Major = possible breaking changes\">Effort</th>");
+        sb.AppendLine("    <th>Risk</th>");
         sb.AppendLine("  </tr></thead>");
         sb.AppendLine("  <tbody>");
 
@@ -1107,6 +1108,19 @@ public sealed partial class CraReportGenerator
             sb.AppendLine($"      <td>{primaryCveText}</td>");
             sb.AppendLine($"      <td><span class=\"score-lift\">+{item.ScoreLift} pts</span></td>");
             sb.AppendLine($"      <td><span class=\"upgrade-effort {primaryEffortClass}\">{primaryEffortLabel}</span></td>");
+            // Risk assessment badge
+            if (item.TierRiskAssessments is not null &&
+                item.UpgradeTiers.Count > 0 &&
+                item.TierRiskAssessments.TryGetValue(item.UpgradeTiers[0].TargetVersion, out var primaryRisk))
+            {
+                var riskClass = primaryRisk.RiskLevel.ToString().ToLowerInvariant();
+                var riskFactorsTooltip = EscapeHtml(string.Join("; ", primaryRisk.RiskFactors));
+                sb.AppendLine($"      <td><span class=\"risk-badge {riskClass}\" title=\"{riskFactorsTooltip}\">{primaryRisk.RiskLevel}</span><span class=\"risk-score\">{primaryRisk.RiskScore}/100</span></td>");
+            }
+            else
+            {
+                sb.AppendLine("      <td>\u2014</td>");
+            }
             sb.AppendLine("    </tr>");
 
             // Sub-rows for alternative tiers (skip index 0, which is the primary)
@@ -1134,6 +1148,18 @@ public sealed partial class CraReportGenerator
                 sb.AppendLine($"      <td>{altCveText}</td>");
                 sb.AppendLine("      <td></td>");
                 sb.AppendLine($"      <td><span class=\"upgrade-effort {altEffortClass}\">{altEffortLabel}</span></td>");
+                // Risk for alt tier
+                if (item.TierRiskAssessments is not null &&
+                    item.TierRiskAssessments.TryGetValue(tier.TargetVersion, out var altRisk))
+                {
+                    var altRiskClass = altRisk.RiskLevel.ToString().ToLowerInvariant();
+                    var altRiskFactorsTooltip = EscapeHtml(string.Join("; ", altRisk.RiskFactors));
+                    sb.AppendLine($"      <td><span class=\"risk-badge {altRiskClass}\" title=\"{altRiskFactorsTooltip}\">{altRisk.RiskLevel}</span><span class=\"risk-score\">{altRisk.RiskScore}/100</span></td>");
+                }
+                else
+                {
+                    sb.AppendLine("      <td></td>");
+                }
                 sb.AppendLine("    </tr>");
             }
         }

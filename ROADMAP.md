@@ -19,11 +19,11 @@ DepSafe is a CLI tool for .NET and npm dependency health analysis with EU Cyber 
 
 ---
 
-## Phase 1 — Make Findings More Actionable
+## Phase 1 — Make Findings More Actionable ✅
 
-Low-to-medium effort features that build directly on existing infrastructure.
+Low-to-medium effort features that build directly on existing infrastructure. **All items complete.**
 
-### 1.1 Policy as Code (Enhanced)
+### 1.1 Policy as Code (Enhanced) ✅
 
 **Effort:** Low | **Builds on:** CraConfig, CI/CD thresholds
 
@@ -46,7 +46,7 @@ Fail CI with clear, developer-readable explanations — not just exit codes.
 **Already have:** `CraConfig` with 5 CI/CD thresholds, exit code 2 for violations.
 **Gap:** More rule types, human-readable failure messages, license allowlist enforcement.
 
-### 1.2 Compliance Auto-Evidence Pack
+### 1.2 Compliance Auto-Evidence Pack ✅
 
 **Effort:** Low | **Builds on:** SBOM, VEX, CRA report, license output
 
@@ -66,7 +66,7 @@ Produces a timestamped directory with:
 
 **Already have:** All individual generators. **Gap:** Bundling orchestration and manifest.
 
-### 1.3 Release Readiness Score (Enhanced)
+### 1.3 Release Readiness Score (Enhanced) ✅
 
 **Effort:** Low | **Builds on:** CRA Readiness Score, compliance items
 
@@ -87,7 +87,7 @@ Advisory:
 **Already have:** CRA readiness score, compliance items, remediation roadmap.
 **Gap:** Blocking vs advisory classification, release-oriented output format.
 
-### 1.4 Security Budget Optimizer
+### 1.4 Security Budget Optimizer ✅
 
 **Effort:** Medium | **Builds on:** RemediationPrioritizer, health scores
 
@@ -107,11 +107,11 @@ These 10 others only reduce risk by 4%.
 
 ---
 
-## Phase 2 — Deeper Dependency Intelligence
+## Phase 2 — Deeper Dependency Intelligence ✅
 
-Medium effort features requiring new data analysis on top of existing data sources.
+Medium effort features requiring new data analysis on top of existing data sources. **All items complete.**
 
-### 2.1 Safe Upgrade Path Suggestions
+### 2.1 Safe Upgrade Path Suggestions ✅
 
 **Effort:** Medium | **Builds on:** NuGet/npm version data, vulnerability data
 
@@ -128,7 +128,7 @@ Newtonsoft.Json 12.0.1:
 **Already have:** Version fetching from NuGet/npm, vulnerability-to-version mapping.
 **Gap:** Semantic version diffing, breaking change detection heuristics, patch-only recommendations.
 
-### 2.2 Maintainer Trust Score
+### 2.2 Maintainer Trust Score ✅
 
 **Effort:** Medium | **Builds on:** GitHub API data, typosquatting detection
 
@@ -143,7 +143,7 @@ Score packages based on maintainer health signals:
 **Already have:** GitHub repo info (stars, last commit, archived status), bus factor via contributor data.
 **Gap:** Maintainer change tracking, anomaly detection, composite trust score.
 
-### 2.3 Security Debt Trend
+### 2.3 Security Debt Trend ✅
 
 **Effort:** Medium | **Requires:** Persistence layer
 
@@ -157,7 +157,7 @@ Track risk posture over time:
 **Already have:** All scoring infrastructure.
 **Gap:** Persistence (JSON file store or SQLite), historical comparison, trend visualization.
 
-### 2.4 Audit Simulation Mode
+### 2.4 Audit Simulation Mode ✅
 
 **Effort:** Medium | **Builds on:** Compliance items, policy engine
 
@@ -177,7 +177,7 @@ Findings a security auditor would likely raise:
 
 **Already have:** All compliance checks. **Gap:** Stricter thresholds, auditor-perspective framing, policy presets (e.g., `--policy strict`).
 
-### 2.5 Upgrade Risk Predictor
+### 2.5 Upgrade Risk Predictor ✅
 
 **Effort:** Medium | **Builds on:** Version data, GitHub data, vulnerability data
 
@@ -187,7 +187,7 @@ Before bumping a major dependency, estimate combined risk:
 - Security posture improvement (CVEs fixed)
 - Maintainer stability trend (active vs declining)
 
-**Already have:** Version data, maintainer activity signals. **Gap:** Changelog analysis, composite risk model.
+**Implemented:** Composite risk score (0-100) per upgrade tier using weighted formula: semver signal (40%), changelog breaking/deprecation keyword analysis (35%), maintainer trust (15%), version time gap (10%). Risk badges (Low/Medium/High/Critical) render in the remediation roadmap table with hover tooltips showing risk factors. Release notes fetched via GitHub API with 24h caching.
 
 ---
 
