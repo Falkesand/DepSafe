@@ -596,6 +596,10 @@ public sealed partial class CraReportGenerator
             DeprecatedPackages = _deprecatedPackages.ToList(),
             MinPackageHealthScore = minHealthPkg?.Score,
             MinHealthScorePackage = minHealthPkg?.PackageId,
+            CriticalVulnerabilityCount = vulnerabilities.Values
+                .SelectMany(v => v)
+                .Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase)),
+            MaxInactiveMonths = _maxInactiveMonths,
         };
     }
 
@@ -1124,6 +1128,7 @@ public sealed partial class CraReportGenerator
     private List<string> _stalePackageNames = [];
     private List<string> _unmaintainedPackageNames = [];
     private int _totalWithRepoData;
+    private int? _maxInactiveMonths;
 
     // Phase 1: Documentation (F3)
     private bool _hasReadme;
@@ -1247,6 +1252,14 @@ public sealed partial class CraReportGenerator
         _stalePackageNames = stale;
         _unmaintainedPackageNames = unmaintained;
         _totalWithRepoData = totalWithRepoData;
+    }
+
+    /// <summary>
+    /// Set the maximum number of months any dependency has been inactive.
+    /// </summary>
+    public void SetMaxInactiveMonths(int? months)
+    {
+        _maxInactiveMonths = months;
     }
 
     /// <summary>
