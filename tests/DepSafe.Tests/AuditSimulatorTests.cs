@@ -251,7 +251,7 @@ public class AuditSimulatorTests
             hasReadme: true,
             hasChangelog: true);
 
-        var finding = Assert.Single(result.Findings, f => f.ArticleReference.Contains("Art. 13(5)"));
+        var finding = Assert.Single(result.Findings, f => f.ArticleReference == "CRA Art. 13(5)");
         Assert.Equal(AuditSeverity.High, finding.Severity);
     }
 

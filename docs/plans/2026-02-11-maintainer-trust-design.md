@@ -121,9 +121,10 @@ Returns `null` when `repoInfo` is null (no GitHub data available, e.g., `--skip-
 
 **"Art. 13(5) — Maintainer Trust"** (weight 8)
 
-- **Compliant:** All direct dependencies have trust score >= 40 (or no GitHub data)
+- **Compliant:** All direct dependencies have trust score >= 60
+- **ActionRequired:** Any direct dependency has trust score 40-59 (Low tier)
 - **NonCompliant:** Any direct dependency has trust score < 40 (Critical tier)
-- **NotApplicable:** When `--skip-github` and no repo data available
+- **Review:** When `--skip-github` and no trust data available
 
 This is distinct from the existing Art. 13(5) check which uses health score. The new item specifically addresses supply chain due diligence on maintainer reliability.
 

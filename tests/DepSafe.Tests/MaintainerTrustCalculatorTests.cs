@@ -14,8 +14,9 @@ public class MaintainerTrustCalculatorTests
         var result = MaintainerTrustCalculator.Calculate(repo, metrics);
 
         Assert.NotNull(result);
-        // Single contributor = high bus factor risk = low trust
-        Assert.True(result.Score < 60);
+        // Single contributor = high bus factor risk, should not reach High tier
+        Assert.NotEqual(MaintainerTrustTier.High, result.Tier);
+        Assert.True(result.Score < 80);
     }
 
     [Fact]

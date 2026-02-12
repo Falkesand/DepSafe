@@ -24,9 +24,12 @@ public static class MaintainerTrustCalculator
         if (repoInfo is null)
             return null;
 
+        // Compute release author statistics once (used by both scoring and output)
+        var (releaseAuthorCount, topReleaseAuthor) = AnalyzeReleaseAuthors(repoInfo.RecentReleases);
+
         var busFactorScore = CalculateBusFactorScore(repoInfo.ContributorCount);
         var activityScore = CalculateActivityContinuityScore(repoInfo, metrics);
-        var releaseScore = CalculateReleaseDisciplineScore(repoInfo, metrics);
+        var releaseScore = CalculateReleaseDisciplineScore(repoInfo, metrics, releaseAuthorCount);
         var communityScore = CalculateCommunityHealthScore(repoInfo);
         var securityScore = CalculateSecurityPostureScore(repoInfo);
 
@@ -39,9 +42,6 @@ public static class MaintainerTrustCalculator
 
         var score = (int)Math.Round(Math.Clamp(weightedScore, 0, 100));
         var tier = GetTier(score);
-
-        // Compute release author statistics
-        var (releaseAuthorCount, topReleaseAuthor) = AnalyzeReleaseAuthors(repoInfo.RecentReleases);
 
         return new MaintainerTrust(
             Score: score,
@@ -70,8 +70,8 @@ public static class MaintainerTrustCalculator
     /// </summary>
     private static double CalculateBusFactorScore(int contributorCount) => contributorCount switch
     {
-        <= 1 => 0,
-        2 => 45,
+        <= 1 => 20,
+        2 => 50,
         3 or 4 => 75,
         _ => 100
     };
@@ -102,7 +102,7 @@ public static class MaintainerTrustCalculator
     /// Release discipline: regular, multi-author releases indicate healthy process.
     /// Combines cadence and recency, with a penalty for single-author release patterns.
     /// </summary>
-    private static double CalculateReleaseDisciplineScore(GitHubRepoInfo repoInfo, PackageMetrics metrics)
+    private static double CalculateReleaseDisciplineScore(GitHubRepoInfo repoInfo, PackageMetrics metrics, int releaseAuthorCount)
     {
         var cadenceScore = metrics.ReleasesPerYear switch
         {
@@ -126,8 +126,7 @@ public static class MaintainerTrustCalculator
         var combined = (cadenceScore + recencyScore) / 2.0;
 
         // Penalty: if a single author is responsible for 3+ releases, reduce by 30%
-        var (authorCount, _) = AnalyzeReleaseAuthors(repoInfo.RecentReleases);
-        if (authorCount == 1 && repoInfo.RecentReleases.Count >= 3)
+        if (releaseAuthorCount == 1 && repoInfo.RecentReleases.Count >= 3)
         {
             combined *= 0.70;
         }
