@@ -2654,6 +2654,20 @@
     .upgrade-tier-alt td:first-child {
       /* Empty rank cell for sub-rows */
     }
+    /* Risk assessment badges */
+    .risk-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .risk-badge.low { background: var(--success); color: #fff; }
+    .risk-badge.medium { background: var(--warning); color: #1a1a2e; }
+    .risk-badge.high { background: #e67e22; color: #fff; }
+    .risk-badge.critical { background: var(--danger); color: #fff; }
+    .risk-score { font-size: 0.7rem; color: var(--text-secondary); margin-left: 4px; }
     .upgrade-tier-recommended {
       font-weight: 600;
       color: var(--success);
