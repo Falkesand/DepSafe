@@ -143,4 +143,30 @@ public class SecurityBudgetOptimizerTests
         Assert.Equal(900, result.HighROIRiskReduction);
         Assert.Equal(90.0, result.HighROIPercentage);
     }
+
+    [Fact]
+    public void Optimize_MixedVulnAndMaintenance_SortsByRoi()
+    {
+        var vulnItem = CreateItem(id: "VulnPkg", priorityScore: 500, effort: UpgradeEffort.Patch);
+        var maintItem = CreateItem(id: "DeprecatedPkg", priorityScore: 200, effort: UpgradeEffort.Major);
+
+        var result = SecurityBudgetOptimizer.Optimize([vulnItem, maintItem]);
+
+        // VulnPkg: ROI = 500/1 = 500. DeprecatedPkg: ROI = 200/3 ≈ 67.
+        Assert.Equal("VulnPkg", result.Items[0].Item.PackageId);
+        Assert.Equal("DeprecatedPkg", result.Items[1].Item.PackageId);
+    }
+
+    [Fact]
+    public void Optimize_MaintenanceItemMajorEffort_LowerRoi()
+    {
+        // Same priority score but Major effort should have lower ROI
+        var patchItem = CreateItem(id: "PatchPkg", priorityScore: 300, effort: UpgradeEffort.Patch);
+        var majorItem = CreateItem(id: "MajorPkg", priorityScore: 300, effort: UpgradeEffort.Major);
+
+        var result = SecurityBudgetOptimizer.Optimize([patchItem, majorItem]);
+
+        Assert.Equal("PatchPkg", result.Items[0].Item.PackageId);
+        Assert.True(result.Items[0].RoiScore > result.Items[1].RoiScore);
+    }
 }
