@@ -276,6 +276,21 @@ public static class PolicyEvaluator
         return new PolicyEvaluationResult(violations, exitCode);
     }
 
+    /// <summary>
+    /// Removes packages whose IDs appear in the exclusion list (case-insensitive).
+    /// Call before Evaluate to exclude known-accepted packages from policy checks.
+    /// </summary>
+    public static List<PackageHealth> FilterExcludedPackages(
+        IReadOnlyList<PackageHealth> packages,
+        IReadOnlyList<string> excludePackages)
+    {
+        if (excludePackages.Count == 0)
+            return packages.ToList();
+
+        var excluded = new HashSet<string>(excludePackages, StringComparer.OrdinalIgnoreCase);
+        return packages.Where(p => !excluded.Contains(p.PackageId)).ToList();
+    }
+
     private static string? GetJustification(CraConfig config, string packageId)
     {
         return config.ComplianceNotes.TryGetValue(packageId, out var note) ? note : null;

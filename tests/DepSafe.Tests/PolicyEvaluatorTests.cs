@@ -285,4 +285,91 @@ public class PolicyEvaluatorTests
         var violation = Assert.Single(result.Violations);
         Assert.Contains("TinyLib", violation.Remediation);
     }
+
+    [Fact]
+    public void ExcludePackages_RemovedBeforeScoring()
+    {
+        var packages = new List<PackageHealth>
+        {
+            CreatePackage("KeepMe"),
+            CreatePackage("DropMe"),
+            CreatePackage("AlsoKeep")
+        };
+        var excludeList = new List<string> { "DropMe" };
+
+        var filtered = PolicyEvaluator.FilterExcludedPackages(packages, excludeList);
+
+        Assert.Equal(2, filtered.Count);
+        Assert.DoesNotContain(filtered, p => p.PackageId == "DropMe");
+    }
+
+    [Fact]
+    public void ExcludePackages_CaseInsensitive()
+    {
+        var packages = new List<PackageHealth>
+        {
+            CreatePackage("Newtonsoft.Json")
+        };
+        var excludeList = new List<string> { "newtonsoft.json" };
+
+        var filtered = PolicyEvaluator.FilterExcludedPackages(packages, excludeList);
+
+        Assert.Empty(filtered);
+    }
+
+    [Fact]
+    public void ExcludePackages_EmptyList_NoEffect()
+    {
+        var packages = new List<PackageHealth>
+        {
+            CreatePackage("PkgA"),
+            CreatePackage("PkgB")
+        };
+
+        var filtered = PolicyEvaluator.FilterExcludedPackages(packages, []);
+
+        Assert.Equal(2, filtered.Count);
+    }
+
+    [Fact]
+    public void PolicyEvaluation_EndToEnd()
+    {
+        var config = new CraConfig
+        {
+            NoCriticalVulnerabilities = true,
+            MinPackageMaintainers = 2,
+            FailOnDeprecatedPackages = true,
+            MinHealthScore = 50,
+            AllowedLicenses = ["MIT", "Apache-2.0"],
+            ComplianceNotes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["OldPkg"] = "Planned for removal in v2.0"
+            }
+        };
+        var report = CreateReport(
+            criticalVulnerabilityCount: 1,
+            deprecatedPackages: ["OldPkg"],
+            minPackageHealthScore: 40,
+            minHealthScorePackage: "WeakPkg");
+        var packages = new List<PackageHealth>
+        {
+            CreatePackage("GoodPkg", contributorCount: 5, license: "MIT"),
+            CreatePackage("SoloPkg", contributorCount: 1, license: "MIT"),
+            CreatePackage("GplPkg", contributorCount: 3, license: "GPL-3.0")
+        };
+
+        var result = PolicyEvaluator.Evaluate(report, config, packages);
+
+        // Should have: NoCriticalVulnerabilities, MinPackageMaintainers (SoloPkg),
+        // FailOnDeprecatedPackages (OldPkg), MinHealthScore (WeakPkg), LicensePolicy (GplPkg)
+        Assert.Equal(5, result.Violations.Count);
+        Assert.Equal(2, result.ExitCode);
+
+        // All violations should have CRA article references
+        Assert.All(result.Violations, v => Assert.NotNull(v.CraArticle));
+
+        // OldPkg should have justification from ComplianceNotes
+        var deprecatedViolation = result.Violations.First(v => v.Rule == "FailOnDeprecatedPackages");
+        Assert.Equal("Planned for removal in v2.0", deprecatedViolation.Justification);
+    }
 }
