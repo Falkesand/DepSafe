@@ -2193,17 +2193,17 @@ public static class CraReportCommand
         reportGenerator.SetMaintainerTrustData(allPackages);
 
         // Phase 1 actionable findings for HTML dashboard
+        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
+        PolicyEvaluationResult policyResult;
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
             reportGenerator.SetSecurityBudget(budget);
 
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditMode ? reportGenerator.GetAuditSimulation() : null);
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditResultForExit);
             reportGenerator.SetReleaseReadiness(readiness);
 
-            LicensePolicyResult? licenseResult = null;
-            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
-                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
-            reportGenerator.SetPolicyViolations(licenseResult, config);
+            policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
+            reportGenerator.SetPolicyEvaluation(policyResult, config?.ExcludePackages, config?.ComplianceNotes);
         }
 
         if (string.IsNullOrEmpty(outputPath))
@@ -2319,8 +2319,6 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
-        var policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
         DisplayPolicyViolations(policyResult);
         var exitCode = policyResult.ExitCode;
         var violations = policyResult.Violations.Select(v => v.Message).ToList();
@@ -3100,17 +3098,17 @@ public static class CraReportCommand
         reportGenerator.SetMaintainerTrustData(allPackages);
 
         // Phase 1 actionable findings for HTML dashboard
+        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
+        PolicyEvaluationResult policyResult;
         {
             var budget = SecurityBudgetOptimizer.Optimize(roadmap);
             reportGenerator.SetSecurityBudget(budget);
 
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditMode ? reportGenerator.GetAuditSimulation() : null);
+            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditResultForExit);
             reportGenerator.SetReleaseReadiness(readiness);
 
-            LicensePolicyResult? licenseResult = null;
-            if (config is not null && (config.AllowedLicenses.Count > 0 || config.BlockedLicenses.Count > 0))
-                licenseResult = LicensePolicyEvaluator.Evaluate(allPackages, config);
-            reportGenerator.SetPolicyViolations(licenseResult, config);
+            policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
+            reportGenerator.SetPolicyEvaluation(policyResult, config?.ExcludePackages, config?.ComplianceNotes);
         }
 
         // Determine output path
@@ -3232,8 +3230,6 @@ public static class CraReportCommand
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
-        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
-        var policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
         DisplayPolicyViolations(policyResult);
         var exitCode = policyResult.ExitCode;
         var violations = policyResult.Violations.Select(v => v.Message).ToList();

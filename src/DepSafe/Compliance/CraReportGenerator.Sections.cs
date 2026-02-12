@@ -2006,26 +2006,25 @@ public sealed partial class CraReportGenerator
 
         sb.AppendLine("<div class=\"info-box\">");
         sb.AppendLine("  <div class=\"info-box-title\">\u2139 What is this?</div>");
-        sb.AppendLine("  <p>Your team has configured policy rules in .cra-config.json. This section shows which packages do not meet those rules. These are custom policies \u2014 not CRA legal requirements \u2014 but they represent your organization's standards.</p>");
+        sb.AppendLine("  <p>Your team has configured policy rules in .cra-config.json. This section shows which rules were violated. These are custom policies \u2014 not CRA legal requirements \u2014 but they represent your organization's standards.</p>");
         sb.AppendLine("</div>");
 
-        var hasAnyViolation = false;
-
-        // License violations
-        if (_licensePolicyResult is not null && _licensePolicyResult.HasViolations)
+        // Excluded packages card
+        if (_excludedPackages.Count > 0)
         {
-            hasAnyViolation = true;
-            sb.AppendLine("<div class=\"card policy-category\">");
-            sb.AppendLine($"  <h4>License Policy Violations ({_licensePolicyResult.Violations.Count})</h4>");
+            sb.AppendLine("<div class=\"card info-card\" style=\"margin-bottom: 16px;\">");
+            sb.AppendLine($"  <h4>\u2139 {_excludedPackages.Count} package(s) excluded from analysis</h4>");
             sb.AppendLine("  <table class=\"policy-table\">");
-            sb.AppendLine("    <thead><tr><th>Package</th><th>License Found</th><th>Rule Violated</th></tr></thead>");
+            sb.AppendLine("    <thead><tr><th>Package</th><th>Justification</th></tr></thead>");
             sb.AppendLine("    <tbody>");
-            foreach (var v in _licensePolicyResult.Violations)
+            foreach (var pkg in _excludedPackages)
             {
+                var justification = _complianceNotes.TryGetValue(pkg, out var note)
+                    ? EscapeHtml(note)
+                    : "<em>No justification provided</em>";
                 sb.AppendLine("      <tr>");
-                sb.AppendLine($"        <td><strong>{EscapeHtml(v.PackageId)}</strong></td>");
-                sb.AppendLine($"        <td>{EscapeHtml(v.License)}</td>");
-                sb.AppendLine($"        <td>{EscapeHtml(v.Reason)}</td>");
+                sb.AppendLine($"        <td><strong>{EscapeHtml(pkg)}</strong></td>");
+                sb.AppendLine($"        <td>{justification}</td>");
                 sb.AppendLine("      </tr>");
             }
             sb.AppendLine("    </tbody>");
@@ -2033,60 +2032,41 @@ public sealed partial class CraReportGenerator
             sb.AppendLine("</div>");
         }
 
-        // Deprecated packages
-        if (_policyConfig is not null && _policyConfig.FailOnDeprecatedPackages && _deprecatedPackages.Count > 0)
-        {
-            hasAnyViolation = true;
-            sb.AppendLine("<div class=\"card policy-category\">");
-            sb.AppendLine($"  <h4>Deprecated Packages ({_deprecatedPackages.Count})</h4>");
-            sb.AppendLine("  <p style=\"color: var(--text-muted); margin-bottom: 12px;\">These packages are deprecated. Replace them with maintained alternatives.</p>");
-            sb.AppendLine("  <ul class=\"policy-pkg-list\">");
-            foreach (var pkg in _deprecatedPackages)
-            {
-                sb.AppendLine($"    <li>{EscapeHtml(pkg)}</li>");
-            }
-            sb.AppendLine("  </ul>");
-            sb.AppendLine("</div>");
-        }
-
-        // Min health score violations
-        if (_policyConfig is not null && _policyConfig.MinHealthScore.HasValue && _healthDataCache is not null)
-        {
-            var belowThreshold = _healthDataCache
-                .Where(p => p.Score < _policyConfig.MinHealthScore.Value)
-                .OrderBy(p => p.Score)
-                .ToList();
-
-            if (belowThreshold.Count > 0)
-            {
-                hasAnyViolation = true;
-                sb.AppendLine("<div class=\"card policy-category\">");
-                sb.AppendLine($"  <h4>Below Minimum Health Score ({belowThreshold.Count})</h4>");
-                sb.AppendLine($"  <p style=\"color: var(--text-muted); margin-bottom: 12px;\">Packages below the configured minimum health score of {_policyConfig.MinHealthScore.Value}.</p>");
-                sb.AppendLine("  <table class=\"policy-table\">");
-                sb.AppendLine("    <thead><tr><th>Package</th><th>Score</th><th>Threshold</th></tr></thead>");
-                sb.AppendLine("    <tbody>");
-                foreach (var pkg in belowThreshold)
-                {
-                    sb.AppendLine("      <tr>");
-                    sb.AppendLine($"        <td><strong>{EscapeHtml(pkg.PackageId)}</strong></td>");
-                    sb.AppendLine($"        <td><span class=\"{GetScoreClass(pkg.Score)}\">{pkg.Score}</span></td>");
-                    sb.AppendLine($"        <td>{_policyConfig.MinHealthScore.Value}</td>");
-                    sb.AppendLine("      </tr>");
-                }
-                sb.AppendLine("    </tbody>");
-                sb.AppendLine("  </table>");
-                sb.AppendLine("</div>");
-            }
-        }
-
-        if (!hasAnyViolation)
+        if (_policyEvaluation is null || _policyEvaluation.Violations.Count == 0)
         {
             sb.AppendLine("<div class=\"card empty-state success\">");
             sb.AppendLine("  <div class=\"empty-icon\">\u2713</div>");
             sb.AppendLine("  <p>No policy violations found. All packages meet your configured rules.</p>");
             sb.AppendLine("</div>");
+            return;
         }
+
+        // Violations table
+        sb.AppendLine("<div class=\"card\">");
+        sb.AppendLine("  <table class=\"policy-table\">");
+        sb.AppendLine("    <thead><tr><th>Rule</th><th>Severity</th><th>Details</th><th>CRA Article</th><th>Remediation</th></tr></thead>");
+        sb.AppendLine("    <tbody>");
+        foreach (var v in _policyEvaluation.Violations)
+        {
+            var sevClass = v.Severity == PolicySeverity.Block ? "risk-critical" : "risk-medium";
+            var sevLabel = v.Severity == PolicySeverity.Block ? "BLOCK" : "WARN";
+            sb.AppendLine($"      <tr class=\"{sevClass}\">");
+            sb.AppendLine($"        <td><strong>{EscapeHtml(v.Rule)}</strong></td>");
+            sb.AppendLine($"        <td>{sevLabel}</td>");
+            sb.AppendLine($"        <td>{EscapeHtml(v.Message)}</td>");
+            sb.AppendLine($"        <td>{EscapeHtml(v.CraArticle ?? "\u2014")}</td>");
+            sb.AppendLine($"        <td>{EscapeHtml(v.Remediation ?? "\u2014")}</td>");
+            sb.AppendLine("      </tr>");
+            if (v.Justification is not null)
+            {
+                sb.AppendLine("      <tr>");
+                sb.AppendLine($"        <td colspan=\"5\" style=\"color: var(--text-muted); font-style: italic; padding-left: 24px;\">Justification: {EscapeHtml(v.Justification)}</td>");
+                sb.AppendLine("      </tr>");
+            }
+        }
+        sb.AppendLine("    </tbody>");
+        sb.AppendLine("  </table>");
+        sb.AppendLine("</div>");
     }
 
     private void GenerateAuditSimulationSection(StringBuilder sb)
