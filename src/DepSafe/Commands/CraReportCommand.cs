@@ -1867,6 +1867,8 @@ public static class CraReportCommand
         {
             var beforeCount = allPackages.Count;
             allPackages = PolicyEvaluator.FilterExcludedPackages(allPackages, config.ExcludePackages);
+            packages = PolicyEvaluator.FilterExcludedPackages(packages, config.ExcludePackages);
+            transitivePackages = PolicyEvaluator.FilterExcludedPackages(transitivePackages, config.ExcludePackages);
             if (beforeCount > allPackages.Count)
                 AnsiConsole.MarkupLine($"[dim]Excluded {beforeCount - allPackages.Count} package(s) from analysis per .cra-config.json[/]");
         }
@@ -2773,6 +2775,8 @@ public static class CraReportCommand
         {
             var beforeCount = allPackages.Count;
             allPackages = PolicyEvaluator.FilterExcludedPackages(allPackages, config.ExcludePackages);
+            packages = PolicyEvaluator.FilterExcludedPackages(packages, config.ExcludePackages);
+            transitivePackages = PolicyEvaluator.FilterExcludedPackages(transitivePackages, config.ExcludePackages);
             if (beforeCount > allPackages.Count)
                 AnsiConsole.MarkupLine($"[dim]Excluded {beforeCount - allPackages.Count} package(s) from analysis per .cra-config.json[/]");
         }
@@ -3265,7 +3269,7 @@ public static class CraReportCommand
                 $"[{sevColor}]{Markup.Escape(v.Rule)}[/]",
                 $"[{sevColor} bold]{sevLabel}[/]",
                 Markup.Escape(v.Message),
-                v.CraArticle ?? "\u2014",
+                Markup.Escape(v.CraArticle ?? "\u2014"),
                 Markup.Escape(v.Remediation ?? "\u2014"));
 
             if (v.Justification is not null)
