@@ -1114,7 +1114,8 @@ public sealed partial class CraReportGenerator
                 item.TierRiskAssessments.TryGetValue(item.UpgradeTiers[0].TargetVersion, out var primaryRisk))
             {
                 var riskClass = primaryRisk.RiskLevel.ToString().ToLowerInvariant();
-                sb.AppendLine($"      <td><span class=\"risk-badge {riskClass}\">{primaryRisk.RiskLevel}</span><span class=\"risk-score\">{primaryRisk.RiskScore}/100</span></td>");
+                var riskFactorsTooltip = EscapeHtml(string.Join("; ", primaryRisk.RiskFactors));
+                sb.AppendLine($"      <td><span class=\"risk-badge {riskClass}\" title=\"{riskFactorsTooltip}\">{primaryRisk.RiskLevel}</span><span class=\"risk-score\">{primaryRisk.RiskScore}/100</span></td>");
             }
             else
             {
@@ -1152,7 +1153,8 @@ public sealed partial class CraReportGenerator
                     item.TierRiskAssessments.TryGetValue(tier.TargetVersion, out var altRisk))
                 {
                     var altRiskClass = altRisk.RiskLevel.ToString().ToLowerInvariant();
-                    sb.AppendLine($"      <td><span class=\"risk-badge {altRiskClass}\">{altRisk.RiskLevel}</span><span class=\"risk-score\">{altRisk.RiskScore}/100</span></td>");
+                    var altRiskFactorsTooltip = EscapeHtml(string.Join("; ", altRisk.RiskFactors));
+                    sb.AppendLine($"      <td><span class=\"risk-badge {altRiskClass}\" title=\"{altRiskFactorsTooltip}\">{altRisk.RiskLevel}</span><span class=\"risk-score\">{altRisk.RiskScore}/100</span></td>");
                 }
                 else
                 {

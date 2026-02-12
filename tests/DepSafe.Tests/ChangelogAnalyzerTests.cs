@@ -87,4 +87,19 @@ public class ChangelogAnalyzerTests
         Assert.Equal(0, result.DeprecationCount);
         Assert.Equal(3, result.ReleaseCount); // all 3 in range, even with empty body
     }
+
+    [Fact]
+    public void Analyze_SameKeywordMultipleTimes_CountsOncePerPatternPerRelease()
+    {
+        var releases = new List<ReleaseNote>
+        {
+            MakeRelease("v1.1.0", "Breaking change: removed X. Also removed Y and removed Z."),
+        };
+
+        var result = ChangelogAnalyzer.Analyze(releases, "1.0.0", "2.0.0");
+
+        // "breaking" matches once, "removed" matches once = 2 total
+        // (each pattern counted once per release, not per occurrence)
+        Assert.Equal(2, result.BreakingChangeCount);
+    }
 }
