@@ -2263,4 +2263,137 @@ public sealed partial class CraReportGenerator
         sb.AppendLine("</div>");
     }
 
+    private void GenerateTrendSection(StringBuilder sb)
+    {
+        if (_trendSummary is null) return;
+
+        sb.AppendLine("<div class=\"section-header\">");
+        sb.AppendLine("  <h2>Security Debt Trend</h2>");
+        sb.AppendLine("</div>");
+
+        // Summary card
+        var (dirIcon, dirClass) = _trendSummary.OverallDirection switch
+        {
+            TrendDirection.Improving => ("\u25b2", "trend-improving"),
+            TrendDirection.Degrading => ("\u25bc", "trend-degrading"),
+            _ => ("\u25cf", "trend-stable")
+        };
+        var since = _trendSummary.FirstSnapshot?.ToString("MMM d, yyyy") ?? "unknown";
+
+        sb.AppendLine($"<div class=\"trend-card {dirClass}\">");
+        sb.AppendLine($"  <span class=\"trend-direction-icon\">{dirIcon}</span>");
+        sb.AppendLine($"  <span>Security posture is <strong>{_trendSummary.OverallDirection.ToString().ToLowerInvariant()}</strong> over {_trendSummary.SnapshotCount} snapshots since {EscapeHtml(since)}.</span>");
+        sb.AppendLine("</div>");
+
+        // Sparkline chart rows
+        sb.AppendLine("<div class=\"trend-metrics\">");
+        foreach (var metric in _trendSummary.Metrics)
+        {
+            var sparklineData = GetSparklineData(metric.Name);
+            var (metricIcon, metricClass) = metric.Direction switch
+            {
+                TrendDirection.Improving => ("\u25b2", "trend-improving"),
+                TrendDirection.Degrading => ("\u25bc", "trend-degrading"),
+                _ => ("\u25cf", "trend-stable")
+            };
+            var deltaStr = metric.Delta.HasValue
+                ? (metric.Delta.Value > 0 ? $"+{metric.Delta.Value}" : metric.Delta.Value.ToString())
+                : "\u2014";
+            var suffix = metric.Name == "SBOM Completeness" ? "%" : "";
+
+            sb.AppendLine("  <div class=\"trend-metric-row\">");
+            sb.AppendLine($"    <div class=\"trend-metric-name\">{EscapeHtml(metric.Name)}</div>");
+            sb.AppendLine($"    <div class=\"trend-sparkline\">{GenerateSparklineSvg(sparklineData)}</div>");
+            sb.AppendLine($"    <div class=\"trend-metric-value\">{metric.CurrentValue}{suffix}</div>");
+            sb.AppendLine($"    <div class=\"trend-delta {metricClass}\">{metricIcon} {deltaStr}</div>");
+            sb.AppendLine("  </div>");
+        }
+        sb.AppendLine("</div>");
+
+        // History table (collapsible)
+        if (_trendSnapshots is not null && _trendSnapshots.Count > 1)
+        {
+            sb.AppendLine("<details class=\"trend-history\">");
+            sb.AppendLine("<summary>Snapshot History</summary>");
+            sb.AppendLine("<table class=\"detail-table\">");
+            sb.AppendLine("  <thead><tr>");
+            sb.AppendLine("    <th>Date</th><th>Health</th><th>CRA</th><th>Vulns</th><th>Critical</th><th>Reportable</th><th>SBOM %</th><th>Unpatched Days</th>");
+            sb.AppendLine("  </tr></thead>");
+            sb.AppendLine("  <tbody>");
+
+            // Most recent first
+            for (var i = _trendSnapshots.Count - 1; i >= 0 && i >= _trendSnapshots.Count - 10; i--)
+            {
+                var s = _trendSnapshots[i];
+                sb.AppendLine("    <tr>");
+                sb.AppendLine($"      <td>{s.CapturedAt:yyyy-MM-dd HH:mm}</td>");
+                sb.AppendLine($"      <td>{s.HealthScore}</td>");
+                sb.AppendLine($"      <td>{s.CraReadinessScore}</td>");
+                sb.AppendLine($"      <td>{s.VulnerabilityCount}</td>");
+                sb.AppendLine($"      <td>{s.CriticalPackageCount}</td>");
+                sb.AppendLine($"      <td>{s.ReportableVulnerabilityCount}</td>");
+                sb.AppendLine($"      <td>{s.SbomCompletenessPercentage?.ToString() ?? "\u2014"}</td>");
+                sb.AppendLine($"      <td>{s.MaxUnpatchedVulnerabilityDays?.ToString() ?? "\u2014"}</td>");
+                sb.AppendLine("    </tr>");
+            }
+
+            sb.AppendLine("  </tbody>");
+            sb.AppendLine("</table>");
+            sb.AppendLine("</details>");
+        }
+    }
+
+    private List<int> GetSparklineData(string metricName)
+    {
+        if (_trendSnapshots is null || _trendSnapshots.Count == 0)
+            return [];
+
+        var start = Math.Max(0, _trendSnapshots.Count - 10);
+        var data = new List<int>();
+        for (var i = start; i < _trendSnapshots.Count; i++)
+        {
+            var s = _trendSnapshots[i];
+            var value = metricName switch
+            {
+                "Health Score" => s.HealthScore,
+                "CRA Readiness Score" => s.CraReadinessScore,
+                "Vulnerability Count" => s.VulnerabilityCount,
+                "Critical Packages" => s.CriticalPackageCount,
+                "Reportable Vulnerabilities" => s.ReportableVulnerabilityCount,
+                "SBOM Completeness" => s.SbomCompletenessPercentage ?? 0,
+                "Max Unpatched Days" => s.MaxUnpatchedVulnerabilityDays ?? 0,
+                _ => 0
+            };
+            data.Add(value);
+        }
+        return data;
+    }
+
+    private static string GenerateSparklineSvg(List<int> data)
+    {
+        if (data.Count < 2)
+            return "<svg width=\"80\" height=\"24\"></svg>";
+
+        var min = data.Min();
+        var max = data.Max();
+        var range = max - min;
+        if (range == 0) range = 1; // avoid division by zero
+
+        var width = 80;
+        var height = 24;
+        var padding = 2;
+        var usableWidth = width - 2 * padding;
+        var usableHeight = height - 2 * padding;
+
+        var points = new List<string>();
+        for (var i = 0; i < data.Count; i++)
+        {
+            var x = padding + (int)((double)i / (data.Count - 1) * usableWidth);
+            var y = padding + usableHeight - (int)((double)(data[i] - min) / range * usableHeight);
+            points.Add($"{x},{y}");
+        }
+
+        return $"<svg width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><polyline points=\"{string.Join(" ", points)}\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
+    }
+
 }

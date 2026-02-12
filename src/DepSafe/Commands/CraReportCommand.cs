@@ -6,6 +6,7 @@ using System.Text.Json;
 using DepSafe.Compliance;
 using DepSafe.DataSources;
 using DepSafe.Models;
+using DepSafe.Persistence;
 using DepSafe.Scoring;
 using DepSafe.Signing;
 using Spectre.Console;
@@ -70,6 +71,10 @@ public static class CraReportCommand
             ["--audit-mode"],
             "Simulate CRA conformity assessment with zero-tolerance findings");
 
+        var snapshotOption = new Option<bool>(
+            ["--snapshot"],
+            "Save snapshot for trend tracking and display historical trend analysis");
+
         var command = new Command("cra-report", "Generate comprehensive CRA compliance report")
         {
             pathArg,
@@ -84,10 +89,11 @@ public static class CraReportCommand
             signKeyOption,
             releaseGateOption,
             evidencePackOption,
-            auditModeOption
+            auditModeOption,
+            snapshotOption
         };
 
-        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption, auditModeOption);
+        var binder = new CraReportOptionsBinder(pathArg, formatOption, outputOption, skipGitHubOption, deepOption, licensesOption, sbomOption, checkTyposquatOption, signOption, signKeyOption, releaseGateOption, evidencePackOption, auditModeOption, snapshotOption);
         command.SetHandler(async context =>
         {
             var options = binder.Bind(context.BindingContext);
@@ -167,6 +173,7 @@ public static class CraReportCommand
         var releaseGate = options.ReleaseGate;
         var evidencePack = options.EvidencePack;
         var auditMode = options.AuditMode;
+        var snapshot = options.Snapshot;
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
@@ -220,9 +227,9 @@ public static class CraReportCommand
         // Process based on project type
         var result = projectType switch
         {
-            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
-            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
-            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, ct),
+            ProjectType.Npm => await ExecuteNpmAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, snapshot, ct),
+            ProjectType.DotNet => await ExecuteDotNetAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, snapshot, ct),
+            ProjectType.Mixed => await ExecuteMixedAsync(path, format, outputPath, skipGitHub, deepScan, licensesFormat, sbomFormat, config, startTime, typosquatResults, sign, signKey, releaseGate, evidencePack, auditMode, snapshot, ct),
             _ => 0
         };
 
@@ -247,7 +254,7 @@ public static class CraReportCommand
         return result;
     }
 
-    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteNpmAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, bool snapshot = false, CancellationToken ct = default)
     {
         var packageJsonFiles = NpmApiClient.FindPackageJsonFiles(path).ToList();
         if (packageJsonFiles.Count == 0)
@@ -501,6 +508,7 @@ public static class CraReportCommand
             evidencePack,
             auditMode,
             availableVersions,
+            snapshot,
             ct);
     }
 
@@ -992,7 +1000,7 @@ public static class CraReportCommand
 
     private static bool IsKnownSpdxLicense(string license) => KnownSpdxLicenses.Contains(license);
 
-    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteDotNetAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, bool snapshot = false, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)
@@ -1344,10 +1352,11 @@ public static class CraReportCommand
             evidencePack,
             auditMode,
             availableVersions,
+            snapshot,
             ct);
     }
 
-    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, CancellationToken ct = default)
+    private static async Task<int> ExecuteMixedAsync(string path, CraOutputFormat format, string? outputPath, bool skipGitHub, bool deepScan, LicenseOutputFormat? licensesFormat, SbomFormat? sbomFormat, CraConfig? config, DateTime startTime, List<TyposquatResult>? typosquatResults = null, bool sign = false, string? signKey = null, bool releaseGate = false, bool evidencePack = false, bool auditMode = false, bool snapshot = false, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[dim]Mixed project detected - analyzing both .NET and npm components[/]");
 
@@ -1819,6 +1828,7 @@ public static class CraReportCommand
             evidencePack,
             auditMode,
             availableVersions,
+            snapshot,
             ct);
     }
 
@@ -1847,6 +1857,7 @@ public static class CraReportCommand
         bool evidencePack = false,
         bool auditMode = false,
         Dictionary<string, List<string>>? availableVersions = null,
+        bool snapshot = false,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -2202,6 +2213,27 @@ public static class CraReportCommand
             sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, ct);
         }
 
+        // Snapshot & trend analysis
+        TrendSummary? trendSummary = null;
+        if (snapshot)
+        {
+            var store = new TrendSnapshotStore();
+            var currentSnapshot = TrendAnalyzer.BuildSnapshot(craReport);
+            var history = await store.LoadAsync(path, maxCount: 10, ct);
+            await store.SaveAsync(currentSnapshot, ct);
+            history.Add(currentSnapshot);
+            trendSummary = TrendAnalyzer.Analyze(history);
+
+            if (trendSummary.Metrics.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[dim]First snapshot recorded. Run again with --snapshot to see trends.[/]");
+            }
+            else
+            {
+                reportGenerator.SetTrendData(trendSummary, history);
+            }
+        }
+
         var output = format == CraOutputFormat.Json
             ? reportGenerator.GenerateJson(craReport)
             : reportGenerator.GenerateHtml(craReport, licenseFilePath);
@@ -2268,6 +2300,7 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
 
         DisplaySecurityBudgetSummary(roadmap);
+        DisplayTrendSummary(trendSummary);
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
@@ -2714,6 +2747,7 @@ public static class CraReportCommand
         bool evidencePack = false,
         bool auditMode = false,
         Dictionary<string, List<string>>? availableVersions = null,
+        bool snapshot = false,
         CancellationToken ct = default)
     {
         // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
@@ -3069,6 +3103,27 @@ public static class CraReportCommand
             sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, ct);
         }
 
+        // Snapshot & trend analysis
+        TrendSummary? trendSummary = null;
+        if (snapshot)
+        {
+            var store = new TrendSnapshotStore();
+            var currentSnapshot = TrendAnalyzer.BuildSnapshot(craReport);
+            var history = await store.LoadAsync(path, maxCount: 10, ct);
+            await store.SaveAsync(currentSnapshot, ct);
+            history.Add(currentSnapshot);
+            trendSummary = TrendAnalyzer.Analyze(history);
+
+            if (trendSummary.Metrics.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[dim]First snapshot recorded. Run again with --snapshot to see trends.[/]");
+            }
+            else
+            {
+                reportGenerator.SetTrendData(trendSummary, history);
+            }
+        }
+
         string output;
         if (format == CraOutputFormat.Json)
         {
@@ -3140,6 +3195,7 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
 
         DisplaySecurityBudgetSummary(roadmap);
+        DisplayTrendSummary(trendSummary);
 
         AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
 
@@ -3320,6 +3376,59 @@ public static class CraReportCommand
         var lowRoiCount = budget.Items.Count - highRoiItems.Count;
         if (lowRoiCount > 0)
             AnsiConsole.MarkupLine($"[dim]+{lowRoiCount} lower-ROI item(s) reducing remaining {100 - budget.HighROIPercentage:F0}% of risk[/]");
+    }
+
+    private static void DisplayTrendSummary(TrendSummary? trendSummary)
+    {
+        if (trendSummary is null || trendSummary.Metrics.Count == 0)
+            return;
+
+        AnsiConsole.WriteLine();
+        var since = trendSummary.FirstSnapshot?.ToString("yyyy-MM-dd") ?? "unknown";
+        AnsiConsole.Write(new Rule($"[bold]Security Debt Trend ({trendSummary.SnapshotCount} snapshots, since {since})[/]").LeftJustified());
+
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .AddColumn("Metric")
+            .AddColumn(new TableColumn("Current").RightAligned())
+            .AddColumn(new TableColumn("Previous").RightAligned())
+            .AddColumn(new TableColumn("Delta").RightAligned())
+            .AddColumn("Trend");
+
+        foreach (var metric in trendSummary.Metrics)
+        {
+            var currentStr = metric.Name == "SBOM Completeness"
+                ? $"{metric.CurrentValue}%"
+                : metric.CurrentValue.ToString();
+            var previousStr = metric.PreviousValue.HasValue
+                ? (metric.Name == "SBOM Completeness" ? $"{metric.PreviousValue}%" : metric.PreviousValue.Value.ToString())
+                : "\u2014";
+            var deltaStr = metric.Delta.HasValue
+                ? (metric.Delta.Value > 0 ? $"+{metric.Delta.Value}" : metric.Delta.Value.ToString())
+                : "\u2014";
+
+            var (icon, color) = metric.Direction switch
+            {
+                TrendDirection.Improving => ("\u25b2", "green"),
+                TrendDirection.Degrading => ("\u25bc", "red"),
+                _ => ("\u25cf", "blue")
+            };
+
+            var trendStr = $"[{color}]{icon} {metric.Direction}[/]";
+
+            table.AddRow(metric.Name, currentStr, previousStr, deltaStr, trendStr);
+        }
+
+        AnsiConsole.Write(table);
+
+        var (overallIcon, overallColor) = trendSummary.OverallDirection switch
+        {
+            TrendDirection.Improving => ("\u25b2", "green"),
+            TrendDirection.Degrading => ("\u25bc", "red"),
+            _ => ("\u25cf", "blue")
+        };
+
+        AnsiConsole.MarkupLine($"\n[bold]Overall:[/] [{overallColor}]{overallIcon} {trendSummary.OverallDirection}[/]");
     }
 
     private static async Task<string> GenerateLicenseAttributionAsync(
