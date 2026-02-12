@@ -26,9 +26,15 @@ public static class RemediationPrioritizer
         IReadOnlyDictionary<string, List<VulnerabilityInfo>> allVulnerabilities,
         int currentCraScore,
         List<CraComplianceItem> currentComplianceItems,
-        IReadOnlyDictionary<string, List<string>>? availableVersions = null)
+        IReadOnlyDictionary<string, List<string>>? availableVersions = null,
+        IReadOnlyList<DependencyTree>? dependencyTrees = null)
     {
         var items = new List<RemediationRoadmapItem>(Math.Min(allPackages.Count, MaxItems));
+
+        // Build parent chain lookup for transitive packages
+        var parentChainLookup = dependencyTrees is not null
+            ? BuildParentChainLookup(dependencyTrees)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var pkg in allPackages)
         {
@@ -129,6 +135,14 @@ public static class RemediationPrioritizer
                 MaxPatchAgeDays = maxPatchAgeDays,
                 PriorityScore = priority,
                 UpgradeTiers = upgradeTiers,
+                DependencyType = pkg.DependencyType,
+                ParentChain = pkg.DependencyType == DependencyType.Transitive
+                    ? parentChainLookup.GetValueOrDefault(pkg.PackageId)
+                    : null,
+                ActionText = pkg.DependencyType == DependencyType.Transitive
+                    ? $"Pin {pkg.PackageId} to {recommendedVersion}"
+                        + (parentChainLookup.TryGetValue(pkg.PackageId, out var chain) ? $" (via {chain})" : "")
+                    : $"Upgrade {pkg.Version} \u2192 {recommendedVersion}",
             });
         }
 
@@ -353,5 +367,55 @@ public static class RemediationPrioritizer
         }
 
         return tiers;
+    }
+
+    /// <summary>
+    /// Build a lookup mapping transitive package IDs to their parent chain strings.
+    /// Chains longer than 3 nodes are truncated with ellipsis.
+    /// </summary>
+    private static Dictionary<string, string> BuildParentChainLookup(
+        IReadOnlyList<DependencyTree> trees)
+    {
+        var lookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tree in trees)
+        {
+            foreach (var root in tree.Roots)
+            {
+                var path = new List<string> { root.PackageId };
+                CollectParentChains(root, path, lookup);
+            }
+        }
+
+        return lookup;
+    }
+
+    private static void CollectParentChains(
+        DependencyTreeNode node,
+        List<string> path,
+        Dictionary<string, string> lookup)
+    {
+        foreach (var child in node.Children)
+        {
+            path.Add(child.PackageId);
+
+            if (path.Count > 1 && !lookup.ContainsKey(child.PackageId))
+            {
+                lookup[child.PackageId] = FormatParentChain(path);
+            }
+
+            CollectParentChains(child, path, lookup);
+            path.RemoveAt(path.Count - 1);
+        }
+    }
+
+    private static string FormatParentChain(List<string> path)
+    {
+        const int maxNodes = 3;
+        if (path.Count <= maxNodes)
+            return string.Join(" \u2192 ", path);
+
+        // Show first, ellipsis, last
+        return $"{path[0]} \u2192 \u2026 \u2192 {path[^1]}";
     }
 }
