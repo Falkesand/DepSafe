@@ -78,7 +78,7 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 - **Version-aware filtering** - Only reports vulnerabilities affecting your specific versions
 
 ### Reporting
-- **Interactive HTML reports** - Dashboard with drill-down, filtering, and dependency trees
+- **Interactive HTML reports** - Dashboard with drill-down, filtering, dependency trees, and force-directed risk heatmap
 - **Art. 14 Reporting Obligations** - Flags vulnerabilities requiring CSIRT notification with 24h/72h/14d deadlines
 - **Remediation Roadmap** - Prioritized update plan ranked by CRA score improvement, KEV status, and EPSS probability, with per-tier upgrade risk assessment
 - **JSON export** - Machine-readable format for automation
@@ -607,6 +607,16 @@ Interactive tree visualization showing:
 - Health status per node
 - Vulnerability indicators (red highlight for KEV)
 - Expand/collapse navigation
+
+### Risk Heatmap
+Interactive force-directed graph visualization showing:
+- **Node size** proportional to reverse dependency count (how many packages depend on it)
+- **Node color** reflects health score (green/yellow/orange/red)
+- **Node border** indicates vulnerability status (solid for CVE, dashed for KEV)
+- **Edges** show dependency relationships
+- Hover to highlight connected packages and view details
+- Click to navigate to package details
+- Drag nodes, zoom, toggle labels
 
 ### SBOM & VEX
 - Embedded SBOM (SPDX 3.0 format)
