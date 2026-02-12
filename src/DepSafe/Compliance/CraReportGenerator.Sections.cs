@@ -1963,8 +1963,8 @@ public sealed partial class CraReportGenerator
             {
                 sb.AppendLine("      <tr class=\"tier-high\">");
                 sb.AppendLine($"        <td><strong>{EscapeHtml(item.Item.PackageId)}</strong></td>");
-                sb.AppendLine($"        <td>Upgrade {EscapeHtml(item.Item.CurrentVersion)} \u2192 {EscapeHtml(item.Item.RecommendedVersion)}</td>");
-                sb.AppendLine($"        <td>{item.Item.CveCount}</td>");
+                sb.AppendLine($"        <td>{EscapeHtml(item.Item.ActionText ?? $"Upgrade {item.Item.CurrentVersion} \u2192 {item.Item.RecommendedVersion}")}</td>");
+                sb.AppendLine($"        <td>{(item.Item.CveCount > 0 ? item.Item.CveCount.ToString() : "\u2014")}</td>");
                 sb.AppendLine($"        <td><span class=\"upgrade-effort {item.Item.Effort.ToString().ToLowerInvariant()}\">{item.Item.Effort}</span></td>");
                 sb.AppendLine($"        <td><span class=\"tier-badge high\">{item.CumulativeRiskReductionPercent:F0}%</span></td>");
                 sb.AppendLine("      </tr>");
@@ -1986,8 +1986,8 @@ public sealed partial class CraReportGenerator
             {
                 sb.AppendLine("      <tr class=\"tier-low\">");
                 sb.AppendLine($"        <td>{EscapeHtml(item.Item.PackageId)}</td>");
-                sb.AppendLine($"        <td>Upgrade {EscapeHtml(item.Item.CurrentVersion)} \u2192 {EscapeHtml(item.Item.RecommendedVersion)}</td>");
-                sb.AppendLine($"        <td>{item.Item.CveCount}</td>");
+                sb.AppendLine($"        <td>{EscapeHtml(item.Item.ActionText ?? $"Upgrade {item.Item.CurrentVersion} \u2192 {item.Item.RecommendedVersion}")}</td>");
+                sb.AppendLine($"        <td>{(item.Item.CveCount > 0 ? item.Item.CveCount.ToString() : "\u2014")}</td>");
                 sb.AppendLine($"        <td><span class=\"upgrade-effort {item.Item.Effort.ToString().ToLowerInvariant()}\">{item.Item.Effort}</span></td>");
                 sb.AppendLine($"        <td><span class=\"tier-badge low\">{item.CumulativeRiskReductionPercent:F0}%</span></td>");
                 sb.AppendLine("      </tr>");
