@@ -501,6 +501,44 @@ public sealed partial class CraReportGenerator
             });
         }
 
+        // CRA Art. 13(5) - Maintainer Trust (supply chain due diligence on maintainer reliability)
+        {
+            var packages = healthReport.Packages;
+
+            var criticalTrustPackages = packages
+                .Where(p => p.MaintainerTrust is not null && p.MaintainerTrust.Score < 40)
+                .Select(p => p.PackageId)
+                .ToList();
+
+            var lowTrustPackages = packages
+                .Where(p => p.MaintainerTrust is not null && p.MaintainerTrust.Score < 60)
+                .Select(p => p.PackageId)
+                .ToList();
+
+            var trustStatus = criticalTrustPackages.Count > 0
+                ? CraComplianceStatus.NonCompliant
+                : lowTrustPackages.Count > 0
+                    ? CraComplianceStatus.ActionRequired
+                    : CraComplianceStatus.Compliant;
+
+            var trustEvidence = criticalTrustPackages.Count > 0
+                ? $"{criticalTrustPackages.Count} package(s) with critical maintainer trust: {string.Join(", ", criticalTrustPackages.Take(5))}"
+                : lowTrustPackages.Count > 0
+                    ? $"{lowTrustPackages.Count} package(s) with low maintainer trust: {string.Join(", ", lowTrustPackages.Take(5))}"
+                    : "All packages have adequate maintainer trust scores";
+
+            complianceItems.Add(new CraComplianceItem
+            {
+                Requirement = "CRA Art. 13(5) - Maintainer Trust",
+                Description = "Exercise due diligence on third-party component maintainer reliability: contributor diversity, release discipline, community health",
+                Status = trustStatus,
+                Evidence = trustEvidence,
+                Recommendation = criticalTrustPackages.Count > 0
+                    ? "Investigate alternatives for critical-trust packages. Single-maintainer packages with low activity pose supply chain risk."
+                    : null
+            });
+        }
+
         // Calculate CRA Readiness Score
         var craReadinessScore = CalculateCraReadinessScore(complianceItems);
 
@@ -580,6 +618,7 @@ public sealed partial class CraReportGenerator
         ["CRA Art. 10 - Cryptographic Compliance"] = 1,
         ["CRA Art. 10 - Supply Chain Integrity"] = 1,
         ["CRA Art. 14 - Incident Reporting"] = 12,
+        ["CRA Art. 13(5) - Maintainer Trust"] = 8,
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     public static int CalculateCraReadinessScore(List<CraComplianceItem> items)
