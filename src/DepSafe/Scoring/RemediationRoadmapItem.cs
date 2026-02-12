@@ -35,4 +35,7 @@ public sealed class RemediationRoadmapItem
 
     /// <summary>Human-readable action text (e.g. "Upgrade 1.0 → 2.0", "Replace deprecated package").</summary>
     public string? ActionText { get; init; }
+
+    /// <summary>Per-tier risk assessments keyed by target version. Null when no GitHub repo available.</summary>
+    public Dictionary<string, UpgradeRiskAssessment>? TierRiskAssessments { get; init; }
 }
