@@ -9,6 +9,7 @@ using DepSafe.Models;
 using DepSafe.Persistence;
 using DepSafe.Scoring;
 using DepSafe.Signing;
+using NuGet.Versioning;
 using Spectre.Console;
 
 namespace DepSafe.Commands;
@@ -501,6 +502,7 @@ public static class CraReportCommand
             pkgsWithRepo,
             typosquatResults,
             repoInfoMap,
+            githubClient,
             config,
             sign,
             signKey,
@@ -1345,6 +1347,7 @@ public static class CraReportCommand
             pkgsWithRepo,
             typosquatResults,
             repoInfoMap,
+            githubClient,
             config,
             sign,
             signKey,
@@ -1821,6 +1824,7 @@ public static class CraReportCommand
             totalPackagesWithRepo,
             typosquatResults,
             allRepoInfoMap,
+            githubClient,
             config,
             sign,
             signKey,
@@ -1850,6 +1854,7 @@ public static class CraReportCommand
         int packagesWithRepo = 0,
         List<TyposquatResult>? typosquatResults = null,
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
+        GitHubApiClient? githubClient = null,
         CraConfig? config = null,
         bool sign = false,
         string? signKey = null,
@@ -2166,6 +2171,7 @@ public static class CraReportCommand
             var maintenanceItems = RemediationPrioritizer.PrioritizeMaintenanceItems(
                 allPackages, deprecatedPackages ?? [], repoInfoMap, vulnPackageIds);
             roadmap.AddRange(maintenanceItems);
+            await EnrichWithRiskAssessmentsAsync(roadmap, githubClient, repoInfoMap, allPackages, ct).ConfigureAwait(false);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
@@ -2709,6 +2715,102 @@ public static class CraReportCommand
         }
     }
 
+    private static async Task EnrichWithRiskAssessmentsAsync(
+        List<RemediationRoadmapItem> roadmap,
+        GitHubApiClient? githubClient,
+        IReadOnlyDictionary<string, GitHubRepoInfo?>? repoInfoMap,
+        IReadOnlyList<PackageHealth> allPackages,
+        CancellationToken ct)
+    {
+        if (githubClient is null || repoInfoMap is null) return;
+
+        // Build trust lookup from packages
+        var trustMap = new Dictionary<string, MaintainerTrust?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pkg in allPackages)
+        {
+            if (pkg.MaintainerTrust is not null)
+                trustMap.TryAdd(pkg.PackageId, pkg.MaintainerTrust);
+        }
+
+        for (int i = 0; i < roadmap.Count; i++)
+        {
+            var item = roadmap[i];
+            if (item.UpgradeTiers.Count == 0) continue;
+            if (!repoInfoMap.TryGetValue(item.PackageId, out var repoInfo) || repoInfo is null)
+                continue;
+
+            var releaseResult = await githubClient.GetReleaseNotesAsync(
+                repoInfo.Owner, repoInfo.Name, ct: ct).ConfigureAwait(false);
+            var releaseNotes = releaseResult.ValueOr([]);
+
+            if (releaseNotes.Count == 0) continue;
+
+            var tierAssessments = new Dictionary<string, UpgradeRiskAssessment>();
+            trustMap.TryGetValue(item.PackageId, out var trust);
+
+            foreach (var tier in item.UpgradeTiers)
+            {
+                var signals = ChangelogAnalyzer.Analyze(releaseNotes, item.CurrentVersion, tier.TargetVersion);
+                int releasesBetween = signals.ReleaseCount;
+                var timeBetween = ComputeTimeGap(releaseNotes, item.CurrentVersion, tier.TargetVersion);
+
+                var assessment = UpgradeRiskCalculator.Assess(
+                    tier.Effort, signals, trust, releasesBetween, timeBetween);
+
+                tierAssessments[tier.TargetVersion] = assessment;
+            }
+
+            roadmap[i] = new RemediationRoadmapItem
+            {
+                PackageId = item.PackageId,
+                CurrentVersion = item.CurrentVersion,
+                RecommendedVersion = item.RecommendedVersion,
+                CveCount = item.CveCount,
+                CveIds = item.CveIds,
+                ScoreLift = item.ScoreLift,
+                Effort = item.Effort,
+                HasKevVulnerability = item.HasKevVulnerability,
+                MaxEpssProbability = item.MaxEpssProbability,
+                MaxPatchAgeDays = item.MaxPatchAgeDays,
+                PriorityScore = item.PriorityScore,
+                UpgradeTiers = item.UpgradeTiers,
+                Reason = item.Reason,
+                DependencyType = item.DependencyType,
+                ParentChain = item.ParentChain,
+                ActionText = item.ActionText,
+                TierRiskAssessments = tierAssessments,
+            };
+        }
+    }
+
+    private static TimeSpan ComputeTimeGap(
+        List<ReleaseNote> releases, string fromVersion, string toVersion)
+    {
+        if (!NuGetVersion.TryParse(fromVersion, out var from) ||
+            !NuGetVersion.TryParse(toVersion, out var to))
+            return TimeSpan.Zero;
+
+        DateTime? fromDate = null;
+        DateTime? toDate = null;
+
+        foreach (var release in releases)
+        {
+            var tag = release.TagName.StartsWith('v') || release.TagName.StartsWith('V')
+                ? release.TagName[1..]
+                : release.TagName;
+
+            if (!NuGetVersion.TryParse(tag, out var ver)) continue;
+
+            if (ver == from) fromDate = release.PublishedAt;
+            if (ver == to) toDate = release.PublishedAt;
+        }
+
+        if (fromDate.HasValue && toDate.HasValue)
+            return toDate.Value - fromDate.Value;
+
+        return TimeSpan.Zero;
+    }
+
     private static async Task FetchGitHubRepoInfoAsync(
         GitHubApiClient githubClient,
         List<string> repoUrls,
@@ -2762,6 +2864,7 @@ public static class CraReportCommand
         int packagesWithRepo = 0,
         List<TyposquatResult>? typosquatResults = null,
         Dictionary<string, GitHubRepoInfo?>? repoInfoMap = null,
+        GitHubApiClient? githubClient = null,
         CraConfig? config = null,
         bool sign = false,
         string? signKey = null,
@@ -3077,6 +3180,7 @@ public static class CraReportCommand
             var maintenanceItems = RemediationPrioritizer.PrioritizeMaintenanceItems(
                 allPackages, deprecatedPackages ?? [], repoInfoMap, vulnPackageIds);
             roadmap.AddRange(maintenanceItems);
+            await EnrichWithRiskAssessmentsAsync(roadmap, githubClient, repoInfoMap, allPackages, ct).ConfigureAwait(false);
             reportGenerator.SetRemediationRoadmap(roadmap);
         }
 
