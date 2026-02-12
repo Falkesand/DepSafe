@@ -489,6 +489,90 @@ public class RemediationPrioritizerTests
     }
 
     [Fact]
+    public void PrioritizeMaintenanceItems_DeprecatedPackage_ReturnsItem()
+    {
+        var packages = new[] { CreatePackage("DeprecatedPkg") };
+        var deprecated = new List<string> { "DeprecatedPkg" };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, deprecated, null);
+
+        var item = Assert.Single(result);
+        Assert.Equal("DeprecatedPkg", item.PackageId);
+        Assert.Equal(RemediationReason.Deprecated, item.Reason);
+        Assert.Equal(200, item.PriorityScore);
+        Assert.Equal(UpgradeEffort.Major, item.Effort);
+        Assert.Contains("deprecated", item.ActionText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_ArchivedPackage_ReturnsHigherPriority()
+    {
+        var packages = new[] { CreatePackage("ArchivedPkg") };
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>
+        {
+            ["ArchivedPkg"] = new GitHubRepoInfo
+            {
+                Owner = "test",
+                Name = "archived-pkg",
+                FullName = "test/archived-pkg",
+                Stars = 100,
+                OpenIssues = 0,
+                Forks = 10,
+                LastCommitDate = DateTime.UtcNow.AddYears(-3),
+                LastPushDate = DateTime.UtcNow.AddYears(-3),
+                IsArchived = true,
+            },
+        };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, [], repoInfoMap);
+
+        var item = Assert.Single(result);
+        Assert.Equal(RemediationReason.Unmaintained, item.Reason);
+        Assert.Equal(300, item.PriorityScore);
+        Assert.Contains("archived", item.ActionText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_NoIssues_ReturnsEmpty()
+    {
+        var packages = new[] { CreatePackage("HealthyPkg") };
+        var repoInfoMap = new Dictionary<string, GitHubRepoInfo?>
+        {
+            ["HealthyPkg"] = new GitHubRepoInfo
+            {
+                Owner = "test",
+                Name = "healthy-pkg",
+                FullName = "test/healthy-pkg",
+                Stars = 100,
+                OpenIssues = 5,
+                Forks = 10,
+                LastCommitDate = DateTime.UtcNow.AddDays(-30),
+                LastPushDate = DateTime.UtcNow.AddDays(-30),
+            },
+        };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, [], repoInfoMap);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PrioritizeMaintenanceItems_AlsoInVulnRoadmap_Deduplicates()
+    {
+        var packages = new[] { CreatePackage("DualPkg") };
+        var deprecated = new List<string> { "DualPkg" };
+        var vulnRoadmapIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DualPkg" };
+
+        var result = RemediationPrioritizer.PrioritizeMaintenanceItems(
+            packages, deprecated, null, vulnRoadmapIds);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
     public void UpgradeTiers_WithMultipleTiers_DataShape()
     {
         var item = new RemediationRoadmapItem
