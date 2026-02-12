@@ -85,6 +85,7 @@ public sealed class HealthScoreCalculator
         var effectiveLicense = GetEffectiveLicense(packageId, nugetInfo.License);
 
         var metrics = BuildMetrics(nugetInfo, repoInfo, activeVulnerabilities);
+        var maintainerTrust = MaintainerTrustCalculator.Calculate(repoInfo, metrics);
         var score = CalculateScore(metrics);
         var status = GetStatus(score);
         var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, effectiveLicense, packageId, version);
@@ -109,7 +110,8 @@ public sealed class HealthScoreCalculator
             Dependencies = nugetInfo.Dependencies,
             DependencyType = dependencyType,
             LatestVersion = nugetInfo.LatestVersion,
-            PeerDependencies = s_emptyDict // NuGet doesn't have peer dependencies concept
+            PeerDependencies = s_emptyDict, // NuGet doesn't have peer dependencies concept
+            MaintainerTrust = maintainerTrust,
         };
     }
 
@@ -131,6 +133,7 @@ public sealed class HealthScoreCalculator
         var effectiveLicense = GetEffectiveLicense(packageName, npmInfo.License);
 
         var metrics = BuildMetrics(npmInfo, repoInfo, activeVulnerabilities);
+        var maintainerTrust = MaintainerTrustCalculator.Calculate(repoInfo, metrics);
         var score = CalculateScore(metrics);
         var status = GetStatus(score);
         var (craScore, craStatus) = CalculateCraScore(activeVulnerabilities, effectiveLicense, packageName, version);
@@ -165,7 +168,8 @@ public sealed class HealthScoreCalculator
             DependencyType = dependencyType,
             Ecosystem = PackageEcosystem.Npm,
             LatestVersion = npmInfo.LatestVersion,
-            PeerDependencies = npmInfo.PeerDependencies
+            PeerDependencies = npmInfo.PeerDependencies,
+            MaintainerTrust = maintainerTrust,
         };
     }
 
