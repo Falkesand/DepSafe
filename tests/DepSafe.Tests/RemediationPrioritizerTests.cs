@@ -11,7 +11,8 @@ public class RemediationPrioritizerTests
         string version = "1.0.0",
         string? latestVersion = "2.0.0",
         bool hasKev = false,
-        double? maxEpss = null) => new()
+        double? maxEpss = null,
+        DependencyType dependencyType = DependencyType.Direct) => new()
     {
         PackageId = id,
         Version = version,
@@ -21,6 +22,24 @@ public class RemediationPrioritizerTests
         LatestVersion = latestVersion,
         HasKevVulnerability = hasKev,
         MaxEpssProbability = maxEpss,
+        DependencyType = dependencyType,
+    };
+
+    private static DependencyTree CreateTree(params DependencyTreeNode[] roots) => new()
+    {
+        ProjectPath = "/test",
+        ProjectType = ProjectType.DotNet,
+        Roots = roots.ToList(),
+    };
+
+    private static DependencyTreeNode CreateNode(
+        string id, string version = "1.0.0", params DependencyTreeNode[] children) => new()
+    {
+        PackageId = id,
+        Version = version,
+        DependencyType = children.Length > 0 ? DependencyType.Direct : DependencyType.Transitive,
+        Depth = 0,
+        Children = children.ToList(),
     };
 
     private static VulnerabilityInfo CreateVuln(
@@ -570,6 +589,80 @@ public class RemediationPrioritizerTests
             packages, deprecated, null, vulnRoadmapIds);
 
         Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_TransitivePackage_SetsDependencyType()
+    {
+        var packages = new[]
+        {
+            CreatePackage("DirectPkg", dependencyType: DependencyType.Direct),
+            CreatePackage("TransitivePkg", dependencyType: DependencyType.Transitive),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["DirectPkg"] = [CreateVuln()],
+            ["TransitivePkg"] = [CreateVuln()],
+        };
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(
+            packages, vulns, 50, EmptyCompliance);
+
+        var directItem = result.First(r => r.PackageId == "DirectPkg");
+        var transitiveItem = result.First(r => r.PackageId == "TransitivePkg");
+        Assert.Equal(DependencyType.Direct, directItem.DependencyType);
+        Assert.Equal(DependencyType.Transitive, transitiveItem.DependencyType);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_TransitivePackage_ResolvesParentChain()
+    {
+        var packages = new[]
+        {
+            CreatePackage("TransitivePkg", dependencyType: DependencyType.Transitive),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["TransitivePkg"] = [CreateVuln()],
+        };
+        var tree = CreateTree(
+            CreateNode("DirectPkg", "1.0.0",
+                CreateNode("TransitivePkg")));
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(
+            packages, vulns, 50, EmptyCompliance, dependencyTrees: [tree]);
+
+        var item = Assert.Single(result);
+        Assert.Equal("DirectPkg \u2192 TransitivePkg", item.ParentChain);
+        Assert.Contains("Pin", item.ActionText);
+        Assert.Contains("via", item.ActionText);
+    }
+
+    [Fact]
+    public void PrioritizeUpdates_DeepNesting_TruncatesParentChain()
+    {
+        var packages = new[]
+        {
+            CreatePackage("DeepPkg", dependencyType: DependencyType.Transitive),
+        };
+        var vulns = new Dictionary<string, List<VulnerabilityInfo>>
+        {
+            ["DeepPkg"] = [CreateVuln()],
+        };
+        var tree = CreateTree(
+            CreateNode("Root", "1.0.0",
+                CreateNode("Mid1", "1.0.0",
+                    CreateNode("Mid2", "1.0.0",
+                        CreateNode("Mid3", "1.0.0",
+                            CreateNode("DeepPkg"))))));
+
+        var result = RemediationPrioritizer.PrioritizeUpdates(
+            packages, vulns, 50, EmptyCompliance, dependencyTrees: [tree]);
+
+        var item = Assert.Single(result);
+        Assert.Contains("Root", item.ParentChain);
+        Assert.Contains("\u2026", item.ParentChain); // Ellipsis for truncation
+        Assert.Contains("DeepPkg", item.ParentChain);
     }
 
     [Fact]
