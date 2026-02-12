@@ -1,5 +1,35 @@
 # DepSafe Release Notes
 
+## v1.6.0
+
+### Risk Heatmap Visualization
+
+The CRA report now includes an interactive force-directed graph that maps the entire dependency tree as a risk heatmap. Each node represents a package, with:
+
+- **Size** scaled by reverse dependency count (how many packages depend on it)
+- **Color** mapped to health score — green (healthy), yellow (watch), orange (warning), red (critical)
+- **Border** indicating vulnerability status — solid border for known CVEs, dashed border for CISA KEV entries
+
+The visualization uses a Fruchterman-Reingold force-directed layout implemented in vanilla JS + SVG, keeping the report fully self-contained with no external dependencies. Interactive features include hover tooltips with package details, click-to-navigate to the package table, mouse wheel zoom (0.3x–5x), and draggable nodes. For large dependency trees (>150 packages), the graph automatically caps at 80 nodes prioritized by worst health score.
+
+### Release Readiness Gate
+
+New `--release-gate` option classifies all findings as either **blocking** (must fix before release) or **advisory** (recommended improvements). Blocking findings include critical/high vulnerabilities, CISA KEV entries, and CRA policy violations. The report displays a clear pass/fail release readiness status with categorized finding lists.
+
+### Security Budget Dashboard
+
+A new dashboard section tracks security debt across the project with visual indicators for vulnerability remediation progress, unpatched days, and dependency freshness. Provides at-a-glance security posture assessment.
+
+### Policy Violations Section
+
+CRA policy violations detected by CI/CD threshold checks are now displayed in a dedicated report section with violation details, the triggering threshold, and remediation guidance.
+
+### Evidence Pack
+
+New `--evidence-pack` option bundles all compliance artifacts (SBOM, VEX, HTML report, configuration) into a single directory with a JSON manifest, suitable for audit submission.
+
+---
+
 ## v1.5.1
 
 ### License Change
