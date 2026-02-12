@@ -939,6 +939,7 @@ function renderHeatmap(svg, nodes, edges, W, H) {{
       // Truncate long names
       var label = n.id.length > 20 ? n.id.substring(0, 18) + '\u2026' : n.id;
       text.textContent = label;
+      text.dataset.nodeId = n.id;
       g.appendChild(text);
     }}
   }});
@@ -968,12 +969,12 @@ function setupHeatmapInteraction(svg, nodes, container, W, H) {{
         l.setAttribute('stroke-opacity', '0.6');
         l.setAttribute('stroke-width', '2');
         var otherId = l.dataset.source === id ? l.dataset.target : l.dataset.source;
-        var otherCircle = svg.querySelector('circle[data-node-id=""' + otherId + '""]');
+        var otherCircle = svg.querySelector('circle[data-node-id=""' + CSS.escape(otherId) + '""]');
         if (otherCircle) otherCircle.setAttribute('fill-opacity', '0.7');
       }}
     }});
 
-    tooltip.innerHTML = '<div class=""tt-name"">' + n.id + '</div>'
+    tooltip.innerHTML = '<div class=""tt-name"">' + escapeHtml(n.id) + '</div>'
       + '<div class=""tt-row""><span>Health</span><span>' + n.score + '/100</span></div>'
       + '<div class=""tt-row""><span>Dependents</span><span>' + n.deps + '</span></div>'
       + '<div class=""tt-row""><span>Depth</span><span>' + n.depth + '</span></div>'
@@ -1040,7 +1041,7 @@ function setupHeatmapInteraction(svg, nodes, container, W, H) {{
     // Move label
     var labels = svg.querySelectorAll('text.heatmap-label');
     labels.forEach(function(t) {{
-      if (t.textContent.startsWith(id.substring(0, Math.min(18, id.length)))) {{
+      if (t.dataset && t.dataset.nodeId === id) {{
         t.setAttribute('x', svgX);
         var r = parseFloat(dragging.getAttribute('r'));
         t.setAttribute('y', svgY - r - 4);

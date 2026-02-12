@@ -96,7 +96,9 @@ public static class GraphDataBuilder
         Dictionary<string, HashSet<string>> parentLookup,
         IReadOnlyDictionary<string, PackageHealth> healthLookup)
     {
-        if (!nodeMap.ContainsKey(node.PackageId))
+        var isFirstVisit = !nodeMap.ContainsKey(node.PackageId);
+
+        if (isFirstVisit)
         {
             var score = healthLookup.TryGetValue(node.PackageId, out var health)
                 ? health.Score
@@ -138,9 +140,13 @@ public static class GraphDataBuilder
             parents.Add(parentId);
         }
 
-        foreach (var child in node.Children)
+        // Only recurse into children on first visit to prevent cycles
+        if (isFirstVisit)
         {
-            CollectRecursive(child, node.PackageId, nodeMap, edgeSet, parentLookup, healthLookup);
+            foreach (var child in node.Children)
+            {
+                CollectRecursive(child, node.PackageId, nodeMap, edgeSet, parentLookup, healthLookup);
+            }
         }
     }
 

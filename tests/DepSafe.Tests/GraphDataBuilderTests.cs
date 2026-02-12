@@ -189,6 +189,99 @@ public class GraphDataBuilderTests
         Assert.Equal(0, nodes.First(n => n.Id == "C").Depth);
     }
 
+    [Fact]
+    public void Build_DeduplicatesEdges()
+    {
+        var trees = new List<DependencyTree>
+        {
+            new()
+            {
+                ProjectPath = "a.csproj",
+                ProjectType = ProjectType.DotNet,
+                Roots = [
+                    new DependencyTreeNode
+                    {
+                        PackageId = "A", Version = "1.0.0", Depth = 0,
+                        DependencyType = DependencyType.Direct,
+                        Children = [
+                            new DependencyTreeNode { PackageId = "B", Version = "1.0.0", Depth = 1, DependencyType = DependencyType.Transitive }
+                        ]
+                    }
+                ]
+            },
+            new()
+            {
+                ProjectPath = "b.csproj",
+                ProjectType = ProjectType.DotNet,
+                Roots = [
+                    new DependencyTreeNode
+                    {
+                        PackageId = "A", Version = "1.0.0", Depth = 0,
+                        DependencyType = DependencyType.Direct,
+                        Children = [
+                            new DependencyTreeNode { PackageId = "B", Version = "1.0.0", Depth = 1, DependencyType = DependencyType.Transitive }
+                        ]
+                    }
+                ]
+            },
+        };
+        var health = new Dictionary<string, PackageHealth>(StringComparer.OrdinalIgnoreCase);
+
+        var (_, edges) = GraphDataBuilder.Build(trees, health);
+
+        Assert.Single(edges);
+    }
+
+    [Fact]
+    public void Build_MergesVulnerabilityFlags()
+    {
+        var trees = new List<DependencyTree>
+        {
+            new()
+            {
+                ProjectPath = "test.csproj",
+                ProjectType = ProjectType.DotNet,
+                Roots = [
+                    new DependencyTreeNode
+                    {
+                        PackageId = "A", Version = "1.0.0", Depth = 0,
+                        DependencyType = DependencyType.Direct,
+                        HasVulnerabilities = false,
+                        Children = [
+                            new DependencyTreeNode
+                            {
+                                PackageId = "B", Version = "1.0.0", Depth = 1,
+                                DependencyType = DependencyType.Transitive,
+                                HasVulnerabilities = false,
+                            }
+                        ]
+                    },
+                    new DependencyTreeNode
+                    {
+                        PackageId = "C", Version = "1.0.0", Depth = 0,
+                        DependencyType = DependencyType.Direct,
+                        Children = [
+                            new DependencyTreeNode
+                            {
+                                PackageId = "B", Version = "1.0.0", Depth = 1,
+                                DependencyType = DependencyType.Transitive,
+                                HasVulnerabilities = true,
+                                HasKevVulnerability = true,
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+        var health = new Dictionary<string, PackageHealth>(StringComparer.OrdinalIgnoreCase);
+
+        var (nodes, _) = GraphDataBuilder.Build(trees, health);
+
+        var b = nodes.First(n => n.Id == "B");
+        Assert.True(b.HasVulnerabilities);
+        Assert.True(b.HasKevVulnerability);
+    }
+
     private static PackageHealth MakeHealth(string id, int score) => new()
     {
         PackageId = id,
