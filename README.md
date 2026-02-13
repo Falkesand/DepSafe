@@ -10,6 +10,14 @@ DepSafe is a comprehensive dependency analysis tool that helps development teams
 
 ---
 
+## Disclaimer
+
+This is a personal hobby project built and maintained by a single developer in my spare time, with the goal of giving something useful back to the community. It is provided as-is, with no warranties or guarantees of any kind. There is no company, organization, or dedicated team behind it -- just one person who cares about dependency safety and open source.
+
+Please use it at your own risk. While I do my best to keep things working and accurate, I cannot promise timely fixes, support, or continued development. If you find it helpful, that's wonderful -- but please do not rely on it as your sole source of truth for compliance or security decisions.
+
+---
+
 ## Table of Contents
 
 - [Features](#features)
