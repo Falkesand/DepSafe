@@ -2158,8 +2158,11 @@ public static class CraReportCommand
             reportGenerator.SetReportingObligations(reportingObligations);
         }
 
+        // Extract project identity for SBOM/VEX metadata
+        var projectIdentity = await ProjectIdentityExtractor.ExtractIdentityAsync(path, ct);
+
         // Generate SBOM/VEX once, validate SBOM, then build final report
-        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
+        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities, projectIdentity);
         reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
@@ -2237,7 +2240,7 @@ public static class CraReportCommand
         string? sbomFilePath = null;
         if (sbomFormat.HasValue)
         {
-            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, ct);
+            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, projectIdentity, ct);
         }
 
         // Snapshot & trend analysis
@@ -3167,8 +3170,11 @@ public static class CraReportCommand
             reportGenerator.SetReportingObligations(reportingObligations);
         }
 
+        // Extract project identity for SBOM/VEX metadata
+        var projectIdentity = await ProjectIdentityExtractor.ExtractIdentityAsync(path, ct);
+
         // Generate SBOM/VEX once, validate SBOM, then build final report
-        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities);
+        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities, projectIdentity);
         reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
         var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
 
@@ -3247,7 +3253,7 @@ public static class CraReportCommand
         string? sbomFilePath = null;
         if (sbomFormat.HasValue)
         {
-            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, ct);
+            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, projectIdentity, ct);
         }
 
         // Snapshot & trend analysis
@@ -3682,6 +3688,7 @@ public static class CraReportCommand
         List<PackageHealth> transitivePackages,
         SbomFormat format,
         string basePath,
+        ProjectIdentity? identity = null,
         CancellationToken ct = default)
     {
         var allPackages = packages.Concat(transitivePackages)
@@ -3689,7 +3696,8 @@ public static class CraReportCommand
             .OrderBy(p => p.PackageId)
             .ToList();
 
-        var projectName = Path.GetFileNameWithoutExtension(basePath);
+        var projectName = identity?.Name ?? Path.GetFileNameWithoutExtension(basePath);
+        var projectVersion = identity?.Version ?? "0.0.0";
         var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         var toolVersion = asmVersion is not null ? $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}" : "1.0.0";
         var sbomGenerator = new SbomGenerator("DepSafe", toolVersion);
@@ -3700,13 +3708,13 @@ public static class CraReportCommand
 
         if (format == SbomFormat.CycloneDx)
         {
-            var bom = sbomGenerator.GenerateCycloneDx(projectName, allPackages);
+            var bom = sbomGenerator.GenerateCycloneDx(projectName, projectVersion, allPackages);
             content = JsonSerializer.Serialize(bom, JsonDefaults.IndentedIgnoreNull);
             fileName = $"{projectName}-sbom.cdx.json";
         }
         else
         {
-            var sbom = sbomGenerator.Generate(projectName, allPackages);
+            var sbom = sbomGenerator.Generate(projectName, projectVersion, allPackages);
             content = JsonSerializer.Serialize(sbom, JsonDefaults.IndentedIgnoreNull);
             fileName = $"{projectName}-sbom.spdx.json";
         }

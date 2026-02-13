@@ -14,7 +14,7 @@ public class SbomGeneratorTests
         var packages = CreateTestPackages();
 
         // Act
-        var sbom = _generator.Generate("TestProject", packages);
+        var sbom = _generator.Generate("TestProject", "1.0.0", packages);
 
         // Assert
         Assert.Equal("SPDX-3.0", sbom.SpdxVersion);
@@ -32,7 +32,7 @@ public class SbomGeneratorTests
         var packages = CreateTestPackages();
 
         // Act
-        var sbom = _generator.Generate("TestProject", packages);
+        var sbom = _generator.Generate("TestProject", "1.0.0", packages);
 
         // Assert
         // Should have root package + all dependency packages
@@ -49,7 +49,7 @@ public class SbomGeneratorTests
         };
 
         // Act
-        var sbom = _generator.Generate("TestProject", packages);
+        var sbom = _generator.Generate("TestProject", "1.0.0", packages);
 
         // Assert
         var pkg = sbom.Packages.FirstOrDefault(p => p.Name == "Newtonsoft.Json");
@@ -72,7 +72,7 @@ public class SbomGeneratorTests
         };
 
         // Act
-        var sbom = _generator.Generate("TestProject", packages);
+        var sbom = _generator.Generate("TestProject", "1.0.0", packages);
 
         // Assert
         var mitPkg = sbom.Packages.FirstOrDefault(p => p.Name == "Package1");
@@ -91,7 +91,7 @@ public class SbomGeneratorTests
         var packages = CreateTestPackages();
 
         // Act
-        var sbom = _generator.Generate("TestProject", packages);
+        var sbom = _generator.Generate("TestProject", "1.0.0", packages);
 
         // Assert
         // Should have DESCRIBES relationships from document to packages
@@ -108,7 +108,7 @@ public class SbomGeneratorTests
         var packages = CreateTestPackages();
 
         // Act
-        var bom = _generator.GenerateCycloneDx("TestProject", packages);
+        var bom = _generator.GenerateCycloneDx("TestProject", "1.0.0", packages);
 
         // Assert
         Assert.Equal("CycloneDX", bom.BomFormat);
@@ -129,13 +129,42 @@ public class SbomGeneratorTests
         };
 
         // Act
-        var bom = _generator.GenerateCycloneDx("TestProject", packages);
+        var bom = _generator.GenerateCycloneDx("TestProject", "1.0.0", packages);
 
         // Assert
         var component = bom.Components.FirstOrDefault(c => c.Name == "Serilog");
         Assert.NotNull(component);
         Assert.Equal("pkg:nuget/Serilog@3.1.1", component.Purl);
         Assert.Equal("library", component.Type);
+    }
+
+    [Fact]
+    public void Generate_UsesProjectVersion()
+    {
+        var packages = new List<PackageHealth>
+        {
+            CreatePackageHealth("Newtonsoft.Json", "13.0.1", null)
+        };
+
+        var result = _generator.Generate("TestProject", "2.5.0", packages);
+
+        var rootPackage = result.Packages.First(p => p.Name == "TestProject");
+        Assert.Equal("2.5.0", rootPackage.VersionInfo);
+    }
+
+    [Fact]
+    public void GenerateCycloneDx_UsesProjectVersion()
+    {
+        var packages = new List<PackageHealth>
+        {
+            CreatePackageHealth("Newtonsoft.Json", "13.0.1", null)
+        };
+
+        var result = _generator.GenerateCycloneDx("TestProject", "3.0.0-beta", packages);
+
+        Assert.NotNull(result.Metadata);
+        Assert.NotNull(result.Metadata.Component);
+        Assert.Equal("3.0.0-beta", result.Metadata.Component.Version);
     }
 
     private static List<PackageHealth> CreateTestPackages()

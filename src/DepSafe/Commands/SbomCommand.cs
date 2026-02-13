@@ -137,18 +137,18 @@ public static class SbomCommand
 
         AnsiConsole.MarkupLine($"[dim]Total packages for SBOM: {packages.Count}[/]");
 
-        var projectName = Path.GetFileNameWithoutExtension(path);
+        var identity = await ProjectIdentityExtractor.ExtractIdentityAsync(path, ct);
         var generator = new SbomGenerator();
 
         string output;
         if (format == SbomFormat.CycloneDx)
         {
-            var cycloneDx = generator.GenerateCycloneDx(projectName, packages);
+            var cycloneDx = generator.GenerateCycloneDx(identity.Name, identity.Version, packages);
             output = JsonSerializer.Serialize(cycloneDx, JsonDefaults.Indented);
         }
         else
         {
-            var spdx = generator.Generate(projectName, packages);
+            var spdx = generator.Generate(identity.Name, identity.Version, packages);
             output = JsonSerializer.Serialize(spdx, JsonDefaults.IndentedDefault);
         }
 
