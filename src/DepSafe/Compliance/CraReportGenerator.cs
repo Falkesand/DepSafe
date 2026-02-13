@@ -47,7 +47,8 @@ public sealed partial class CraReportGenerator
     /// </summary>
     public (SbomDocument Sbom, VexDocument Vex) GenerateArtifacts(
         ProjectReport healthReport,
-        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities)
+        IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities,
+        ProjectIdentity? identity = null)
     {
         var allPackagesForSbom = healthReport.Packages.AsEnumerable();
         if (_transitiveDataCache is not null)
@@ -55,7 +56,9 @@ public sealed partial class CraReportGenerator
             allPackagesForSbom = allPackagesForSbom.Concat(_transitiveDataCache);
         }
 
-        var sbom = _sbomGenerator.Generate(healthReport.ProjectPath, allPackagesForSbom);
+        var projectName = identity?.Name ?? Path.GetFileNameWithoutExtension(healthReport.ProjectPath);
+        var projectVersion = identity?.Version ?? "0.0.0";
+        var sbom = _sbomGenerator.Generate(projectName, projectVersion, allPackagesForSbom);
 
         // Apply package checksums from provenance data
         if (_provenanceResults.Count > 0)
@@ -610,9 +613,10 @@ public sealed partial class CraReportGenerator
     public CraReport Generate(
         ProjectReport healthReport,
         IReadOnlyDictionary<string, List<VulnerabilityInfo>> vulnerabilities,
-        DateTime? startTime = null)
+        DateTime? startTime = null,
+        ProjectIdentity? identity = null)
     {
-        var (sbom, vex) = GenerateArtifacts(healthReport, vulnerabilities);
+        var (sbom, vex) = GenerateArtifacts(healthReport, vulnerabilities, identity);
         return Generate(healthReport, vulnerabilities, sbom, vex, startTime);
     }
 

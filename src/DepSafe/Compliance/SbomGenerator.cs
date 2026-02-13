@@ -48,7 +48,7 @@ public sealed class SbomGenerator
     /// <summary>
     /// Generate SPDX 3.0 SBOM from analyzed packages.
     /// </summary>
-    public SbomDocument Generate(string projectName, IEnumerable<PackageHealth> packages)
+    public SbomDocument Generate(string projectName, string projectVersion, IEnumerable<PackageHealth> packages)
     {
         var packageList = packages.ToList();
         var docId = $"SPDXRef-DOCUMENT-{Guid.NewGuid():N}";
@@ -90,7 +90,7 @@ public sealed class SbomGenerator
         {
             SpdxId = $"SPDXRef-RootPackage-{SanitizeId(projectName)}",
             Name = projectName,
-            VersionInfo = "0.0.0",
+            VersionInfo = projectVersion,
             Supplier = "NOASSERTION",
             DownloadLocation = "NOASSERTION",
             FilesAnalyzed = false,
@@ -129,7 +129,7 @@ public sealed class SbomGenerator
     /// <summary>
     /// Generate CycloneDX format SBOM.
     /// </summary>
-    public CycloneDxBom GenerateCycloneDx(string projectName, IEnumerable<PackageHealth> packages)
+    public CycloneDxBom GenerateCycloneDx(string projectName, string projectVersion, IEnumerable<PackageHealth> packages)
     {
         var packageList = packages.ToList();
         var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
@@ -156,6 +156,7 @@ public sealed class SbomGenerator
                 {
                     Type = "application",
                     Name = projectName,
+                    Version = projectVersion,
                     BomRef = $"pkg:generic/{SanitizeId(projectName)}"
                 }
             },
