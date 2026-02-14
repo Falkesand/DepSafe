@@ -90,11 +90,11 @@ public static class LicenseCompatibility
 
         if (lower.Contains("mit"))
             return KnownLicenses["MIT"];
-        if (lower.Contains("apache") && (lower.Contains("2") || lower.Contains("2.0")))
+        if (lower.Contains("apache") && (lower.Contains('2') || lower.Contains("2.0")))
             return KnownLicenses["Apache-2.0"];
-        if (lower.Contains("bsd") && lower.Contains("2"))
+        if (lower.Contains("bsd") && lower.Contains('2'))
             return KnownLicenses["BSD-2-Clause"];
-        if (lower.Contains("bsd") && lower.Contains("3"))
+        if (lower.Contains("bsd") && lower.Contains('3'))
             return KnownLicenses["BSD-3-Clause"];
         if (lower.Contains("bsd"))
             return KnownLicenses["BSD-3-Clause"];
@@ -104,9 +104,9 @@ public static class LicenseCompatibility
             return KnownLicenses["LGPL-3.0"];
         if (lower.Contains("agpl"))
             return KnownLicenses["AGPL-3.0"];
-        if (lower.Contains("gpl") && lower.Contains("3"))
+        if (lower.Contains("gpl") && lower.Contains('3'))
             return KnownLicenses["GPL-3.0"];
-        if (lower.Contains("gpl") && lower.Contains("2"))
+        if (lower.Contains("gpl") && lower.Contains('2'))
             return KnownLicenses["GPL-2.0"];
         if (lower.Contains("gpl"))
             return KnownLicenses["GPL-3.0"];

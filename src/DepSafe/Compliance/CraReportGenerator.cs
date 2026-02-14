@@ -29,6 +29,10 @@ public sealed partial class CraReportGenerator
     [GeneratedRegex(@"pkg:nuget/([^@]+)")]
     private static partial Regex PurlRegex();
 
+    // Required documentation labels for CRA Annex II compliance check
+    private static readonly string[] RequiredDocumentationLabels =
+        ["README", "Security contact", "Support period", "Changelog"];
+
     public CraReportGenerator(SbomGenerator? sbomGenerator = null, VexGenerator? vexGenerator = null)
     {
         _sbomGenerator = sbomGenerator ?? new SbomGenerator();
@@ -446,7 +450,7 @@ public sealed partial class CraReportGenerator
                 Description = "Required project documentation (README, security contact, support period, changelog)",
                 Status = docStatus,
                 Evidence = docCount > 0
-                    ? $"Found: {string.Join(", ", docChecks)}. Missing: {string.Join(", ", new[] { "README", "Security contact", "Support period", "Changelog" }.Except(docChecks))}"
+                    ? $"Found: {string.Join(", ", docChecks)}. Missing: {string.Join(", ", RequiredDocumentationLabels.Except(docChecks))}"
                     : "No required documentation found",
                 Recommendation = docStatus != CraComplianceStatus.Compliant
                     ? "Add missing documentation: README.md, SECURITY.md or security contact in .cra-config.json, and declare support period"
@@ -1470,7 +1474,7 @@ public sealed partial class CraReportGenerator
     /// <summary>
     /// Generate JSON report.
     /// </summary>
-    public string GenerateJson(CraReport report)
+    public static string GenerateJson(CraReport report)
     {
         return JsonSerializer.Serialize(report, JsonDefaults.CamelCase);
     }

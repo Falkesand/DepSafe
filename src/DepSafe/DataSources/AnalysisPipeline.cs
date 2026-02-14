@@ -50,7 +50,7 @@ public sealed class AnalysisPipeline : IDisposable
     /// <summary>
     /// Scan project files and collect package references with deduplication.
     /// </summary>
-    public async Task<Dictionary<string, PackageReference>> ScanProjectFilesAsync(string path, CancellationToken ct = default)
+    public static async Task<Dictionary<string, PackageReference>> ScanProjectFilesAsync(string path, CancellationToken ct = default)
     {
         var projectFiles = NuGetApiClient.FindProjectFiles(path).ToList();
         if (projectFiles.Count == 0)

@@ -297,7 +297,8 @@ public sealed partial class GitHubApiClient : IDisposable
         var pushedAt = DateTime.MinValue;
         if (repoData.TryGetProperty("pushedAt", out var pa) && pa.ValueKind == JsonValueKind.String)
         {
-            DateTime.TryParse(pa.GetString(), out pushedAt);
+            if (DateTime.TryParse(pa.GetString(), out var parsedPushedAt))
+                pushedAt = parsedPushedAt;
         }
 
         var totalCommits = 0;
@@ -313,7 +314,8 @@ public sealed partial class GitHubApiClient : IDisposable
             if (firstNode.TryGetProperty("committedDate", out var cd) &&
                 cd.ValueKind == JsonValueKind.String)
             {
-                DateTime.TryParse(cd.GetString(), out lastCommitDate);
+                if (DateTime.TryParse(cd.GetString(), out var parsedCommitDate))
+                    lastCommitDate = parsedCommitDate;
             }
 
             if (history.TryGetProperty("totalCount", out var historyTotalCount))
@@ -355,7 +357,10 @@ public sealed partial class GitHubApiClient : IDisposable
                     var tagName = node.TryGetProperty("tagName", out var tn) ? tn.GetString() ?? "" : "";
                     var createdAt = DateTime.MinValue;
                     if (node.TryGetProperty("createdAt", out var ca) && ca.ValueKind == JsonValueKind.String)
-                        DateTime.TryParse(ca.GetString(), out createdAt);
+                    {
+                        if (DateTime.TryParse(ca.GetString(), out var parsedCreatedAt))
+                            createdAt = parsedCreatedAt;
+                    }
 
                     string? authorLogin = null;
                     if (node.TryGetProperty("author", out var auth) &&

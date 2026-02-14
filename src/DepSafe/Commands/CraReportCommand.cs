@@ -608,7 +608,7 @@ public static class CraReportCommand
         List<DependencyTreeNode> roots,
         HashSet<string> excludePackageIds,
         Dictionary<string, List<VulnerabilityInfo>> vulnerabilities,
-        IDictionary<string, NpmPackageInfo> npmInfoMap,
+        ConcurrentDictionary<string, NpmPackageInfo> npmInfoMap,
         Dictionary<string, GitHubRepoInfo?> repoInfoMap,
         HealthScoreCalculator calculator,
         Dictionary<string, string>? integrityLookup = null)
@@ -1806,7 +1806,7 @@ public static class CraReportCommand
             return 0;
         }
 
-        return await GenerateMixedReportAsync(
+        return await GenerateReportCoreAsync(
             path,
             allPackages,
             allTransitivePackages,
@@ -1836,7 +1836,7 @@ public static class CraReportCommand
             ct);
     }
 
-    private static async Task<int> GenerateMixedReportAsync(
+    private static async Task<int> GenerateReportCoreAsync(
         string path,
         List<PackageHealth> packages,
         List<PackageHealth> transitivePackages,
@@ -2265,7 +2265,7 @@ public static class CraReportCommand
         }
 
         var output = format == CraOutputFormat.Json
-            ? reportGenerator.GenerateJson(craReport)
+            ? CraReportGenerator.GenerateJson(craReport)
             : reportGenerator.GenerateHtml(craReport, licenseFilePath);
 
         await File.WriteAllTextAsync(outputPath, output, ct);
@@ -2296,7 +2296,12 @@ public static class CraReportCommand
         AnsiConsole.MarkupLine($"[bold]Packages Analyzed:[/] {totalPackages} [dim]({craReport.PackageCount} direct + {craReport.TransitivePackageCount} transitive)[/]");
         AnsiConsole.MarkupLine($"[bold]Vulnerabilities Found:[/] {craReport.VulnerabilityCount}");
 
-        if (dependencyTrees.Count > 0)
+        if (dependencyTrees.Count == 1)
+        {
+            var tree = dependencyTrees[0];
+            AnsiConsole.MarkupLine($"[bold]Dependency Tree:[/] {tree.TotalPackages} packages, max depth {tree.MaxDepth}");
+        }
+        else if (dependencyTrees.Count > 1)
         {
             var ecosystems = string.Join(" + ", dependencyTrees.Select(t => $"{t.ProjectType} ({t.TotalPackages})"));
             AnsiConsole.MarkupLine($"[bold]Dependency Trees:[/] {ecosystems}");
@@ -2625,7 +2630,7 @@ public static class CraReportCommand
             var sortedVersions = versions
                 .Select(v =>
                 {
-                    NuGet.Versioning.NuGetVersion.TryParse(v, out var parsed);
+                    var parsed = NuGet.Versioning.NuGetVersion.TryParse(v, out var result) ? result : null;
                     return (Original: v, Parsed: parsed);
                 })
                 .OrderByDescending(x => x.Parsed)
@@ -2721,7 +2726,7 @@ public static class CraReportCommand
     private static async Task EnrichWithRiskAssessmentsAsync(
         List<RemediationRoadmapItem> roadmap,
         GitHubApiClient? githubClient,
-        IReadOnlyDictionary<string, GitHubRepoInfo?>? repoInfoMap,
+        Dictionary<string, GitHubRepoInfo?>? repoInfoMap,
         IReadOnlyList<PackageHealth> allPackages,
         CancellationToken ct)
     {
@@ -2817,7 +2822,7 @@ public static class CraReportCommand
     private static async Task FetchGitHubRepoInfoAsync(
         GitHubApiClient githubClient,
         List<string> repoUrls,
-        IDictionary<string, NpmPackageInfo> npmInfoMap,
+        ConcurrentDictionary<string, NpmPackageInfo> npmInfoMap,
         Dictionary<string, GitHubRepoInfo?> repoInfoMap,
         CancellationToken ct = default)
     {
@@ -2878,488 +2883,15 @@ public static class CraReportCommand
         bool snapshot = false,
         CancellationToken ct = default)
     {
-        // Build combined package list and lookups once — avoids repeated Concat/ToDictionary allocations
-        var allPackages = packages.Concat(transitivePackages).ToList();
-
-        if (config?.ExcludePackages.Count > 0)
-        {
-            var beforeCount = allPackages.Count;
-            allPackages = PolicyEvaluator.FilterExcludedPackages(allPackages, config.ExcludePackages);
-            packages = PolicyEvaluator.FilterExcludedPackages(packages, config.ExcludePackages);
-            transitivePackages = PolicyEvaluator.FilterExcludedPackages(transitivePackages, config.ExcludePackages);
-            if (beforeCount > allPackages.Count)
-                AnsiConsole.MarkupLine($"[dim]Excluded {beforeCount - allPackages.Count} package(s) from analysis per .cra-config.json[/]");
-        }
-
-        var packageVersionLookup = new Dictionary<string, string>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
-        var packageLookup = new Dictionary<string, PackageHealth>(allPackages.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (var p in allPackages)
-        {
-            packageVersionLookup.TryAdd(p.PackageId, p.Version);
-            packageLookup.TryAdd(p.PackageId, p);
-        }
-
-        // Calculate project score
-        var projectScore = HealthScoreCalculator.CalculateProjectScore(packages);
-        var projectStatus = projectScore switch
-        {
-            >= 80 => HealthStatus.Healthy,
-            >= 60 => HealthStatus.Watch,
-            >= 40 => HealthStatus.Warning,
-            _ => HealthStatus.Critical
-        };
-
-        // Single pass to count status categories (O(n) instead of O(5n))
-        int healthyCount = 0, watchCount = 0, warningCount = 0, criticalCount = 0, vulnerableCount = 0;
-        foreach (var p in packages)
-        {
-            switch (p.Status)
-            {
-                case HealthStatus.Healthy: healthyCount++; break;
-                case HealthStatus.Watch: watchCount++; break;
-                case HealthStatus.Warning: warningCount++; break;
-                case HealthStatus.Critical: criticalCount++; break;
-            }
-            if (p.Vulnerabilities.Count > 0) vulnerableCount++;
-        }
-
-        var healthReport = new ProjectReport
-        {
-            ProjectPath = path,
-            GeneratedAt = DateTime.UtcNow,
-            OverallScore = projectScore,
-            OverallStatus = projectStatus,
-            Packages = packages.OrderBy(p => p.Score).ToList(),
-            Summary = new ProjectSummary
-            {
-                TotalPackages = packages.Count,
-                HealthyCount = healthyCount,
-                WatchCount = watchCount,
-                WarningCount = warningCount,
-                CriticalCount = criticalCount,
-                VulnerableCount = vulnerableCount
-            }
-        };
-
-        var reportGenerator = new CraReportGenerator();
-        reportGenerator.SetHealthData(packages);
-        reportGenerator.SetTransitiveData(transitivePackages);
-        reportGenerator.SetCompletenessWarnings(incompleteTransitive, hasUnresolvedVersions);
-        reportGenerator.SetDependencyTree(dependencyTree);
-
-        // Set additional CRA compliance data (passed from caller)
-        reportGenerator.SetDeprecatedPackages(deprecatedPackages ?? []);
-        reportGenerator.SetSecurityPolicyStats(packagesWithSecurityPolicy, packagesWithRepo);
-
-        // Set maintenance data (F1/F2) - compute from repoInfoMap
-        {
-            var archived = new List<string>();
-            var stale = new List<string>();
-            var unmaintained = new List<string>();
-            var totalWithRepo = 0;
-            int? maxInactiveMonths = null;
-            if (repoInfoMap is not null)
-            {
-                foreach (var (packageId, info) in repoInfoMap)
-                {
-                    if (info is null) continue;
-                    totalWithRepo++;
-                    var daysSinceCommit = (DateTime.UtcNow - info.LastCommitDate).TotalDays;
-                    var months = (int)(daysSinceCommit / 30.44);
-                    if (!maxInactiveMonths.HasValue || months > maxInactiveMonths.Value)
-                        maxInactiveMonths = months;
-
-                    if (info.IsArchived) { archived.Add(packageId); unmaintained.Add(packageId); }
-                    else
-                    {
-                        if (daysSinceCommit > 365) stale.Add(packageId);
-                        if (daysSinceCommit > 730) unmaintained.Add(packageId);
-                    }
-                }
-            }
-            reportGenerator.SetMaintenanceData(archived, stale, unmaintained, totalWithRepo);
-            reportGenerator.SetMaxInactiveMonths(maxInactiveMonths);
-        }
-
-        // Set documentation data (F3) - check project files
-        {
-            var projectDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
-            var hasReadme = File.Exists(Path.Combine(projectDir, "README.md")) ||
-                            File.Exists(Path.Combine(projectDir, "readme.md"));
-            var hasSecurityContact = File.Exists(Path.Combine(projectDir, "SECURITY.md")) ||
-                                     File.Exists(Path.Combine(projectDir, ".well-known", "security.txt")) ||
-                                     !string.IsNullOrEmpty(config?.SecurityContact);
-            var hasSupportPeriod = !string.IsNullOrEmpty(config?.SupportPeriodEnd);
-            var hasChangelog = File.Exists(Path.Combine(projectDir, "CHANGELOG.md")) ||
-                              File.Exists(Path.Combine(projectDir, "CHANGES.md"));
-            reportGenerator.SetProjectDocumentation(hasReadme, hasSecurityContact, hasSupportPeriod, hasChangelog);
-        }
-
-        // Set remediation data (F5) - cross-reference vulnerabilities with patches
-        {
-            var remediationData = new List<(string PackageId, string VulnId, int DaysSince, string PatchVersion)>();
-
-            foreach (var (packageId, vulns) in allVulnerabilities)
-            {
-                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
-                    continue;
-
-                foreach (var vuln in vulns)
-                {
-                    if (string.IsNullOrEmpty(vuln.PatchedVersion) || vuln.PublishedAt is null)
-                        continue;
-
-                    // Check if the installed version is still in the vulnerable range
-                    if (!IsVersionInVulnerableRange(installedVersion, vuln))
-                        continue;
-
-                    var daysSince = (int)(DateTime.UtcNow - vuln.PublishedAt.Value).TotalDays;
-                    remediationData.Add((packageId, vuln.Id, daysSince, vuln.PatchedVersion));
-                }
-            }
-            reportGenerator.SetRemediationData(remediationData);
-        }
-
-        // Set attack surface data (F7)
-        {
-            var trees = dependencyTree is not null ? new List<DependencyTree> { dependencyTree } : new List<DependencyTree>();
-            var attackSurface = AttackSurfaceAnalyzer.Analyze(packages, transitivePackages, trees);
-            reportGenerator.SetAttackSurfaceData(attackSurface);
-        }
-
-        // CISA KEV check (map CVEs to packages, but only if current version is affected)
-        using var kevService = new CisaKevService();
-        await kevService.LoadCatalogAsync(ct);
-
-        var kevCvePackages = allVulnerabilities
-            .SelectMany(kv => kv.Value.SelectMany(v => v.Cves.Select(cve => (Cve: cve, PackageId: kv.Key, Vuln: v))))
-            .Where(x => kevService.IsKnownExploited(x.Cve))
-            .Where(x =>
-            {
-                // Only flag if installed version is actually in the vulnerable range
-                if (!packageVersionLookup.TryGetValue(x.PackageId, out var installedVersion))
-                    return false;
-                return IsVersionInVulnerableRange(installedVersion, x.Vuln);
-            })
-            .Select(x => (x.Cve, x.PackageId))
-            .DistinctBy(x => x.Cve)
-            .ToList();
-        reportGenerator.SetKnownExploitedVulnerabilities(kevCvePackages);
-
-        // Mark packages with KEV vulnerabilities
-        var kevPackageIds = new HashSet<string>(kevCvePackages.Select(k => k.PackageId), StringComparer.OrdinalIgnoreCase);
-        var kevCvesByPackage = kevCvePackages.ToLookup(k => k.PackageId, k => k.Cve, StringComparer.OrdinalIgnoreCase);
-        foreach (var pkg in allPackages.Where(p => kevPackageIds.Contains(p.PackageId)))
-        {
-            pkg.HasKevVulnerability = true;
-
-            // Add KEV recommendation with CVE details
-            var cves = kevCvesByPackage[pkg.PackageId].ToList();
-            pkg.KevCves = cves;
-            var cveList = string.Join(", ", cves);
-            pkg.Recommendations.Insert(0, $"CRITICAL: This package has an actively exploited vulnerability ({cveList}) listed in CISA KEV. Update immediately or find an alternative.");
-        }
-
-        // EPSS enrichment - fetch exploit probability scores
-        var allCves = allVulnerabilities.Values
-            .SelectMany(v => v.SelectMany(vi => vi.Cves))
-            .Where(c => !string.IsNullOrEmpty(c))
-            .Distinct()
-            .ToList();
-
-        if (allCves.Count > 0)
-        {
-            using var epssService = new EpssService();
-            var epssScores = await AnsiConsole.Status()
-                .StartAsync("Fetching EPSS exploit probability scores...", async _ =>
-                    await epssService.GetScoresAsync(allCves, ct));
-
-            EnrichWithEpssScores(allVulnerabilities, packages, transitivePackages, epssScores);
-            reportGenerator.SetEpssScores(epssScores);
-        }
-
-        // Populate patch timeliness data from remediation info for enhanced CRA scoring
-        {
-            foreach (var (packageId, vulns) in allVulnerabilities)
-            {
-                if (!packageVersionLookup.TryGetValue(packageId, out var installedVersion))
-                    continue;
-
-                var patchCount = 0;
-                int? oldestDays = null;
-
-                foreach (var vuln in vulns)
-                {
-                    if (string.IsNullOrEmpty(vuln.PatchedVersion) || vuln.PublishedAt is null)
-                        continue;
-                    if (!IsVersionInVulnerableRange(installedVersion, vuln))
-                        continue;
-
-                    patchCount++;
-                    var days = (int)(DateTime.UtcNow - vuln.PublishedAt.Value).TotalDays;
-                    if (!oldestDays.HasValue || days > oldestDays.Value)
-                        oldestDays = days;
-                }
-
-                if (patchCount > 0 && packageLookup.TryGetValue(packageId, out var target))
-                {
-                    target.PatchAvailableNotAppliedCount = patchCount;
-                    target.OldestUnpatchedVulnDays = oldestDays;
-                }
-            }
-        }
-
-        // Recalculate enhanced CRA scores after all enrichment (KEV, EPSS, integrity, patch data)
-        foreach (var pkg in allPackages)
-        {
-            HealthScoreCalculator.RecalculateEnhancedCraScore(pkg);
-        }
-
-        // 4. Crypto compliance check
-        var allPackageTuples = allPackages
-            .Select(p => (p.PackageId, p.Version))
-            .ToList();
-        var cryptoResult = CryptoComplianceChecker.Check(allPackageTuples);
-        reportGenerator.SetCryptoCompliance(cryptoResult);
-        if (typosquatResults is not null)
-            reportGenerator.SetTyposquatResults(typosquatResults);
-
-        // Package provenance check (F9)
-        {
-            using var provenanceChecker = new PackageProvenanceChecker();
-            var allProvenanceResults = new List<ProvenanceResult>();
-
-            var nugetPackages = allPackages
-                .Where(p => p.Ecosystem == PackageEcosystem.NuGet)
-                .Select(p => (p.PackageId, p.Version))
-                .ToList();
-            if (nugetPackages.Count > 0)
-            {
-                var nugetResults = await AnsiConsole.Status()
-                    .StartAsync("Checking NuGet package provenance...", async _ =>
-                        await provenanceChecker.CheckNuGetProvenanceAsync(nugetPackages, ct));
-                allProvenanceResults.AddRange(nugetResults);
-            }
-
-            var npmPackages = allPackages
-                .Where(p => p.Ecosystem == PackageEcosystem.Npm)
-                .Select(p => (p.PackageId, p.Version))
-                .ToList();
-            if (npmPackages.Count > 0)
-            {
-                var npmResults = await AnsiConsole.Status()
-                    .StartAsync("Checking npm package provenance...", async _ =>
-                        await provenanceChecker.CheckNpmProvenanceAsync(npmPackages, ct));
-                allProvenanceResults.AddRange(npmResults);
-            }
-
-            if (allProvenanceResults.Count > 0)
-                reportGenerator.SetProvenanceResults(allProvenanceResults);
-        }
-
-        // Art. 14 Reporting Obligation Analysis
-        {
-            var kevCveSet = new HashSet<string>(kevCvePackages.Select(k => k.Cve), StringComparer.OrdinalIgnoreCase);
-            var epssLookup = allVulnerabilities.Values
-                .SelectMany(v => v.SelectMany(vi => vi.Cves.Where(c => vi.EpssProbability.HasValue)
-                    .Select(c => new EpssScore { Cve = c, Probability = vi.EpssProbability!.Value, Percentile = vi.EpssPercentile ?? 0.0 })))
-                .GroupBy(s => s.Cve, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Probability).First(), StringComparer.OrdinalIgnoreCase);
-
-            var reportingObligations = ReportingObligationAnalyzer.Analyze(allPackages, allVulnerabilities, kevCveSet, epssLookup);
-            reportGenerator.SetReportingObligations(reportingObligations);
-        }
-
-        // Extract project identity for SBOM/VEX metadata
-        var projectIdentity = await ProjectIdentityExtractor.ExtractIdentityAsync(path, ct);
-
-        // Generate SBOM/VEX once, validate SBOM, then build final report
-        var (sbom, vex) = reportGenerator.GenerateArtifacts(healthReport, allVulnerabilities, projectIdentity);
-        reportGenerator.SetSbomValidation(SbomValidator.Validate(sbom));
-        var craReport = reportGenerator.Generate(healthReport, allVulnerabilities, sbom, vex, startTime);
-
-        // Remediation Roadmap (needs CRA score from report for prioritization)
-        List<RemediationRoadmapItem> roadmap;
-        {
-            roadmap = RemediationPrioritizer.PrioritizeUpdates(allPackages, allVulnerabilities, craReport.CraReadinessScore, craReport.ComplianceItems, availableVersions, dependencyTree is not null ? [dependencyTree] : null);
-            var vulnPackageIds = new HashSet<string>(roadmap.Select(r => r.PackageId), StringComparer.OrdinalIgnoreCase);
-            var maintenanceItems = RemediationPrioritizer.PrioritizeMaintenanceItems(
-                allPackages, deprecatedPackages ?? [], repoInfoMap, vulnPackageIds);
-            roadmap.AddRange(maintenanceItems);
-            await EnrichWithRiskAssessmentsAsync(roadmap, githubClient, repoInfoMap, allPackages, ct).ConfigureAwait(false);
-            reportGenerator.SetRemediationRoadmap(roadmap);
-        }
-
-        // Audit simulation (when --audit-mode active)
-        if (auditMode)
-        {
-            var projectDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
-            var auditHasSecurityPolicy = File.Exists(Path.Combine(projectDir, "SECURITY.md")) ||
-                                          File.Exists(Path.Combine(projectDir, ".well-known", "security.txt"));
-            var auditHasReadme = File.Exists(Path.Combine(projectDir, "README.md")) ||
-                                  File.Exists(Path.Combine(projectDir, "readme.md"));
-            var auditHasChangelog = File.Exists(Path.Combine(projectDir, "CHANGELOG.md")) ||
-                                     File.Exists(Path.Combine(projectDir, "CHANGES.md"));
-
-            var auditResult = AuditSimulator.Analyze(
-                allPackages,
-                allVulnerabilities,
-                craReport,
-                reportGenerator.GetSbomValidation(),
-                reportGenerator.GetProvenanceResults(),
-                reportGenerator.GetAttackSurface(),
-                auditHasSecurityPolicy,
-                packagesWithSecurityPolicy,
-                packagesWithRepo,
-                config,
-                auditHasReadme,
-                auditHasChangelog);
-            reportGenerator.SetAuditFindings(auditResult);
-        }
-
-        reportGenerator.SetMaintainerTrustData(allPackages);
-
-        // Phase 1 actionable findings for HTML dashboard
-        var auditResultForExit = auditMode ? reportGenerator.GetAuditSimulation() : null;
-        PolicyEvaluationResult policyResult;
-        {
-            var budget = SecurityBudgetOptimizer.Optimize(roadmap);
-            reportGenerator.SetSecurityBudget(budget);
-
-            var readiness = ReleaseReadinessEvaluator.Evaluate(craReport, [], auditResultForExit);
-            reportGenerator.SetReleaseReadiness(readiness);
-
-            policyResult = PolicyEvaluator.Evaluate(craReport, config, allPackages, auditResultForExit);
-            reportGenerator.SetPolicyEvaluation(policyResult, config?.ExcludePackages, config?.ComplianceNotes);
-        }
-
-        // Determine output path
-        if (string.IsNullOrEmpty(outputPath))
-        {
-            var projectName = Path.GetFileNameWithoutExtension(path);
-            outputPath = format == CraOutputFormat.Json
-                ? $"{projectName}-cra-report.json"
-                : $"{projectName}-cra-report.html";
-        }
-
-        // Generate license attribution if requested (before HTML so we can link to it)
-        string? licenseFilePath = null;
-        if (licensesFormat.HasValue)
-        {
-            licenseFilePath = await GenerateLicenseAttributionAsync(packages, transitivePackages, licensesFormat.Value, path, ct);
-        }
-
-        // Generate SBOM if requested
-        string? sbomFilePath = null;
-        if (sbomFormat.HasValue)
-        {
-            sbomFilePath = await GenerateSbomAsync(packages, transitivePackages, sbomFormat.Value, path, projectIdentity, ct);
-        }
-
-        // Snapshot & trend analysis
-        TrendSummary? trendSummary = null;
-        if (snapshot)
-        {
-            var store = new TrendSnapshotStore();
-            var currentSnapshot = TrendAnalyzer.BuildSnapshot(craReport);
-            var history = await store.LoadAsync(path, maxCount: 10, ct);
-            await store.SaveAsync(currentSnapshot, ct);
-            history.Add(currentSnapshot);
-            trendSummary = TrendAnalyzer.Analyze(history);
-
-            if (trendSummary.Metrics.Count == 0)
-            {
-                AnsiConsole.MarkupLine("[dim]First snapshot recorded. Run again with --snapshot to see trends.[/]");
-            }
-            else
-            {
-                reportGenerator.SetTrendData(trendSummary, history);
-            }
-        }
-
-        string output;
-        if (format == CraOutputFormat.Json)
-        {
-            output = reportGenerator.GenerateJson(craReport);
-        }
-        else
-        {
-            output = reportGenerator.GenerateHtml(craReport, licenseFilePath);
-        }
-
-        await File.WriteAllTextAsync(outputPath, output, ct);
-
-        // Sign artifacts if requested
-        await SignArtifactsAsync(sign, signKey, outputPath, licenseFilePath, sbomFilePath, ct);
-
-        // Generate evidence pack if requested
-        if (evidencePack)
-        {
-            await GenerateEvidencePackAsync(path, packages, transitivePackages, reportGenerator, craReport, licenseFilePath, ct);
-        }
-
-        // Display summary
-        AnsiConsole.WriteLine();
-        AnsiConsole.Write(new Rule("[bold]CRA Compliance Report Generated[/]").LeftJustified());
-
-        var statusColor = craReport.OverallComplianceStatus switch
-        {
-            CraComplianceStatus.Compliant => "green",
-            CraComplianceStatus.ActionRequired => "yellow",
-            _ => "red"
-        };
-
-        AnsiConsole.MarkupLine($"[bold]Overall Status:[/] [{statusColor}]{craReport.OverallComplianceStatus}[/]");
-        AnsiConsole.MarkupLine($"[bold]Health Score:[/] {craReport.HealthScore}/100");
-        var totalPackages = craReport.PackageCount + craReport.TransitivePackageCount;
-        AnsiConsole.MarkupLine($"[bold]Packages Analyzed:[/] {totalPackages} [dim]({craReport.PackageCount} direct + {craReport.TransitivePackageCount} transitive)[/]");
-        AnsiConsole.MarkupLine($"[bold]Vulnerabilities Found:[/] {craReport.VulnerabilityCount}");
-
-        if (dependencyTree is not null)
-        {
-            AnsiConsole.MarkupLine($"[bold]Dependency Tree:[/] {dependencyTree.TotalPackages} packages, max depth {dependencyTree.MaxDepth}");
-        }
-
-        if (sbomFilePath is not null)
-        {
-            AnsiConsole.MarkupLine($"[bold]SBOM:[/] {sbomFilePath}");
-        }
-
-        AnsiConsole.WriteLine();
-
-        var complianceTable = new Table()
-            .Border(TableBorder.Rounded)
-            .AddColumn("Requirement")
-            .AddColumn("Status");
-
-        foreach (var item in craReport.ComplianceItems)
-        {
-            var itemStatusColor = item.Status switch
-            {
-                CraComplianceStatus.Compliant => "green",
-                CraComplianceStatus.ActionRequired => "yellow",
-                _ => "red"
-            };
-            complianceTable.AddRow(item.Requirement, $"[{itemStatusColor}]{item.Status}[/]");
-        }
-
-        AnsiConsole.Write(complianceTable);
-
-        AnsiConsole.MarkupLine($"\n[bold]CRA Readiness Score:[/] {craReport.CraReadinessScore}/100");
-
-        DisplaySecurityBudgetSummary(roadmap);
-        DisplayTrendSummary(trendSummary);
-
-        AnsiConsole.MarkupLine($"\n[green]Report written to {outputPath}[/]");
-
-        DisplayPolicyViolations(policyResult);
-        var exitCode = policyResult.ExitCode;
-        var violations = policyResult.Violations.Select(v => v.Message).ToList();
-
-        if (releaseGate)
-            exitCode = DisplayReleaseReadiness(craReport, violations, exitCode, auditResultForExit);
-
-        return exitCode;
+        var trees = dependencyTree is not null ? [dependencyTree] : new List<DependencyTree>();
+        return await GenerateReportCoreAsync(
+            path, packages, transitivePackages, allVulnerabilities,
+            trees, format, outputPath, incompleteTransitive, hasUnresolvedVersions,
+            startTime, licensesFormat, sbomFormat, deprecatedPackages,
+            packagesWithSecurityPolicy, packagesWithRepo, typosquatResults,
+            repoInfoMap, githubClient, config, sign, signKey,
+            releaseGate, evidencePack, auditMode, availableVersions,
+            snapshot, ct);
     }
 
     private static void DisplayPolicyViolations(PolicyEvaluationResult result)
@@ -3791,7 +3323,7 @@ public static class CraReportCommand
         var baseOutputDir = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
 
         var reportHtml = reportGenerator.GenerateHtml(craReport, licenseFilePath);
-        var reportJson = reportGenerator.GenerateJson(craReport);
+        var reportJson = CraReportGenerator.GenerateJson(craReport);
 
         string? sbomJson = null;
         if (craReport.Sbom is not null)

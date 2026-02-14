@@ -87,7 +87,7 @@ public static class BadgeCommand
         var (topLevel, transitive) = dotnetResult.ValueOr(([], []));
 
         using var pipeline = new AnalysisPipeline(skipGitHub);
-        var allReferences = await pipeline.ScanProjectFilesAsync(path, ct);
+        var allReferences = await AnalysisPipeline.ScanProjectFilesAsync(path, ct);
 
         // Merge in any packages from dotnet list that weren't found via project file parsing
         foreach (var pkg in topLevel)
