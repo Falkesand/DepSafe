@@ -469,7 +469,7 @@ public sealed partial class CraReportGenerator
         }
     }
 
-    private void GenerateSbomSection(StringBuilder sb, CraReport report, List<SbomPackage> packages)
+    private static void GenerateSbomSection(StringBuilder sb, CraReport report, List<SbomPackage> packages)
     {
         sb.AppendLine("<div class=\"section-header\">");
         sb.AppendLine("  <h2>Software Bill of Materials (SBOM)</h2>");
@@ -1493,7 +1493,7 @@ public sealed partial class CraReportGenerator
         }
     }
 
-    private void GenerateComplianceSection(StringBuilder sb, CraReport report)
+    private static void GenerateComplianceSection(StringBuilder sb, CraReport report)
     {
         sb.AppendLine("<div class=\"section-header\">");
         sb.AppendLine("  <h2>CRA Compliance Checklist</h2>");

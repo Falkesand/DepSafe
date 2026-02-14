@@ -70,7 +70,7 @@ public static class AnalyzeCommand
         using var pipeline = new AnalysisPipeline(skipGitHub);
         pipeline.ShowGitHubStatus("No repo activity or vulnerability data.");
 
-        var allReferences = await pipeline.ScanProjectFilesAsync(path, ct);
+        var allReferences = await AnalysisPipeline.ScanProjectFilesAsync(path, ct);
         if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");

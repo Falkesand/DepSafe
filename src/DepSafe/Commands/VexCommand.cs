@@ -78,7 +78,7 @@ public static class VexCommand
         using var pipeline = new AnalysisPipeline(skipGitHub: false);
         pipeline.ShowGitHubStatus("VEX generation requires GitHub API for vulnerability data.");
 
-        var allReferences = await pipeline.ScanProjectFilesAsync(path, ct);
+        var allReferences = await AnalysisPipeline.ScanProjectFilesAsync(path, ct);
         if (allReferences.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No package references found.[/]");

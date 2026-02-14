@@ -173,7 +173,7 @@ public sealed class HealthScoreCalculator
         };
     }
 
-    private PackageMetrics BuildMetrics(
+    private static PackageMetrics BuildMetrics(
         NuGetPackageInfo nugetInfo,
         GitHubRepoInfo? repoInfo,
         List<VulnerabilityInfo> vulnerabilities)
@@ -209,7 +209,7 @@ public sealed class HealthScoreCalculator
         };
     }
 
-    private PackageMetrics BuildMetrics(
+    private static PackageMetrics BuildMetrics(
         NpmPackageInfo npmInfo,
         GitHubRepoInfo? repoInfo,
         List<VulnerabilityInfo> vulnerabilities)
@@ -610,7 +610,7 @@ public sealed class HealthScoreCalculator
                     if (NuGet.Versioning.NuGetVersion.TryParse(part[2..].Trim(), out var v) && current < v)
                         return false;
                 }
-                else if (part.StartsWith(">"))
+                else if (part.StartsWith('>'))
                 {
                     hasRangeConstraint = true;
                     if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current <= v)
@@ -622,13 +622,13 @@ public sealed class HealthScoreCalculator
                     if (NuGet.Versioning.NuGetVersion.TryParse(part[2..].Trim(), out var v) && current > v)
                         return false;
                 }
-                else if (part.StartsWith("<"))
+                else if (part.StartsWith('<'))
                 {
                     hasRangeConstraint = true;
                     if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current >= v)
                         return false;
                 }
-                else if (part.StartsWith("="))
+                else if (part.StartsWith('='))
                 {
                     hasRangeConstraint = true;
                     if (NuGet.Versioning.NuGetVersion.TryParse(part[1..].Trim(), out var v) && current != v)
